@@ -1,0 +1,17 @@
+# Binaries
+match
+index
+play
+
+# Generated Indices
+*.bin
+
+# Test Artifacts and Temporary Files
+test_match.wav
+test_out.syx
+test_codebook.bin
+match.wav
+bla3.syx
+
+# Go workspace
+go.work
