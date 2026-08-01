@@ -246,13 +246,13 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
-	// If no NN model was run, run pre-GA acceleration profiling on Piano 1 base to seed GA islands
+	// If no NN model was run, run pre-GA acceleration profiling on Waveform Base Seeds to seed GA islands
 	var globalLiveOpt *LiveOptimizer
 	if nnCandidates == nil {
 		if cfg.Verbose {
-			fmt.Println("--- Pre-GA Acceleration Profiling (Piano 1 base) ---")
+			fmt.Println("--- Pre-GA Acceleration Profiling (Waveform Base Seeds) ---")
 		}
-		globalLiveOpt = NewLiveOptimizer(target, DecodeVoicePatch(epiano), 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		globalLiveOpt = NewLiveOptimizer(target, SineBase(), 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		globalLiveOpt.Run()
 		if globalLiveOpt.bestDist <= 1e-4 {
 			if cfg.Verbose {

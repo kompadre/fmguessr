@@ -455,6 +455,106 @@ func SysexBulkDumpMultiple(candidates []*Candidate) []byte {
 	return syx
 }
 
+// Pure Waveform Shape Base Templates
+
+// SineBase returns a clean pure sine wave candidate.
+func SineBase() *Candidate {
+	c := &Candidate{
+		Algorithm:   0, // Algo 1: Op 1 is carrier
+		Feedback:    0,
+		Fitness:     math.MaxFloat64,
+		PitchRate1:  99,
+		PitchLevel1: 50,
+		PitchLevel2: 50,
+	}
+	for i := 0; i < 5; i++ {
+		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	}
+	c.Ops[5] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 99, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	for i := 0; i < NumCandidateParams; i++ {
+		c.Direction[i] = 1
+		c.Velocity[i] = 1.0
+	}
+	return c
+}
+
+// SquareBase returns a clean pure square wave candidate (1:2 FM ratio).
+func SquareBase() *Candidate {
+	c := &Candidate{
+		Algorithm:   0, // Algo 1: Op 2 modulates Op 1
+		Feedback:    0,
+		Fitness:     math.MaxFloat64,
+		PitchRate1:  99,
+		PitchLevel1: 50,
+		PitchLevel2: 50,
+	}
+	for i := 0; i < 4; i++ {
+		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	}
+	c.Ops[4] = OpParams{Mode: 0, FreqCoarse: 2, FreqFine: 0, OutputLevel: 78, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	c.Ops[5] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 99, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	for i := 0; i < NumCandidateParams; i++ {
+		c.Direction[i] = 1
+		c.Velocity[i] = 1.0
+	}
+	return c
+}
+
+// SawtoothBase returns a clean pure sawtooth wave candidate (1:1 FM ratio with feedback).
+func SawtoothBase() *Candidate {
+	c := &Candidate{
+		Algorithm:   0, // Algo 1: Op 2 modulates Op 1
+		Feedback:    6,
+		Fitness:     math.MaxFloat64,
+		PitchRate1:  99,
+		PitchLevel1: 50,
+		PitchLevel2: 50,
+	}
+	for i := 0; i < 4; i++ {
+		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	}
+	c.Ops[4] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 82, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	c.Ops[5] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 99, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	for i := 0; i < NumCandidateParams; i++ {
+		c.Direction[i] = 1
+		c.Velocity[i] = 1.0
+	}
+	return c
+}
+
+// TriangleBase returns a clean pure triangle wave candidate (soft 1:2 FM ratio).
+func TriangleBase() *Candidate {
+	c := &Candidate{
+		Algorithm:   0, // Algo 1
+		Feedback:    0,
+		Fitness:     math.MaxFloat64,
+		PitchRate1:  99,
+		PitchLevel1: 50,
+		PitchLevel2: 50,
+	}
+	for i := 0; i < 4; i++ {
+		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	}
+	c.Ops[4] = OpParams{Mode: 0, FreqCoarse: 2, FreqFine: 0, OutputLevel: 58, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	c.Ops[5] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 99, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
+	for i := 0; i < NumCandidateParams; i++ {
+		c.Direction[i] = 1
+		c.Velocity[i] = 1.0
+	}
+	return c
+}
+
+// DefaultWaveformSeeds returns all 5 foundational base seeds: Sine, Square, Sawtooth, Triangle, and Piano1.
+func DefaultWaveformSeeds() []*Candidate {
+	return []*Candidate{
+		SineBase(),
+		SquareBase(),
+		SawtoothBase(),
+		TriangleBase(),
+		DecodeVoicePatch(epiano),
+	}
+}
+
 // CalibrateCarrierLevels boosts carrier operator OutputLevel settings so that the candidate's
 // native rendered RMS matches rawTargetRMS.
 func (c *Candidate) CalibrateCarrierLevels(rawTargetRMS float64, note uint8, dur time.Duration) {

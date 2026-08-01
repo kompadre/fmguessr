@@ -446,28 +446,41 @@ func (lo *LiveOptimizer) Run() *Candidate {
 		return lo.bestPatch
 	}
 
+	type seedDef struct {
+		patch *Candidate
+		name  string
+	}
+
+	seedDefs := []seedDef{
+		{patch: lo.currentPatch.Copy(), name: "Candidate"},
+		{patch: SineBase(), name: "Sine"},
+		{patch: SquareBase(), name: "Square"},
+		{patch: SawtoothBase(), name: "Sawtooth"},
+		{patch: TriangleBase(), name: "Triangle"},
+		{patch: DecodeVoicePatch(epiano), name: "Piano1"},
+	}
+
 	type patchSeed struct {
 		patch *Candidate
 		label string
 	}
 
 	var seeds []patchSeed
-	initialSeeds := []*Candidate{lo.currentPatch.Copy(), pianoPatch}
 
-	// 1. Initial 32-Algorithm Sweep for each seed to discover top algorithm topologies
-	for sIdx, seed := range initialSeeds {
-		seedDist := lo.measureDeterministic(seed)
-		// Skip Piano 1 base if current best candidate is already significantly better
-		if sIdx == 1 && seedDist >= lo.bestDist+0.2 {
+	// 1. Initial 32-Algorithm Sweep for each pure waveform seed to discover top algorithm topologies
+	for sIdx, sd := range seedDefs {
+		seedDist := lo.measureDeterministic(sd.patch)
+		// Skip non-candidate seed if current best candidate is already significantly better
+		if sIdx > 0 && seedDist >= lo.bestDist+0.25 {
 			if lo.verbose {
-				fmt.Printf("[live-parallel] Skipping Piano 1 base (piano dist %.6f >= best %.6f + 0.2)\n", seedDist, lo.bestDist)
+				fmt.Printf("[live-parallel] Skipping %s base (dist %.6f >= best %.6f + 0.25)\n", sd.name, seedDist, lo.bestDist)
 			}
 			continue
 		}
 
 		algoCands := make([]*Candidate, 32)
 		for a := uint8(0); a < 32; a++ {
-			c := seed.Copy()
+			c := sd.patch.Copy()
 			c.Algorithm = a
 			algoCands[a] = c
 		}
@@ -484,11 +497,6 @@ func (lo *LiveOptimizer) Run() *Candidate {
 		}
 		sort.Slice(entries, func(i, j int) bool { return entries[i].fit < entries[j].fit })
 
-		seedName := "Candidate"
-		if sIdx == 1 {
-			seedName = "Piano1"
-		}
-
 		// Take the best algorithm topology from the sweep
 		if len(entries) > 0 {
 			c := entries[0].cand.Copy()
@@ -499,7 +507,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				lo.bestPatch = c.Copy()
 			}
 
-			label := fmt.Sprintf("%s (Alg %d, dist=%.6f)", seedName, c.Algorithm+1, f)
+			label := fmt.Sprintf("%s (Alg %d, dist=%.6f)", sd.name, c.Algorithm+1, f)
 			seeds = append(seeds, patchSeed{patch: c, label: label})
 		}
 	}
