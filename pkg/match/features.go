@@ -12,8 +12,9 @@ import (
 // TargetFeatures holds acoustic features extracted from the target audio.
 type TargetFeatures struct {
 	// Pitch
-	F0           float64 // Fundamental frequency in Hz
-	F0Confidence float64 // 0.0-1.0
+	F0                 float64 // Fundamental frequency in Hz
+	F0Confidence       float64 // 0.0-1.0
+	PitchJumpSemitones float64 // Semitone pitch jump detected during attack (e.g. +4 for chiptune arpeggio)
 
 	// Envelope
 	AttackMs         float64 // Attack time in ms
@@ -85,8 +86,9 @@ func ExtractBrightness(samples []float64, sampleRate int) TargetFeatures {
 func ExtractFeatures(samples []float64, sampleRate int) TargetFeatures {
 	f := TargetFeatures{}
 
-	// Pitch detection
+	// Pitch detection & jump trajectory
 	f.F0, f.F0Confidence = detectPitch(samples, sampleRate)
+	f.PitchJumpSemitones = detectPitchJump(samples, sampleRate)
 
 	// Envelope extraction
 	f.AttackMs, f.AttackPeakSample, f.DecayMs, f.SustainLevel, f.ReleaseMs, f.GateMs = estimateEnvelope(samples, sampleRate)
@@ -156,6 +158,22 @@ func HeuristicCandidate(features TargetFeatures, noteFreq float64, rng interface
 	// Operator parameters based on frequency ratios and brightness
 	c.Ops = estimateOperatorParams(c.Algorithm, features)
 
+	c.PitchRate1 = 99
+	c.PitchLevel1 = 50
+	c.PitchLevel2 = 50
+	if math.Abs(features.PitchJumpSemitones) >= 1.0 {
+		c.PitchRate1 = 82 // ~50ms transition
+		c.PitchLevel1 = 50
+		lvl2 := int(50 + math.Round(features.PitchJumpSemitones))
+		if lvl2 < 0 {
+			lvl2 = 0
+		}
+		if lvl2 > 99 {
+			lvl2 = 99
+		}
+		c.PitchLevel2 = uint8(lvl2)
+	}
+
 	return c
 }
 
@@ -197,10 +215,122 @@ func HeuristicCandidateWithAlgo(features TargetFeatures, noteFreq float64, algo 
 
 	c.Ops = estimateOperatorParams(c.Algorithm, features)
 
+	c.PitchRate1 = 99
+	c.PitchLevel1 = 50
+	c.PitchLevel2 = 50
+	if math.Abs(features.PitchJumpSemitones) >= 1.0 {
+		c.PitchRate1 = 82 // ~50ms transition
+		c.PitchLevel1 = 50
+		lvl2 := int(50 + math.Round(features.PitchJumpSemitones))
+		if lvl2 < 0 {
+			lvl2 = 0
+		}
+		if lvl2 > 99 {
+			lvl2 = 99
+		}
+		c.PitchLevel2 = uint8(lvl2)
+	}
+
 	return c
 }
 
 // --- Pitch Detection (Autocorrelation) ---
+
+func detectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
+	if len(frame) < 1024 {
+		return 0, 0
+	}
+	frameSize := len(frame)
+	buf := make([]float64, frameSize)
+	mean := 0.0
+	for _, s := range frame {
+		mean += s
+	}
+	mean /= float64(frameSize)
+	for i, s := range frame {
+		buf[i] = s - mean
+	}
+
+	win := window.Hann(frameSize)
+	for i := range buf {
+		buf[i] *= win[i]
+	}
+
+	fftIn := make([]complex128, frameSize)
+	for i := range buf {
+		fftIn[i] = complex(buf[i], 0)
+	}
+	spectrum := fft.FFT(fftIn)
+	power := make([]complex128, len(spectrum))
+	for i, v := range spectrum {
+		power[i] = v * cmplx.Conj(v)
+	}
+	acorr := fft.IFFT(power)
+	acorrReal := make([]float64, len(acorr))
+	for i, v := range acorr {
+		acorrReal[i] = real(v)
+	}
+
+	minLag := sampleRate / 2000
+	maxLag := sampleRate / 50
+	if minLag < 2 {
+		minLag = 2
+	}
+	if maxLag > len(acorrReal)/2 {
+		maxLag = len(acorrReal) / 2
+	}
+
+	type peak struct {
+		lag int
+		val float64
+	}
+	var peaks []peak
+	absMax := 0.0
+	for lag := minLag; lag < maxLag; lag++ {
+		if acorrReal[lag] > acorrReal[lag-1] && acorrReal[lag] > acorrReal[lag+1] {
+			peaks = append(peaks, peak{lag, acorrReal[lag]})
+			if acorrReal[lag] > absMax {
+				absMax = acorrReal[lag]
+			}
+		}
+	}
+
+	if absMax < 1e-10 {
+		return 0, 0
+	}
+
+	bestLag := 0
+	threshold := absMax * 0.70
+	for _, p := range peaks {
+		if p.val >= threshold {
+			bestLag = p.lag
+			break
+		}
+	}
+
+	if bestLag == 0 {
+		return 0, 0
+	}
+
+	// For F0 <= 500 Hz (musical notes where 2nd harmonic can exceed fundamental),
+	// check if doubleLag (2 * bestLag) is also a strong peak (>= 0.75 * bestLag val).
+	if float64(sampleRate)/float64(bestLag) <= 500.0 {
+		doubleLag := bestLag * 2
+		bestVal := acorrReal[bestLag]
+		for l := doubleLag - 2; l <= doubleLag+2; l++ {
+			if l > 0 && l < len(acorrReal) {
+				if acorrReal[l] >= bestVal*0.75 {
+					bestLag = l
+					break
+				}
+			}
+		}
+	}
+
+	conf := acorrReal[bestLag] / acorrReal[0]
+	f0 := float64(sampleRate) / float64(bestLag)
+	return f0, math.Min(conf, 1.0)
+}
 
 func detectPitch(samples []float64, sampleRate int) (float64, float64) {
 	if len(samples) < 2048 {
@@ -212,83 +342,31 @@ func detectPitch(samples []float64, sampleRate int) (float64, float64) {
 	bestF0 := 0.0
 	bestConfidence := 0.0
 
-	// Scan multiple frames and pick the one with highest confidence
 	for start := 0; start+frameSize <= len(samples); start += hopSize {
-		frame := make([]float64, frameSize)
-		copy(frame, samples[start:start+frameSize])
-
-		// Apply Hann window
-		win := window.Hann(frameSize)
-		for i := range frame {
-			frame[i] *= win[i]
-		}
-
-		// Autocorrelation via FFT (Wiener-Khinchin)
-		fftIn := make([]complex128, frameSize)
-		for i := range frame {
-			fftIn[i] = complex(frame[i], 0)
-		}
-		spectrum := fft.FFT(fftIn)
-		power := make([]complex128, len(spectrum))
-		for i, v := range spectrum {
-			power[i] = v * cmplx.Conj(v)
-		}
-		acorr := fft.IFFT(power)
-		acorrReal := make([]float64, len(acorr))
-		for i, v := range acorr {
-			acorrReal[i] = real(v)
-		}
-
-		// Find the best lag in the musical pitch range (50-2000 Hz)
-		minLag := sampleRate / 2000
-		maxLag := sampleRate / 50
-		if maxLag > len(acorrReal)/2 {
-			maxLag = len(acorrReal) / 2
-		}
-
-		// Find all local peaks and the absolute maximum
-		type peak struct {
-			lag int
-			val float64
-		}
-		var peaks []peak
-		absMax := 0.0
-		for lag := minLag; lag < maxLag; lag++ {
-			if acorrReal[lag] > acorrReal[lag-1] && acorrReal[lag] > acorrReal[lag+1] {
-				peaks = append(peaks, peak{lag, acorrReal[lag]})
-				if acorrReal[lag] > absMax {
-					absMax = acorrReal[lag]
-				}
-			}
-		}
-
-		if absMax < 1e-10 {
-			continue
-		}
-
-		// Prefer the LONGEST lag (lowest frequency) that is at least 70% of max
-		// This avoids picking harmonics as the fundamental.
-		bestLag := 0
-		threshold := absMax * 0.7
-		for i := len(peaks) - 1; i >= 0; i-- {
-			if peaks[i].val >= threshold {
-				bestLag = peaks[i].lag
-				break
-			}
-		}
-
-		if bestLag == 0 {
-			continue
-		}
-
-		confidence := acorrReal[bestLag] / acorrReal[0]
-		if confidence > bestConfidence {
-			bestConfidence = confidence
-			bestF0 = float64(sampleRate) / float64(bestLag)
+		f0, conf := detectPitchFrame(samples[start:start+frameSize], sampleRate)
+		if conf > bestConfidence {
+			bestConfidence = conf
+			bestF0 = f0
 		}
 	}
 
-	return bestF0, math.Min(bestConfidence, 1.0)
+	return bestF0, bestConfidence
+}
+
+func detectPitchJump(samples []float64, sampleRate int) float64 {
+	if len(samples) < 3072 {
+		return 0
+	}
+	f0Start, conf0 := detectPitchFrame(samples[0:2048], sampleRate)
+	f0Jump, conf1 := detectPitchFrame(samples[1024:3072], sampleRate)
+	if conf0 > 0.5 && conf1 > 0.5 && f0Start > 0 && f0Jump > 0 {
+		ratio := f0Jump / f0Start
+		semitones := 12.0 * math.Log2(ratio)
+		if math.Abs(semitones) >= 1.0 && math.Abs(semitones) <= 24.0 {
+			return math.Round(semitones)
+		}
+	}
+	return 0
 }
 
 // --- Envelope Extraction ---

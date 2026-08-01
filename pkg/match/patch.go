@@ -43,6 +43,11 @@ type Candidate struct {
 	RawBase   []byte // Optional 128-byte base template (e.g. from preset codebook)
 	Fitness   float64 // Cached spectral distance (math.MaxFloat64 = unevaluated)
 
+	// Pitch Envelope Generator (Pitch EG)
+	PitchRate1  uint8 // 0-99 (default 99)
+	PitchLevel1 uint8 // 0-99 (default 50 = neutral pitch)
+	PitchLevel2 uint8 // 0-99 (default 50 = neutral pitch)
+
 	// Direction memory & momentum weight per parameter (50 total)
 	// Index 0: Algorithm, 1-48: Op1..Op6 (8 params per op), 49: Feedback
 	Direction [NumCandidateParams]int8    // +1 or -1 direction memory
@@ -52,9 +57,12 @@ type Candidate struct {
 // RandomCandidate generates a random candidate.
 func RandomCandidate(rng *rand.Rand) *Candidate {
 	c := &Candidate{
-		Algorithm: uint8(rng.Intn(32)),
-		Feedback:  uint8(rng.Intn(8)),
-		Fitness:   math.MaxFloat64,
+		Algorithm:   uint8(rng.Intn(32)),
+		Feedback:    uint8(rng.Intn(8)),
+		Fitness:     math.MaxFloat64,
+		PitchRate1:  99,
+		PitchLevel1: 50,
+		PitchLevel2: 50,
 	}
 	for i := 0; i < 6; i++ {
 		c.Ops[i] = OpParams{
@@ -79,11 +87,18 @@ func RandomCandidate(rng *rand.Rand) *Candidate {
 }
 
 // Copy returns a deep copy.
+func Copy(c *Candidate) *Candidate {
+	return c.Copy()
+}
+
 func (c *Candidate) Copy() *Candidate {
 	d := &Candidate{
-		Algorithm: c.Algorithm,
-		Feedback:  c.Feedback,
-		Fitness:   c.Fitness,
+		Algorithm:   c.Algorithm,
+		Feedback:    c.Feedback,
+		Fitness:     c.Fitness,
+		PitchRate1:  c.PitchRate1,
+		PitchLevel1: c.PitchLevel1,
+		PitchLevel2: c.PitchLevel2,
 	}
 	d.Ops = c.Ops
 	d.Direction = c.Direction
@@ -148,6 +163,22 @@ func (c *Candidate) Encode() []byte {
 
 	// Byte 111: feedback[2:0] | osc_sync[bit 3 = 1]
 	patch[111] = (patch[111] & 0xF8) | (c.Feedback & 0x07) | 0x08
+
+	// Bytes 102-109: Pitch Envelope Generator (PR1..PR4, PL1..PL4)
+	pRate1 := c.PitchRate1
+	if pRate1 == 0 {
+		pRate1 = 99
+	}
+	pLvl1 := c.PitchLevel1
+	pLvl2 := c.PitchLevel2
+	if pLvl1 == 0 && pLvl2 == 0 {
+		pLvl1 = 50
+		pLvl2 = 50
+	}
+	patch[102] = pRate1
+	patch[106] = pLvl1
+	patch[107] = pLvl2
+	patch[108] = pLvl2
 
 	return patch
 }

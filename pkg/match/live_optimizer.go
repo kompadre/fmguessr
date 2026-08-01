@@ -56,6 +56,24 @@ func buildKnobs() []KnobDef {
 		setter: func(c *Candidate, v int) { c.Feedback = uint8(v) },
 		min:    0, max: 7,
 	})
+	knobs = append(knobs, KnobDef{
+		name:   "Pitch.Level1",
+		getter: func(c *Candidate) int { return int(c.PitchLevel1) },
+		setter: func(c *Candidate, v int) { c.PitchLevel1 = uint8(v) },
+		min:    0, max: 99,
+	})
+	knobs = append(knobs, KnobDef{
+		name:   "Pitch.Level2",
+		getter: func(c *Candidate) int { return int(c.PitchLevel2) },
+		setter: func(c *Candidate, v int) { c.PitchLevel2 = uint8(v) },
+		min:    0, max: 99,
+	})
+	knobs = append(knobs, KnobDef{
+		name:   "Pitch.Rate1",
+		getter: func(c *Candidate) int { return int(c.PitchRate1) },
+		setter: func(c *Candidate, v int) { c.PitchRate1 = uint8(v) },
+		min:    0, max: 99,
+	})
 	return knobs
 }
 
