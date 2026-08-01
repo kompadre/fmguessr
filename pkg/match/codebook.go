@@ -131,6 +131,30 @@ func (cb *Codebook) Save(filePath string) error {
 	return nil
 }
 
+// LoadCodebookAny loads either a standard fingerprint codebook ("DXCB") or a timbre codebook ("DXCT").
+func LoadCodebookAny(filePath string) (*Codebook, error) {
+	cb, err := LoadCodebook(filePath)
+	if err == nil {
+		return cb, nil
+	}
+
+	tcb, errT := LoadTimbreCodebook(filePath)
+	if errT == nil {
+		cbAny := &Codebook{
+			Entries: make([]CodebookEntry, len(tcb.Entries)),
+		}
+		for i, entry := range tcb.Entries {
+			cbAny.Entries[i] = CodebookEntry{
+				Name:      entry.Name,
+				Candidate: entry.Candidate.Copy(),
+			}
+		}
+		return cbAny, nil
+	}
+
+	return nil, fmt.Errorf("failed to load codebook (%v, %v)", err, errT)
+}
+
 // LoadCodebook reads a codebook from a binary file.
 func LoadCodebook(filePath string) (*Codebook, error) {
 	f, err := os.Open(filePath)

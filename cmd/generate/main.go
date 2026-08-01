@@ -23,8 +23,8 @@ func main() {
 
 	os.MkdirAll(*outDir, 0755)
 
-	// Load codebook
-	cb, err := match.LoadCodebook(*codebookPath)
+	// Load codebook (supports both standard DXCB and timbre DXCT formats)
+	cb, err := match.LoadCodebookAny(*codebookPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading codebook: %v\n", err)
 		os.Exit(1)
