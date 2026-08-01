@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -214,6 +215,181 @@ func generateProbeBatch(base *Candidate, knobs []KnobDef, cache map[string][]int
 	return cands, meta
 }
 
+type knobDelta struct {
+	knobIdx int
+	knob    KnobDef
+	delta   int
+	imp     float64
+}
+
+// generateMultiKnobTrajectoryCandidates combines top single-knob improvers into scaled joint shift vectors.
+func generateMultiKnobTrajectoryCandidates(base *Candidate, knobs []KnobDef, improvers []knobDelta) ([]*Candidate, []candidateMeta) {
+	if len(improvers) < 2 {
+		return nil, nil
+	}
+
+	sort.Slice(improvers, func(i, j int) bool { return improvers[i].imp > improvers[j].imp })
+
+	if len(improvers) > 6 {
+		improvers = improvers[:6]
+	}
+
+	scales := []float64{0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0}
+	cands := make([]*Candidate, 0, len(scales))
+	meta := make([]candidateMeta, 0, len(scales))
+
+	for _, s := range scales {
+		c := base.Copy()
+		var applied []string
+		for _, imp := range improvers {
+			scaledDelta := int(math.Round(float64(imp.delta) * s))
+			if scaledDelta == 0 {
+				continue
+			}
+			curVal := imp.knob.getter(c)
+			newVal := curVal + scaledDelta
+			if newVal < imp.knob.min {
+				newVal = imp.knob.min
+			}
+			if newVal > imp.knob.max {
+				newVal = imp.knob.max
+			}
+			imp.knob.setter(c, newVal)
+			applied = append(applied, fmt.Sprintf("%s%+d", imp.knob.name, newVal-curVal))
+		}
+		if len(applied) > 0 {
+			cands = append(cands, c)
+			label := fmt.Sprintf("Trajectory[%.2fx: %s]", s, strings.Join(applied, ","))
+			meta = append(meta, candidateMeta{knobName: label, val: 0})
+		}
+	}
+
+	return cands, meta
+}
+
+// generateCoupledOperatorCandidates sweeps FM operator pairs (Levels and Coarse/Fine) simultaneously.
+func generateCoupledOperatorCandidates(base *Candidate, knobs []KnobDef) ([]*Candidate, []candidateMeta) {
+	var cands []*Candidate
+	var meta []candidateMeta
+
+	algo := base.Algorithm
+
+	// 1. Coupled Modulator-Carrier Level Sweeps
+	levelDeltas := [][2]int{
+		{2, 2}, {4, 2}, {2, 4}, {4, -2}, {-2, 4}, {-3, -3}, {6, 3}, {-4, -2},
+	}
+
+	for mOp := 0; mOp < 6; mOp++ {
+		if IsCarrier(algo, mOp) {
+			continue
+		}
+		for cOp := 0; cOp < 6; cOp++ {
+			if !IsCarrier(algo, cOp) || mOp == cOp {
+				continue
+			}
+			mLvl := int(base.Ops[mOp].OutputLevel)
+			cLvl := int(base.Ops[cOp].OutputLevel)
+
+			for _, d := range levelDeltas {
+				newM := mLvl + d[0]
+				newC := cLvl + d[1]
+				if newM >= 0 && newM <= 99 && newC >= 0 && newC <= 99 {
+					c := base.Copy()
+					c.Ops[mOp].OutputLevel = uint8(newM)
+					c.Ops[cOp].OutputLevel = uint8(newC)
+					cands = append(cands, c)
+					label := fmt.Sprintf("CoupledLvl[Op%d%+d,Op%d%+d]", mOp+1, d[0], cOp+1, d[1])
+					meta = append(meta, candidateMeta{knobName: label, val: newM})
+				}
+			}
+		}
+	}
+
+	// 2. Coupled Coarse & Fine Frequency Sweeps per operator
+	freqDeltas := [][2]int{
+		{1, -5}, {1, 5}, {1, -10}, {1, 10}, {-1, 10}, {-1, -10}, {2, -10},
+	}
+
+	for op := 0; op < 6; op++ {
+		coarse := int(base.Ops[op].FreqCoarse)
+		fine := int(base.Ops[op].FreqFine)
+
+		for _, d := range freqDeltas {
+			newC := coarse + d[0]
+			newF := fine + d[1]
+			if newC >= 0 && newC <= 31 && newF >= 0 && newF <= 99 {
+				c := base.Copy()
+				c.Ops[op].FreqCoarse = uint8(newC)
+				c.Ops[op].FreqFine = uint8(newF)
+				cands = append(cands, c)
+				label := fmt.Sprintf("CoupledFreq[Op%d.C%+d,F%+d]", op+1, d[0], d[1])
+				meta = append(meta, candidateMeta{knobName: label, val: newC})
+			}
+		}
+	}
+
+	return cands, meta
+}
+
+// generateMultiDialCrossTroughCandidates samples multi-dial combinations from cached acceleration troughs.
+func generateMultiDialCrossTroughCandidates(base *Candidate, knobs []KnobDef, cache map[string][]int, rng *rand.Rand) ([]*Candidate, []candidateMeta) {
+	if len(cache) < 2 {
+		return nil, nil
+	}
+
+	type activeKnob struct {
+		knob    KnobDef
+		troughs []int
+	}
+
+	var active []activeKnob
+	for _, k := range knobs {
+		if t, ok := cache[k.name]; ok && len(t) > 0 {
+			active = append(active, activeKnob{knob: k, troughs: t})
+		}
+	}
+
+	if len(active) < 2 {
+		return nil, nil
+	}
+
+	var cands []*Candidate
+	var meta []candidateMeta
+
+	numPerms := 25
+	for p := 0; p < numPerms; p++ {
+		c := base.Copy()
+		maxD := len(active)
+		if maxD > 4 {
+			maxD = 4
+		}
+		numDials := 2
+		if maxD > 2 {
+			numDials = 2 + rng.Intn(maxD-1)
+		}
+		perm := rng.Perm(len(active))
+		var applied []string
+
+		for i := 0; i < numDials; i++ {
+			ak := active[perm[i]]
+			val := ak.troughs[rng.Intn(len(ak.troughs))]
+			curVal := ak.knob.getter(c)
+			if val != curVal && val >= ak.knob.min && val <= ak.knob.max {
+				ak.knob.setter(c, val)
+				applied = append(applied, fmt.Sprintf("%s->%d", ak.knob.name, val))
+			}
+		}
+
+		if len(applied) > 0 {
+			cands = append(cands, c)
+			label := fmt.Sprintf("CrossTrough[%s]", strings.Join(applied, ","))
+			meta = append(meta, candidateMeta{knobName: label, val: 0})
+		}
+	}
+
+	return cands, meta
+}
+
 func generateBatch(base *Candidate, knobs []KnobDef, fine bool) ([]*Candidate, []candidateMeta) {
 	var cands []*Candidate
 	var meta []candidateMeta
@@ -393,18 +569,63 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				}
 			}
 
-			// B. Coarse pass
+			// B. Coarse pass (1D single knob sweeps + Multi-Knob Coordinate Vector & Coupled Operator Sweeps)
 			coarseCands, coarseMeta := generateBatch(curPatch, knobs, false)
 			if len(coarseCands) > 0 {
 				fits, _ := evaluateBatchParallel(coarseCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
 
 				bestIdx := -1
 				bestFit := curDist
+				var improvers []knobDelta
+
 				for i, f := range fits {
 					if f < bestFit {
 						bestFit = f
 						bestIdx = i
 					}
+					if (curDist - f) > 1e-4 {
+						m := coarseMeta[i]
+						for kIdx, k := range knobs {
+							if k.name == m.knobName {
+								curVal := k.getter(curPatch)
+								improvers = append(improvers, knobDelta{
+									knobIdx: kIdx,
+									knob:    k,
+									delta:   m.val - curVal,
+									imp:     curDist - f,
+								})
+								break
+							}
+						}
+					}
+				}
+
+				// Check Multi-Knob Coordinate Trajectory & Coupled Operator Sweeps
+				var multiCands []*Candidate
+				var multiMeta []candidateMeta
+
+				if len(improvers) >= 2 {
+					trajCands, trajMeta := generateMultiKnobTrajectoryCandidates(curPatch, knobs, improvers)
+					multiCands = append(multiCands, trajCands...)
+					multiMeta = append(multiMeta, trajMeta...)
+				}
+
+				coupledCands, coupledMeta := generateCoupledOperatorCandidates(curPatch, knobs)
+				multiCands = append(multiCands, coupledCands...)
+				multiMeta = append(multiMeta, coupledMeta...)
+
+				numSingleKnob := len(coarseCands)
+				if len(multiCands) > 0 {
+					mFits, _ := evaluateBatchParallel(multiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+					for i, mf := range mFits {
+						if mf < bestFit {
+							bestFit = mf
+							bestIdx = numSingleKnob + i
+						}
+					}
+					coarseCands = append(coarseCands, multiCands...)
+					coarseMeta = append(coarseMeta, multiMeta...)
+					fits = append(fits, mFits...)
 				}
 
 				if bestIdx >= 0 && (curDist-bestFit) > 1e-4 {
@@ -412,7 +633,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 					curDist = bestFit
 
 					// Record discrete 2nd-derivative acceleration troughs for future probe leaps
-					updateAccelerationCache(accelCache, knobs, prevDist, coarseCands, coarseMeta, fits)
+					updateAccelerationCache(accelCache, knobs, prevDist, coarseCands[:numSingleKnob], coarseMeta[:numSingleKnob], fits[:numSingleKnob])
 					lo.accelCache = accelCache
 
 					curPatch = coarseCands[bestIdx].Copy()
@@ -424,8 +645,8 @@ func (lo *LiveOptimizer) Run() *Candidate {
 					}
 
 					if lo.verbose {
-						fmt.Printf("[live] iter %d: %s -> %d (dist=%.6f, improved from %.6f)\n",
-							iter, m.knobName, m.val, curDist, prevDist)
+						fmt.Printf("[live] iter %d: %s (dist=%.6f, improved from %.6f)\n",
+							iter, m.knobName, curDist, prevDist)
 					}
 					continue
 				}
@@ -438,11 +659,57 @@ func (lo *LiveOptimizer) Run() *Candidate {
 
 				fineBestIdx := -1
 				fineBestFit := curDist
+				var fineImprovers []knobDelta
+
 				for i, f := range fineFits {
 					if f < fineBestFit {
 						fineBestFit = f
 						fineBestIdx = i
 					}
+					if (curDist - f) > 1e-4 {
+						m := fineMeta[i]
+						for kIdx, k := range knobs {
+							if k.name == m.knobName {
+								curVal := k.getter(curPatch)
+								fineImprovers = append(fineImprovers, knobDelta{
+									knobIdx: kIdx,
+									knob:    k,
+									delta:   m.val - curVal,
+									imp:     curDist - f,
+								})
+								break
+							}
+						}
+					}
+				}
+
+				// Check Multi-Knob Fine Trajectories & Multi-Dial Cross-Troughs
+				var fineMultiCands []*Candidate
+				var fineMultiMeta []candidateMeta
+
+				if len(fineImprovers) >= 2 {
+					fineTrajCands, fineTrajMeta := generateMultiKnobTrajectoryCandidates(curPatch, knobs, fineImprovers)
+					fineMultiCands = append(fineMultiCands, fineTrajCands...)
+					fineMultiMeta = append(fineMultiMeta, fineTrajMeta...)
+				}
+
+				rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+				crossCands, crossMeta := generateMultiDialCrossTroughCandidates(curPatch, knobs, accelCache, rng)
+				fineMultiCands = append(fineMultiCands, crossCands...)
+				fineMultiMeta = append(fineMultiMeta, crossMeta...)
+
+				numSingleFine := len(fineCands)
+				if len(fineMultiCands) > 0 {
+					fmFits, _ := evaluateBatchParallel(fineMultiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+					for i, fmf := range fmFits {
+						if fmf < fineBestFit {
+							fineBestFit = fmf
+							fineBestIdx = numSingleFine + i
+						}
+					}
+					fineCands = append(fineCands, fineMultiCands...)
+					fineMeta = append(fineMeta, fineMultiMeta...)
+					fineFits = append(fineFits, fmFits...)
 				}
 
 				if fineBestIdx >= 0 && (curDist-fineBestFit) > 1e-4 {
@@ -457,8 +724,8 @@ func (lo *LiveOptimizer) Run() *Candidate {
 					}
 
 					if lo.verbose {
-						fmt.Printf("[live-fine] iter %d: %s -> %d (dist=%.6f, improved from %.6f)\n",
-							iter, m.knobName, m.val, curDist, prevDist)
+						fmt.Printf("[live-fine] iter %d: %s (dist=%.6f, improved from %.6f)\n",
+							iter, m.knobName, curDist, prevDist)
 					}
 					continue
 				}
