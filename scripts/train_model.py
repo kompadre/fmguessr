@@ -230,6 +230,7 @@ def export_to_onnx(model, output_path, device):
         do_constant_folding=True,
         input_names=["spectrogram"],
         output_names=["continuous"],
+        dynamo=False,
         dynamic_axes={
             "spectrogram": {0: "batch_size"},
             "continuous": {0: "batch_size"}
