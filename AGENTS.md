@@ -1,5 +1,24 @@
 # AGENTS.md
 
+# OpenCode Execution & Go Refactoring Rules
+
+## 1. Tool Call Budget & Loop Prevention
+- **No Micro-Read Loops:** NEVER issue consecutive `Read` tool calls with small line limits (e.g., 10–30 lines) or creeping offsets to verify an edit. Read entire functions or logical blocks in a single pass.
+- **Fail Fast:** If an `Edit` tool call fails twice consecutively on the same target block due to line offset or string matching errors, STOP immediately. Do NOT attempt to read the file in small chunks to re-align. Explain the issue to the user or ask for clarification.
+- **Whole-Function Replacements:** Prefer replacing entire functions or distinct `type` / `struct` definitions over multi-line search-and-replace strings. This prevents fuzzy-matching failures and line drift.
+- **Use Diagnostics over Manual Inspection:** Use `go vet`, `go test`, or `golangci-lint` via the terminal tool to verify file state rather than manually inspecting file lines with repeated `Read` calls.
+
+## 2. Go Refactoring & Code Style
+- **Package Aliases:** Standardize package aliases (e.g., `rl` for Raylib). Treat package identifiers as compile-time constructs—never check package aliases or imports against `nil`.
+- **Zero-Allocation Hot Paths:** In performance-critical loops (DSP, audio buffers, frame optimizations), avoid unnecessary heap allocations. Reuse slices/buffers where possible.
+- **Error Handling:** Always wrap returned errors with context (e.g., `fmt.Errorf("live optimizer update: %w", err)`). Do not discard errors with blank identifiers `_` unless explicitly requested.
+- **Explicit Struct & Field Naming:** Adhere strictly to consistent naming (e.g., use `Waveform` consistently rather than mixing `WaveForm`). Match existing structural patterns in the file.
+- **Reference Semantics:** Remember that passing elements by reference in slices or maps allows in-place mutation; ensure pointers are verified before dereferencing to prevent runtime panics.
+
+## 3. Plan-to-Build Execution Workflow
+- **Execute in Stages:** When implementing complex architectural changes (like optimizer loops or audio metrics), execute one discrete logical step at a time.
+- **Verification Gate:** After executing a single step, run `go check` or `go test ./...` to verify syntax and compilation before proceeding to the next file edit.
+
 ## Repository Overview
 `fmguessr` is a 6-operator FM synthesizer patch generator that uses genetic algorithms, continuous MLP neural network prediction, and live hill-climbing optimization to match target audio WAV files and generate DX7-compatible System Exclusive (`.syx`) bank files.
 
