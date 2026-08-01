@@ -7,4 +7,5 @@ require (
 	github.com/go-audio/riff v1.0.0 // indirect
 	github.com/go-audio/wav v1.1.0 // indirect
 	github.com/madelynnblue/go-dsp v1.0.0 // indirect
+	github.com/yalue/onnxruntime_go v1.16.0 // indirect
 )

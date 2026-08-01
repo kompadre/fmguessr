@@ -1,17 +1,29 @@
 # Binaries
-match
-index
-play
+/match
+/index
+/play
+/server
+/generate
 
-# Generated Indices
-*.bin
+# Generated Indices & Models
+/*.bin
+/*.bin.*
+/*.onnx
+/*.onnx.data
+/*.pth*
+/*.npz
 
 # Test Artifacts and Temporary Files
-test_match.wav
-test_out.syx
-test_codebook.bin
-match.wav
-bla3.syx
+/test_*
+/*.wav
+/*.syx
+/exports/
+/rendered_*/
+/*.log
+/lib/
+/onnxruntime-*/
+__pycache__/
+*.pyc
 
 # Go workspace
-go.work
+/go.work

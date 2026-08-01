@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 
 	"github.com/kompadre/fmguessr/external/msfa"
 	"github.com/kompadre/fmguessr/pkg/match"
@@ -29,72 +31,140 @@ func main() {
 	}
 
 	fmt.Printf("Loaded %d patches from %s\n", len(cb.Entries), *codebookPath)
-	fmt.Printf("Rendering %d variants per patch at MIDI %d...\n", *variants, *noteNum)
+	fmt.Printf("Rendering %d variants per patch at MIDI %d (parallel)...\n", *variants, *noteNum)
 
-	// Create synth for rendering
-	synth := msfa.NewSynth(float64(match.RenderSampleRate))
-	defer synth.Free()
+	// Build work items: base patch + perturbations
+	type workItem struct {
+		patchIdx int
+		variant  int
+		cand     *match.Candidate
+	}
 
-	// Labels file: [n_samples uint32, n_params uint32, labels float32...]
-	labelsFile, err := os.Create(filepath.Join(*outDir, "labels.bin"))
+	var workItems []workItem
+	rng := rand.New(rand.NewSource(42))
+
+	for patchIdx, entry := range cb.Entries {
+		// Base patch
+		workItems = append(workItems, workItem{patchIdx, 0, entry.Candidate.Copy()})
+
+		// Perturbed variants
+		for v := 1; v < *variants; v++ {
+			perturbed := perturbCandidate(entry.Candidate, rng)
+			workItems = append(workItems, workItem{patchIdx, v, perturbed})
+		}
+	}
+
+	totalSamples := len(workItems)
+	fmt.Printf("Total work items: %d\n", totalSamples)
+
+	// Parallel rendering with worker pool
+	numWorkers := runtime.GOMAXPROCS(0)
+	fmt.Printf("Using %d workers\n", numWorkers)
+
+	var mu sync.Mutex
+	completed := 0
+
+	// Thread-safe label collection
+	allLabels := make([][]float32, totalSamples)
+
+	// Channel for work items
+	workChan := make(chan workItem, numWorkers*4)
+
+	// Start workers BEFORE filling the channel to avoid deadlock
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			// Each worker gets its own synth instance
+			workerSynth := msfa.NewSynth(float64(match.RenderSampleRate))
+			defer workerSynth.Free()
+
+			for item := range workChan {
+				// Render pure sustain: skip attack, render sustain-only
+				pcm := renderPureSustain(workerSynth, item.cand, *noteNum, *outDir, item.patchIdx, item.variant)
+
+				// Save WAV (each file is unique per patchIdx+variant, no lock needed)
+				wavPath := fmt.Sprintf("%s/p%04d_v%02d.wav", *outDir, item.patchIdx, item.variant)
+				saveWav(wavPath, pcm, match.RenderSampleRate)
+
+				// Store label (thread-safe index assignment)
+				label := normalizeTimbreParams(item.cand)
+				allLabels[item.patchIdx**variants+item.variant] = label
+
+				mu.Lock()
+				completed++
+				patchProgress := (item.patchIdx + 1)
+				if item.variant == 0 {
+					if patchProgress%100 == 0 || patchProgress == len(cb.Entries) {
+						fmt.Printf("  [%d/%d] %s\n", patchProgress, len(cb.Entries), cb.Entries[item.patchIdx].Name)
+					}
+				}
+				if completed%500 == 0 {
+					fmt.Printf("  [%d/%d] samples rendered\n", completed, totalSamples)
+				}
+				mu.Unlock()
+			}
+		}(w)
+	}
+
+	// Now fill the channel (workers are already consuming)
+	for _, item := range workItems {
+		workChan <- item
+	}
+	close(workChan)
+
+	wg.Wait()
+
+	// Write labels file sequentially (no race)
+	labelsPath := filepath.Join(*outDir, "labels.bin")
+	labelsFile, err := os.Create(labelsPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating labels file: %v\n", err)
 		os.Exit(1)
 	}
 	defer labelsFile.Close()
 
-	// Write placeholder header (update later)
-	binary.Write(labelsFile, binary.LittleEndian, uint32(0))
+	binary.Write(labelsFile, binary.LittleEndian, uint32(totalSamples))
 	binary.Write(labelsFile, binary.LittleEndian, uint32(match.NumCandidateParams))
-
-	rng := rand.New(rand.NewSource(42))
-	totalSamples := 0
-
-	for patchIdx, entry := range cb.Entries {
-		if (patchIdx+1)%100 == 0 || patchIdx == 0 {
-			fmt.Printf("  [%d/%d] %s\n", patchIdx+1, len(cb.Entries), entry.Name)
-		}
-
-		// Render base patch
-		renderPatch(synth, entry.Candidate, *noteNum, *outDir, patchIdx, 0, labelsFile)
-
-		// Create perturbed variants
-		for v := 1; v < *variants; v++ {
-			perturbed := perturbCandidate(entry.Candidate, rng)
-			renderPatch(synth, perturbed, *noteNum, *outDir, patchIdx, v, labelsFile)
-			totalSamples++
-		}
-		totalSamples++ // count base patch
+	for _, label := range allLabels {
+		binary.Write(labelsFile, binary.LittleEndian, label)
 	}
 
-	// Update header with total count
-	labelsFile.Seek(0, 0)
-	binary.Write(labelsFile, binary.LittleEndian, uint32(totalSamples))
-
-	fmt.Printf("Done: %d total samples rendered\n", totalSamples)
+	fmt.Printf("Done: %d total samples rendered -> %s\n", totalSamples, labelsPath)
 }
 
-func renderPatch(synth *msfa.Synth, c *match.Candidate, noteNum int, outDir string, patchIdx, variant int, labelsFile *os.File) {
-	patch := c.Encode()
+func renderPureSustain(synth *msfa.Synth, c *match.Candidate, noteNum int, outDir string, patchIdx, variant int) []int16 {
+	// Create an envelope-neutral version of the patch
+	// DX7 rates: 0=slowest, 99=fastest
+	// Levels: 0=silence, 99=max
+	// For pure sustain: instant attack, instant decay to sustain, hold indefinitely
+	neutral := c.Copy()
+	for i := 0; i < 6; i++ {
+		neutral.Ops[i].Rate1 = 99  // Instant attack
+		neutral.Ops[i].Rate2 = 99  // Instant decay to sustain
+		neutral.Ops[i].Level3 = 99 // 100% sustain level
+		neutral.Ops[i].Rate4 = 99  // Fast release (unused, no Note Off sent)
+	}
+
+	patch := neutral.Encode()
 	synth.SetVoice(0, patch)
 
-	// Render 1 second
+	// Render 1 second of pure sustained tone
+	attackSkip := 50 * match.RenderSampleRate / 1000 // 50ms attack prime
+	sustainLen := match.RenderSampleRate              // 1 full second
+
+	// Prime the synth with a short attack burst
+	prime := make([]int16, attackSkip)
 	synth.WriteMidi([]byte{0x90, byte(noteNum), 100})
-	pcm := make([]int16, match.RenderSampleRate)
+	synth.GetSamples(prime)
+
+	// Capture exactly 1 second of stable sustain — NO Note Off
+	pcm := make([]int16, sustainLen)
 	synth.GetSamples(pcm)
-	synth.WriteMidi([]byte{0x80, byte(noteNum), 0})
 
-	// Drain
-	drain := make([]int16, match.RenderSampleRate/4)
-	synth.GetSamples(drain)
-
-	// Save WAV
-	wavPath := fmt.Sprintf("%s/p%04d_v%02d.wav", outDir, patchIdx, variant)
-	saveWav(wavPath, pcm, match.RenderSampleRate)
-
-	// Write label (50 normalized params)
-	label := normalizeParams(c)
-	binary.Write(labelsFile, binary.LittleEndian, label)
+	return pcm
 }
 
 func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
@@ -140,29 +210,36 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 	return d
 }
 
-func normalizeParams(c *match.Candidate) []float32 {
+func normalizeTimbreParams(c *match.Candidate) []float32 {
 	normalized := make([]float32, match.NumCandidateParams)
 
-	// Algorithm
-	normalized[0] = float32(c.Algorithm) / 31.0
+	normalized[0] = clampFloat(float32(c.Algorithm) / 31.0)
 
-	// Per-operator params
 	for opIdx := 0; opIdx < 6; opIdx++ {
 		base := 1 + opIdx*8
-		normalized[base+0] = float32(c.Ops[opIdx].Mode)
-		normalized[base+1] = float32(c.Ops[opIdx].FreqCoarse) / 31.0
-		normalized[base+2] = float32(c.Ops[opIdx].FreqFine) / 99.0
-		normalized[base+3] = float32(c.Ops[opIdx].OutputLevel) / 99.0
-		normalized[base+4] = float32(c.Ops[opIdx].Rate1) / 99.0
-		normalized[base+5] = float32(c.Ops[opIdx].Rate2) / 99.0
-		normalized[base+6] = float32(c.Ops[opIdx].Level3) / 99.0
-		normalized[base+7] = float32(c.Ops[opIdx].Rate4) / 99.0
+		normalized[base+0] = clampFloat(float32(c.Ops[opIdx].Mode))
+		normalized[base+1] = clampFloat(float32(c.Ops[opIdx].FreqCoarse) / 31.0)
+		normalized[base+2] = clampFloat(float32(c.Ops[opIdx].FreqFine) / 99.0)
+		normalized[base+3] = clampFloat(float32(c.Ops[opIdx].OutputLevel) / 99.0)
+		normalized[base+4] = 0.0 // Rate1 neutral
+		normalized[base+5] = 0.0 // Rate2 neutral
+		normalized[base+6] = 1.0 // Level3 = 100% sustain
+		normalized[base+7] = 0.0 // Rate4 neutral
 	}
 
-	// Feedback
-	normalized[49] = float32(c.Feedback) / 7.0
+	normalized[49] = clampFloat(float32(c.Feedback) / 7.0)
 
 	return normalized
+}
+
+func clampFloat(v float32) float32 {
+	if v < 0.0 {
+		return 0.0
+	}
+	if v > 1.0 {
+		return 1.0
+	}
+	return v
 }
 
 func saveWav(path string, samples []int16, sampleRate int) {
@@ -172,7 +249,6 @@ func saveWav(path string, samples []int16, sampleRate int) {
 	}
 	defer f.Close()
 
-	// WAV header
 	dataSize := len(samples) * 2
 	fileSize := 36 + dataSize
 
@@ -182,12 +258,12 @@ func saveWav(path string, samples []int16, sampleRate int) {
 
 	f.Write([]byte("fmt "))
 	binary.Write(f, binary.LittleEndian, uint32(16))
-	binary.Write(f, binary.LittleEndian, uint16(1)) // PCM
-	binary.Write(f, binary.LittleEndian, uint16(1)) // mono
+	binary.Write(f, binary.LittleEndian, uint16(1))
+	binary.Write(f, binary.LittleEndian, uint16(1))
 	binary.Write(f, binary.LittleEndian, uint32(sampleRate))
-	binary.Write(f, binary.LittleEndian, uint32(sampleRate*2)) // byte rate
-	binary.Write(f, binary.LittleEndian, uint16(2))             // block align
-	binary.Write(f, binary.LittleEndian, uint16(16))            // bits per sample
+	binary.Write(f, binary.LittleEndian, uint32(sampleRate*2))
+	binary.Write(f, binary.LittleEndian, uint16(2))
+	binary.Write(f, binary.LittleEndian, uint16(16))
 
 	f.Write([]byte("data"))
 	binary.Write(f, binary.LittleEndian, uint32(dataSize))

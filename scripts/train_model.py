@@ -17,102 +17,110 @@ from torch.utils.data import Dataset, DataLoader, random_split
 
 
 class DX7ParameterEstimator(nn.Module):
-    """4-layer CNN for DX7 parameter estimation from mel spectrograms."""
+    """Lightweight MLP for DX7 timbre parameter estimation.
+    
+    Predicts only continuous params (fines, levels, feedback).
+    Algorithm and coarse ratios are handled by the GA.
+    Input: 256-bin timbre spectrum
+    Output: 13 continuous values (6 fines + 6 levels + 1 feedback)
+    """
 
     def __init__(self):
         super(DX7ParameterEstimator, self).__init__()
 
-        # Convolutional Backbone
-        self.backbone = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
+        # Feature extractor (256 -> 128 -> 64)
+        self.shared = nn.Sequential(
+            nn.Linear(256, 128),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 4))
+            nn.Dropout(0.2),
         )
 
-        # Shared Dense Bottleneck
-        self.fc_shared = nn.Sequential(
-            nn.Linear(256 * 4 * 4, 512),
-            nn.ReLU(),
-            nn.Dropout(0.3)
-        )
-
-        # Head A: Algorithm (32 possible algorithms)
-        self.head_algo = nn.Linear(512, 32)
-
-        # Head B: Coarse Ratios (6 operators x 32 possible coarse values)
-        self.head_coarse = nn.Linear(512, 6 * 32)
-
-        # Head C: Continuous Parameters (6 Op Levels + 6 Op Fines + 1 Feedback = 13)
+        # Output: 13 continuous params (6 fines + 6 levels + 1 feedback)
         self.head_continuous = nn.Sequential(
-            nn.Linear(512, 128),
+            nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(128, 13),
+            nn.Linear(32, 13),
             nn.Sigmoid()
         )
 
     def forward(self, x):
-        feat = self.backbone(x)
-        feat = feat.view(feat.size(0), -1)
-        feat = self.fc_shared(feat)
+        # Input: (Batch, 1, 256) -> squeeze to (Batch, 256)
+        feat = x.squeeze(1)
+        feat = self.shared(feat)  # -> (Batch, 64)
 
-        algo_logits = self.head_algo(feat)
-        coarse_logits = self.head_coarse(feat).view(-1, 6, 32)
         continuous_out = self.head_continuous(feat)
 
         return {
-            "algo_logits": algo_logits,
-            "coarse_logits": coarse_logits,
             "continuous": continuous_out
         }
 
 
-class DX7MultiTaskLoss(nn.Module):
-    """Multi-task loss for DX7 parameter estimation."""
+class DX7MaskedMultiTaskLoss(nn.Module):
+    """Multi-task loss for DX7 parameter estimation with operator level masking."""
 
-    def __init__(self, w_algo=1.0, w_coarse=2.0, w_cont=5.0):
-        super(DX7MultiTaskLoss, self).__init__()
+    def __init__(self, w_algo=1.0, w_coarse=2.0, w_cont=5.0, level_threshold=0.05):
+        super(DX7MaskedMultiTaskLoss, self).__init__()
         self.w_algo = w_algo
         self.w_coarse = w_coarse
         self.w_cont = w_cont
+        self.level_threshold = level_threshold
+        
+        # reduction='none' allows us to apply per-operator masks before averaging
+        self.ce_loss_none = nn.CrossEntropyLoss(reduction='none')
         self.ce_loss = nn.CrossEntropyLoss()
         self.mse_loss = nn.MSELoss()
 
     def forward(self, predictions, targets):
+        # 1. Algorithm Loss (Global routing)
         loss_algo = self.ce_loss(predictions["algo_logits"], targets["algo"])
 
-        loss_coarse = 0.0
-        for op in range(6):
-            loss_coarse += self.ce_loss(predictions["coarse_logits"][:, op, :], targets["coarse"][:, op])
+        # 2. Level-Masked Coarse Frequency Loss
+        # Extract normalized operator levels (assuming continuous targets indices 1..6 represent Op1..Op6 levels)
+        # Shape: (batch_size, 6)
+        op_levels = targets["continuous"][:, 1:7]
+        
+        # Create a soft or hard mask: operators above threshold get full/proportional weight
+        # Hard mask: 1.0 if level > threshold else 0.0
+        op_mask = (op_levels > self.level_threshold).float()
 
+        total_masked_coarse_loss = 0.0
+        total_active_ops = 0.0
+
+        for op in range(6):
+            # Compute unreduced CrossEntropy per sample: shape (batch_size,)
+            raw_ce = self.ce_loss_none(
+                predictions["coarse_logits"][:, op, :], 
+                targets["coarse"][:, op]
+            )
+            
+            # Mask out silent operators for this specific operator index
+            mask = op_mask[:, op]
+            masked_ce = raw_ce * mask
+            
+            total_masked_coarse_loss += masked_ce.sum()
+            total_active_ops += mask.sum()
+
+        # Average loss ONLY across active operators (avoid divide-by-zero with clamp)
+        loss_coarse = total_masked_coarse_loss / torch.clamp(total_active_ops, min=1.0)
+
+        # 3. Continuous Loss (Feedback + Operator Levels)
         loss_cont = self.mse_loss(predictions["continuous"], targets["continuous"])
 
+        # Total weighted loss
         total_loss = (self.w_algo * loss_algo) + (self.w_coarse * loss_coarse) + (self.w_cont * loss_cont)
 
         return total_loss, {
             "loss_algo": loss_algo.item(),
             "loss_coarse": loss_coarse.item(),
-            "loss_cont": loss_cont.item()
+            "loss_cont": loss_cont.item(),
+            "active_op_ratio": (total_active_ops / (op_levels.size(0) * 6)).item()
         }
 
-
 class DX7Dataset(Dataset):
-    """Dataset for DX7 parameter estimation."""
+    """Dataset for DX7 continuous parameter estimation."""
 
     def __init__(self, spectrograms, labels):
         self.spectrograms = spectrograms
@@ -125,18 +133,8 @@ class DX7Dataset(Dataset):
         spec = self.spectrograms[idx]
         label = self.labels[idx]
 
-        # Add channel dimension: (128, 128) -> (1, 128, 128)
+        # Add channel dimension: (256,) -> (1, 256)
         spec_tensor = torch.from_numpy(spec).unsqueeze(0).float()
-
-        # Parse label into targets dict
-        algo = int(round(label[0] * 31))  # Denormalize algorithm
-        algo = max(0, min(31, algo))
-
-        coarse = np.zeros(6, dtype=np.int64)
-        for op in range(6):
-            base = 1 + op * 8
-            coarse[op] = int(round(label[base + 1] * 31))  # Denormalize coarse
-            coarse[op] = max(0, min(31, coarse[op]))
 
         # Extract continuous params: 6 fines + 6 levels + 1 feedback = 13
         continuous = np.zeros(13, dtype=np.float32)
@@ -148,37 +146,22 @@ class DX7Dataset(Dataset):
 
         return {
             "spec": spec_tensor,
-            "algo": torch.tensor(algo, dtype=torch.long),
-            "coarse": torch.tensor(coarse, dtype=torch.long),
             "continuous": torch.tensor(continuous, dtype=torch.float32)
         }
 
 
 class DX7MultiTaskLoss(nn.Module):
-    """Multi-task loss for DX7 parameter estimation."""
+    """MSE loss for continuous timbre parameters only."""
 
-    def __init__(self, w_algo=1.0, w_coarse=2.0, w_cont=5.0):
+    def __init__(self):
         super(DX7MultiTaskLoss, self).__init__()
-        self.w_algo = w_algo
-        self.w_coarse = w_coarse
-        self.w_cont = w_cont
-        self.ce_loss = nn.CrossEntropyLoss()
         self.mse_loss = nn.MSELoss()
 
     def forward(self, predictions, targets):
-        loss_algo = self.ce_loss(predictions["algo_logits"], targets["algo"])
-
-        loss_coarse = 0.0
-        for op in range(6):
-            loss_coarse += self.ce_loss(predictions["coarse_logits"][:, op, :], targets["coarse"][:, op])
-
+        # Only penalize continuous params (fines, levels, feedback)
         loss_cont = self.mse_loss(predictions["continuous"], targets["continuous"])
 
-        total_loss = (self.w_algo * loss_algo) + (self.w_coarse * loss_coarse) + (self.w_cont * loss_cont)
-
-        return total_loss, {
-            "loss_algo": loss_algo.item(),
-            "loss_coarse": loss_coarse.item(),
+        return loss_cont, {
             "loss_cont": loss_cont.item()
         }
 
@@ -190,11 +173,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
 
     for batch in dataloader:
         specs = batch["spec"].to(device)
-        targets = {
-            "algo": batch["algo"].to(device),
-            "coarse": batch["coarse"].to(device),
-            "continuous": batch["continuous"].to(device)
-        }
+        targets = {"continuous": batch["continuous"].to(device)}
 
         predictions = model(specs)
         loss, _ = criterion(predictions, targets)
@@ -213,18 +192,13 @@ def validate(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0.0
     n_batches = 0
-    algo_correct = 0
-    coarse_correct = 0
     total_samples = 0
+    mae_sum = 0.0
 
     with torch.no_grad():
         for batch in dataloader:
             specs = batch["spec"].to(device)
-            targets = {
-                "algo": batch["algo"].to(device),
-                "coarse": batch["coarse"].to(device),
-                "continuous": batch["continuous"].to(device)
-            }
+            targets = {"continuous": batch["continuous"].to(device)}
 
             predictions = model(specs)
             loss, _ = criterion(predictions, targets)
@@ -232,40 +206,32 @@ def validate(model, dataloader, criterion, device):
             total_loss += loss.item()
             n_batches += 1
 
-            # Accuracy metrics
-            algo_pred = predictions["algo_logits"].argmax(dim=1)
-            algo_correct += (algo_pred == targets["algo"]).sum().item()
-
-            coarse_pred = predictions["coarse_logits"].argmax(dim=2)
-            coarse_correct += (coarse_pred == targets["coarse"]).all(dim=1).sum().item()
-
+            # MAE metric
+            mae_sum += (predictions["continuous"] - targets["continuous"]).abs().mean().item()
             total_samples += specs.size(0)
 
     return {
         "loss": total_loss / n_batches,
-        "algo_acc": algo_correct / total_samples,
-        "coarse_acc": coarse_correct / total_samples
+        "mae": mae_sum / n_batches
     }
 
 
 def export_to_onnx(model, output_path, device):
     """Export trained model to ONNX format."""
     model.eval()
-    dummy_input = torch.randn(1, 1, 128, 128).to(device)
+    dummy_input = torch.randn(1, 1, 256).to(device)
 
     torch.onnx.export(
         model,
         dummy_input,
         output_path,
         export_params=True,
-        opset_version=13,
+        opset_version=18,
         do_constant_folding=True,
         input_names=["spectrogram"],
-        output_names=["algo_logits", "coarse_logits", "continuous"],
+        output_names=["continuous"],
         dynamic_axes={
             "spectrogram": {0: "batch_size"},
-            "algo_logits": {0: "batch_size"},
-            "coarse_logits": {0: "batch_size"},
             "continuous": {0: "batch_size"}
         }
     )
@@ -286,7 +252,15 @@ def main():
     # Load dataset
     print(f"Loading dataset from {args.dataset}...")
     data = np.load(args.dataset)
-    spectrograms = data["spectrograms"]
+    # Support both old key ("spectrograms") and new key ("timbre_specs")
+    if "timbre_specs" in data:
+        spectrograms = data["timbre_specs"]
+        print(f"  Loaded timbre specs: {spectrograms.shape}")
+    elif "spectrograms" in data:
+        spectrograms = data["spectrograms"]
+        print(f"  Loaded spectrograms: {spectrograms.shape}")
+    else:
+        raise KeyError(f"Dataset must contain 'timbre_specs' or 'spectrograms', got keys: {list(data.keys())}")
     labels = data["labels"]
     print(f"  {len(spectrograms)} samples, shape {spectrograms.shape}")
 
@@ -316,39 +290,40 @@ def main():
 
     # Create model
     model = DX7ParameterEstimator().to(device)
-    criterion = DX7MultiTaskLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    if True: 
+        criterion = DX7MultiTaskLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
-    print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+        print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Training loop
-    best_val_loss = float('inf')
-    patience_counter = 0
+        # Training loop
+        best_val_loss = float('inf')
+        patience_counter = 0
 
-    for epoch in range(args.epochs):
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_metrics = validate(model, val_loader, criterion, device)
+        for epoch in range(args.epochs):
+            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            val_metrics = validate(model, val_loader, criterion, device)
 
-        scheduler.step(val_metrics["loss"])
+            scheduler.step(val_metrics["loss"])
 
-        # Early stopping
-        if val_metrics["loss"] < best_val_loss:
-            best_val_loss = val_metrics["loss"]
-            patience_counter = 0
-            # Save best model
-            torch.save(model.state_dict(), "model_best.pth")
-        else:
-            patience_counter += 1
+            # Early stopping
+            if val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
+                patience_counter = 0
+                # Save best model
+                torch.save(model.state_dict(), "model_best.pth")
+            else:
+                patience_counter += 1
 
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:3d}/{args.epochs}: "
-                  f"train_loss={train_loss:.4f} val_loss={val_metrics['loss']:.4f} "
-                  f"algo_acc={val_metrics['algo_acc']:.3f} coarse_acc={val_metrics['coarse_acc']:.3f}")
+            if (epoch + 1) % 5 == 0 or epoch == 0:
+                print(f"  Epoch {epoch+1:3d}/{args.epochs}: "
+                      f"train_loss={train_loss:.4f} val_loss={val_metrics['loss']:.4f} "
+                      f"mae={val_metrics['mae']:.4f}")
 
-        if patience_counter >= args.patience:
-            print(f"  Early stopping at epoch {epoch+1}")
-            break
+                if patience_counter >= args.patience:
+                    print(f"  Early stopping at epoch {epoch+1}")
+                    break
 
     # Load best model and export
     model.load_state_dict(torch.load("model_best.pth"))
@@ -357,11 +332,19 @@ def main():
     # Verify ONNX model
     print("Verifying ONNX model...")
     import onnxruntime as ort
+    import time as _time
     ort_session = ort.InferenceSession(args.output)
-    dummy = np.random.randn(1, 1, 128, 128).astype(np.float32)
+    dummy = np.random.randn(1, 1, 256).astype(np.float32)
     outputs = ort_session.run(None, {"spectrogram": dummy})
     print(f"  ONNX output shapes: {[o.shape for o in outputs]}")
-    print(f"  Inference time: ~{ort_session.get_profiling_result().average_time * 1000:.1f}ms")
+    # Quick timing
+    times = []
+    for _ in range(10):
+        t0 = _time.perf_counter()
+        ort_session.run(None, {"spectrogram": dummy})
+        times.append(_time.perf_counter() - t0)
+    avg_ms = sum(times) / len(times) * 1000
+    print(f"  Inference time: ~{avg_ms:.1f}ms")
 
     # Clean up
     os.remove("model_best.pth")
