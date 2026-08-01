@@ -332,3 +332,237 @@ func TimbreSpecToFloat64(spec [TimbreSpecBins]float64) []float64 {
 	copy(out, spec[:])
 	return out
 }
+
+const (
+	TemporalNumSlices     = 4   // Attack, Decay, Sustain, Release phase slices
+	TemporalSliceBins     = 128 // Bins per slice
+	TemporalProfileFrames = 8   // Frames for RMS energy envelope trajectory
+)
+
+// TemporalTimbreSpec holds multi-stage spectral, flux, and envelope trajectory features.
+type TemporalTimbreSpec struct {
+	// StaticSpec is the 256-bin legacy summary (128 median + 128 variance)
+	StaticSpec [TimbreSpecBins]float64
+
+	// TemporalSlices holds 4 phase spectral slices (Attack, Decay, Sustain, Release)
+	TemporalSlices [TemporalNumSlices][TemporalSliceBins]float64
+
+	// EnergyProfile holds 8-frame normalized RMS energy trajectory over sound duration
+	EnergyProfile [TemporalProfileFrames]float64
+
+	// FluxTrajectory holds spectral flux rates between sequential temporal frames
+	FluxTrajectory [TemporalProfileFrames - 1]float64
+}
+
+// ToLegacySpec returns the 256-bin static spectrum for backward compatibility with 1D predictors.
+func (t TemporalTimbreSpec) ToLegacySpec() [TimbreSpecBins]float64 {
+	return t.StaticSpec
+}
+
+// ToExtendedVector flattens all static, temporal slice, envelope, and flux features into a 1D vector.
+func (t TemporalTimbreSpec) ToExtendedVector() []float64 {
+	out := make([]float64, 0, TimbreSpecBins+TemporalNumSlices*TemporalSliceBins+TemporalProfileFrames+(TemporalProfileFrames-1))
+	out = append(out, t.StaticSpec[:]...)
+	for s := 0; s < TemporalNumSlices; s++ {
+		out = append(out, t.TemporalSlices[s][:]...)
+	}
+	out = append(out, t.EnergyProfile[:]...)
+	out = append(out, t.FluxTrajectory[:]...)
+	return out
+}
+
+// ExtractTemporalTimbreSpec extracts static, temporal multi-slice, energy envelope, and flux features.
+func ExtractTemporalTimbreSpec(samples []float64, sampleRate int) TemporalTimbreSpec {
+	var spec TemporalTimbreSpec
+	spec.StaticSpec = ExtractTimbreWindow(samples, sampleRate)
+
+	if len(samples) < 1024 {
+		return spec
+	}
+
+	// 1. Find active signal bounds
+	maxPeak := 0.0
+	for _, s := range samples {
+		if abs := math.Abs(s); abs > maxPeak {
+			maxPeak = abs
+		}
+	}
+	if maxPeak < 1e-4 {
+		return spec
+	}
+
+	thresh := maxPeak * 0.01
+	activeStart := 0
+	for i, s := range samples {
+		if math.Abs(s) >= thresh {
+			activeStart = i
+			break
+		}
+	}
+	activeEnd := len(samples)
+	for i := len(samples) - 1; i >= activeStart; i-- {
+		if math.Abs(samples[i]) >= thresh {
+			activeEnd = i + 1
+			break
+		}
+	}
+
+	activeLen := activeEnd - activeStart
+	if activeLen < 1024 {
+		return spec
+	}
+	activeSamples := samples[activeStart:activeEnd]
+
+	// 2. Compute 8-frame RMS energy profile
+	frameLen := activeLen / TemporalProfileFrames
+	if frameLen < 128 {
+		frameLen = 128
+	}
+
+	var maxRMS float64
+	for i := 0; i < TemporalProfileFrames; i++ {
+		st := i * frameLen
+		en := st + frameLen
+		if en > len(activeSamples) {
+			en = len(activeSamples)
+		}
+		if st >= en {
+			break
+		}
+
+		sumSq := 0.0
+		for _, v := range activeSamples[st:en] {
+			sumSq += v * v
+		}
+		rms := math.Sqrt(sumSq / float64(en-st))
+		spec.EnergyProfile[i] = rms
+		if rms > maxRMS {
+			maxRMS = rms
+		}
+	}
+
+	// Normalize energy profile to [0, 1]
+	if maxRMS > 1e-8 {
+		for i := range spec.EnergyProfile {
+			spec.EnergyProfile[i] /= maxRMS
+		}
+	}
+
+	// 3. Compute 4 temporal phase slices (Attack, Decay, Sustain, Release)
+	sliceRanges := [TemporalNumSlices][2]float64{
+		{0.00, 0.15},
+		{0.15, 0.40},
+		{0.40, 0.85},
+		{0.85, 1.00},
+	}
+
+	for s := 0; s < TemporalNumSlices; s++ {
+		stIdx := int(float64(activeLen) * sliceRanges[s][0])
+		enIdx := int(float64(activeLen) * sliceRanges[s][1])
+		if enIdx <= stIdx+64 {
+			enIdx = stIdx + 64
+		}
+		if enIdx > activeLen {
+			enIdx = activeLen
+		}
+		if stIdx >= activeLen {
+			stIdx = activeLen - 64
+		}
+
+		sliceSamples := activeSamples[stIdx:enIdx]
+		mag := fftMag(sliceSamples)
+		if mag == nil {
+			continue
+		}
+
+		// Downsample/compress magnitude spectrum into 128 bins up to 8kHz
+		halfWin := len(mag)
+		maxBin := int(float64(halfWin) * 8000.0 / float64(sampleRate))
+		if maxBin < TemporalSliceBins {
+			maxBin = TemporalSliceBins
+		}
+		if maxBin > halfWin {
+			maxBin = halfWin
+		}
+
+		binsPerOutput := maxBin / TemporalSliceBins
+		if binsPerOutput < 1 {
+			binsPerOutput = 1
+		}
+
+		sliceMax := 0.0
+		for i := 0; i < TemporalSliceBins; i++ {
+			sum := 0.0
+			count := 0
+			for j := i * binsPerOutput; j < (i+1)*binsPerOutput && j < maxBin; j++ {
+				sum += mag[j]
+				count++
+			}
+			if count > 0 {
+				val := sum / float64(count)
+				spec.TemporalSlices[s][i] = val
+				if val > sliceMax {
+					sliceMax = val
+				}
+			}
+		}
+
+		// Normalize slice to [0, 1]
+		if sliceMax > 1e-8 {
+			for i := range spec.TemporalSlices[s] {
+				spec.TemporalSlices[s][i] /= sliceMax
+			}
+		}
+	}
+
+	// 4. Compute Spectral Flux Trajectory between sequential frames
+	for i := 0; i < TemporalProfileFrames-1; i++ {
+		dEnv := spec.EnergyProfile[i+1] - spec.EnergyProfile[i]
+		spec.FluxTrajectory[i] = math.Abs(dEnv)
+	}
+
+	return spec
+}
+
+// TemporalTimbreDistance computes a weighted distance incorporating static spectrum,
+// multi-phase temporal slices, energy envelope, and flux trajectories.
+func TemporalTimbreDistance(a, b TemporalTimbreSpec) float64 {
+	// 1. Static spectrum Euclidean distance (normalized)
+	var staticSum float64
+	for i := 0; i < TimbreSpecBins; i++ {
+		d := a.StaticSpec[i] - b.StaticSpec[i]
+		staticSum += d * d
+	}
+	staticDist := math.Sqrt(staticSum) / math.Sqrt(float64(TimbreSpecBins))
+
+	// 2. Multi-phase temporal slices distance
+	var slicesDist float64
+	for s := 0; s < TemporalNumSlices; s++ {
+		var sliceSum float64
+		for i := 0; i < TemporalSliceBins; i++ {
+			d := a.TemporalSlices[s][i] - b.TemporalSlices[s][i]
+			sliceSum += d * d
+		}
+		slicesDist += math.Sqrt(sliceSum) / math.Sqrt(float64(TemporalSliceBins))
+	}
+	slicesDist /= float64(TemporalNumSlices)
+
+	// 3. Energy profile RMS envelope distance
+	var envSum float64
+	for i := 0; i < TemporalProfileFrames; i++ {
+		d := a.EnergyProfile[i] - b.EnergyProfile[i]
+		envSum += d * d
+	}
+	envDist := math.Sqrt(envSum) / math.Sqrt(float64(TemporalProfileFrames))
+
+	// 4. Flux trajectory distance
+	var fluxSum float64
+	for i := 0; i < TemporalProfileFrames-1; i++ {
+		d := a.FluxTrajectory[i] - b.FluxTrajectory[i]
+		fluxSum += d * d
+	}
+	fluxDist := math.Sqrt(fluxSum) / math.Sqrt(float64(TemporalProfileFrames-1))
+
+	// Composite weighted distance
+	return 0.40*staticDist + 0.30*slicesDist + 0.20*envDist + 0.10*fluxDist
+}

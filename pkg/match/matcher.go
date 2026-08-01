@@ -221,23 +221,35 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 
-			// Quick live optimization on best NN result
+			// Quick live optimization & differential Jacobian steering on best NN result
 			var globalLiveOpt *LiveOptimizer
 			if cfg.Verbose {
-				fmt.Println("--- NN Pre-optimization (live optimizer) ---")
+				fmt.Println("--- NN Pre-optimization (live optimizer & diff optimizer) ---")
 			}
 			globalLiveOpt = NewLiveOptimizer(target, scores[0].cand, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 			refined := globalLiveOpt.Run()
-			if globalLiveOpt.bestDist < scores[0].dist {
+
+			// Differential Jacobian steering on extended temporal timbre features
+			diffOpt := NewDiffOptimizer(target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+			diffRefined := diffOpt.RunAlternating(2)
+			if diffOpt.bestDist < globalLiveOpt.bestDist {
+				refined = diffRefined
+			}
+
+			if globalLiveOpt.bestDist < scores[0].dist || diffOpt.bestDist < scores[0].dist {
 				nnCandidates[0] = refined
-				if globalLiveOpt.bestDist <= 1e-4 {
+				bestNnDist := globalLiveOpt.bestDist
+				if diffOpt.bestDist < bestNnDist {
+					bestNnDist = diffOpt.bestDist
+				}
+				if bestNnDist <= 1e-4 {
 					if cfg.Verbose {
-						fmt.Printf("Exact match found during NN pre-optimization (dist=%.6f <= 0.0001). Returning early!\n", globalLiveOpt.bestDist)
+						fmt.Printf("Exact match found during NN pre-optimization (dist=%.6f <= 0.0001). Returning early!\n", bestNnDist)
 					}
-					reportProgress(cfg, 100, "Completed (Exact NN LiveOpt Match)")
+					reportProgress(cfg, 100, "Completed (Exact NN Match)")
 					return Result{
 						Best:     refined,
-						BestDist: globalLiveOpt.bestDist,
+						BestDist: bestNnDist,
 						Iters:    32 + 500,
 						Top:      []*Candidate{refined},
 					}
@@ -576,10 +588,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
-	// Final refinement: live optimizer with checkpoint backtracking
-	reportProgress(cfg, 85, "Phase 3: Live Optimizer Hill-Climbing")
+	// Final refinement: live optimizer & differential Jacobian steering with checkpoint backtracking
+	reportProgress(cfg, 85, "Phase 3: Multi-Stage Hill-Climbing Optimization")
 	if cfg.Verbose {
-		fmt.Println("--- Phase 3: Live Optimizer (hill-climbing) ---")
+		fmt.Println("--- Phase 3: Live Optimizer & Differential Jacobian Steering ---")
 	}
 
 	best := globalGA.Best()
@@ -588,11 +600,20 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	finalPatch := liveOpt.Run()
 	finalDist := liveOpt.bestDist
 
-	if cfg.Verbose {
-		fmt.Printf("Live optimizer final distance: %.6f (GA was: %.6f)\n", finalDist, gaBestDist)
+	// Differential Jacobian steering on extended temporal timbre features (alternating pass)
+	diffOpt := NewDiffOptimizer(target, finalPatch, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+	diffPatch := diffOpt.RunAlternating(3)
+	if diffOpt.bestDist < finalDist {
+		finalPatch = diffPatch
+		finalDist = diffOpt.bestDist
 	}
 
-	// Use live optimizer result if it beat the GA
+	if cfg.Verbose {
+		fmt.Printf("Phase 3 final distance: %.6f (GA was: %.6f, LiveOpt was: %.6f, DiffOpt was: %.6f)\n",
+			finalDist, gaBestDist, liveOpt.bestDist, diffOpt.bestDist)
+	}
+
+	// Use refined result if it beat the GA
 	if finalDist < gaBestDist {
 		best = finalPatch
 		best.Fitness = finalDist

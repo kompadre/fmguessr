@@ -20,6 +20,14 @@ func SpectralDistance(target, candidate []float64) float64 {
 	return spectralDistanceAtScale(target, candidate, 1024, 256)
 }
 
+// TemporalSpectralDistance computes a multi-stage temporal distance comparing
+// target and candidate PCM signals using TemporalTimbreSpec.
+func TemporalSpectralDistance(target, candidate []float64, sampleRate int) float64 {
+	targetSpec := ExtractTemporalTimbreSpec(target, sampleRate)
+	candidateSpec := ExtractTemporalTimbreSpec(candidate, sampleRate)
+	return TemporalTimbreDistance(targetSpec, candidateSpec)
+}
+
 // CalcDBPenalty calculates a fitness penalty if the un-normalized candidate RMS
 // is significantly quieter than the un-normalized target RMS (> 6.0 dB quieter).
 func CalcDBPenalty(rawCandRMS, targetRMS float64) float64 {
