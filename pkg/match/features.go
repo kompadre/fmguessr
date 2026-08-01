@@ -425,35 +425,67 @@ func estimateEnvelope(samples []float64, sampleRate int) (attackMs float64, peak
 		attackMs = 0
 	}
 
-	// Release: find last active frame > 5% peak
-	releaseThreshold := peak * 0.05
-	releaseStart := nFrames - 1
+	// Sound End: find last active frame > 5% peak amplitude
+	soundEndThreshold := peak * 0.05
+	soundEndIdx := nFrames - 1
 	for i := nFrames - 1; i >= 0; i-- {
-		if rms[i] > releaseThreshold {
-			releaseStart = i
+		if rms[i] > soundEndThreshold {
+			soundEndIdx = i
 			break
 		}
 	}
 
-	// Sustain level: measure RMS near the end of the active sound (last 20% before release)
-	// For decaying sounds (plucks/hits), the tail level near release is near 0.
-	sustainStart := peakIdx + 1
-	tailStart := int(float64(sustainStart) + float64(releaseStart-sustainStart)*0.80)
-	if tailStart < sustainStart {
-		tailStart = sustainStart
+	// Sustain level: measure steady-state RMS in middle section of active sound (20% to 70% of active range)
+	sustainStart := peakIdx + int(float64(soundEndIdx-peakIdx)*0.20)
+	sustainEnd := peakIdx + int(float64(soundEndIdx-peakIdx)*0.70)
+	if sustainStart < peakIdx+1 {
+		sustainStart = peakIdx + 1
 	}
-	sustainEnd := releaseStart + 1
-	if sustainEnd <= tailStart {
-		sustainEnd = nFrames
+	if sustainEnd <= sustainStart {
+		sustainEnd = sustainStart + 1
 	}
+
 	sustainSum := 0.0
 	sustainCount := 0
-	for i := tailStart; i < sustainEnd && i < len(rms); i++ {
+	for i := sustainStart; i < sustainEnd && i < len(rms); i++ {
 		sustainSum += rms[i]
 		sustainCount++
 	}
+	sustainRMS := 0.0
 	if sustainCount > 0 {
-		sustainLevel = (sustainSum / float64(sustainCount)) / peak
+		sustainRMS = sustainSum / float64(sustainCount)
+		sustainLevel = sustainRMS / peak
+	}
+
+	// Tail level: measure RMS in the final 20% of the active sound before soundEndIdx
+	tailStart := peakIdx + int(float64(soundEndIdx-peakIdx)*0.80)
+	if tailStart < peakIdx {
+		tailStart = peakIdx
+	}
+	tailSum := 0.0
+	tailCount := 0
+	for i := tailStart; i <= soundEndIdx && i < len(rms); i++ {
+		tailSum += rms[i]
+		tailCount++
+	}
+	tailLevel := 0.0
+	if tailCount > 0 {
+		tailLevel = (tailSum / float64(tailCount)) / peak
+	}
+
+	// Key release / note-off detection (releaseStartIdx):
+	// For sustained sounds (tailLevel >= 0.12 and sustainLevel >= 0.20), detect where the signal drops below 70% of sustainRMS.
+	releaseStartIdx := soundEndIdx
+	if tailLevel >= 0.12 && sustainLevel >= 0.20 {
+		for i := sustainEnd; i <= soundEndIdx && i < len(rms); i++ {
+			if rms[i] < sustainRMS*0.70 {
+				releaseStartIdx = i
+				break
+			}
+		}
+	} else {
+		// Decaying / percussive sound: set sustainLevel to tailLevel
+		sustainLevel = tailLevel
 	}
 
 	// Decay: time from peak to where signal reaches sustain level
@@ -470,20 +502,22 @@ func estimateEnvelope(samples []float64, sampleRate int) (attackMs float64, peak
 		decayMs = 0
 	}
 
-	releaseMs = float64(nFrames-1-releaseStart) * float64(frameSize) / float64(sampleRate) * 1000.0
-	if releaseMs < 0 {
-		releaseMs = 0
-	}
-
-	// Key hold gate duration: time from initial attack to start of release/offset
-	gateFrames := releaseStart - attackStart
+	// Key hold gate duration: time from initial attack to key release (note-off)
+	gateFrames := releaseStartIdx - attackStart
 	if gateFrames < 1 {
 		gateFrames = 1
 	}
 	gateMs = float64(gateFrames) * float64(frameSize) / float64(sampleRate) * 1000.0
 
-	// For percussive/one-shot sounds (low sustain level < 0.20), cap key hold gate to 50ms drum trigger
-	if sustainLevel < 0.20 {
+	// Release time: time from key release (note-off) to sound end (< 5% peak)
+	relFrames := soundEndIdx - releaseStartIdx
+	if relFrames < 0 {
+		relFrames = 0
+	}
+	releaseMs = float64(relFrames) * float64(frameSize) / float64(sampleRate) * 1000.0
+
+	// For percussive/one-shot decaying sounds (tailLevel < 0.12 or sustainLevel < 0.15), cap key hold gate to 50ms drum trigger
+	if tailLevel < 0.12 || sustainLevel < 0.15 {
 		if gateMs > 50.0 {
 			gateMs = 50.0
 		}
