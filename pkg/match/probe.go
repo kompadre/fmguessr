@@ -199,40 +199,59 @@ func ProbeAudio(samples []float64, sampleRate int, codebookPath string, override
 		codebookPath = "dx7_codebook.bin"
 	}
 
-	if cb, err := LoadCodebook(codebookPath); err == nil && len(cb.Entries) > 0 {
+	topK := 32
+
+	timbreCBPath := codebookPath
+	if len(codebookPath) > 4 && codebookPath[len(codebookPath)-4:] == ".bin" {
+		timbreCBPath = codebookPath[:len(codebookPath)-4] + "_timbre.bin"
+	} else {
+		timbreCBPath = codebookPath + "_timbre.bin"
+	}
+
+	var matches []*Candidate
+	presetNameMap := make(map[string]string)
+
+	if tcb, err := LoadTimbreCodebook(timbreCBPath); err == nil && len(tcb.Entries) > 0 {
+		targetSpec := ExtractTimbreWindow(norm, sampleRate)
+		matches = tcb.SearchKNNTimbre(targetSpec, topK)
+		for _, entry := range tcb.Entries {
+			presetNameMap[string(entry.Candidate.Encode())] = entry.Name
+		}
+	} else if cb, err := LoadCodebook(codebookPath); err == nil && len(cb.Entries) > 0 {
 		targetFp := ComputeFingerprint(norm, sampleRate)
-		matches := cb.SearchKNN(targetFp, len(cb.Entries))
-		if len(matches) > 0 {
-			fits, _ := evaluateBatchParallel(matches, norm, uint8(midiNote), 1*time.Second, 0.0)
-			bestIdx := 0
-			bestDist := math.MaxFloat64
-			for i, d := range fits {
-				if d < bestDist {
-					bestDist = d
-					bestIdx = i
-				}
-			}
+		matches = cb.SearchKNN(targetFp, topK)
+		for _, entry := range cb.Entries {
+			presetNameMap[string(entry.Candidate.Encode())] = entry.Name
+		}
+	}
 
-			bestCand := matches[bestIdx]
-			presetName := "CODEBOOK_PRESET"
-			for _, entry := range cb.Entries {
-				if string(entry.Candidate.Encode()) == string(bestCand.Encode()) {
-					presetName = entry.Name
-					break
-				}
+	if len(matches) > 0 {
+		fits, _ := evaluateBatchParallel(matches, norm, uint8(midiNote), 1*time.Second, 0.0)
+		bestIdx := 0
+		bestDist := math.MaxFloat64
+		for i, d := range fits {
+			if d < bestDist {
+				bestDist = d
+				bestIdx = i
 			}
+		}
 
-			res.BestMatch = &CodebookMatchDetails{
-				Name:      presetName,
-				Distance:  bestDist,
-				Algorithm: int(bestCand.Algorithm + 1),
-				Feedback:  int(bestCand.Feedback),
-			}
+		bestCand := matches[bestIdx]
+		presetName := "CODEBOOK_PRESET"
+		if name, ok := presetNameMap[string(bestCand.Encode())]; ok && name != "" {
+			presetName = name
+		}
 
-			// Seen before if distance <= 0.001 (near 0.00 match)
-			if bestDist <= 1e-3 {
-				res.SeenBefore = true
-			}
+		res.BestMatch = &CodebookMatchDetails{
+			Name:      presetName,
+			Distance:  bestDist,
+			Algorithm: int(bestCand.Algorithm + 1),
+			Feedback:  int(bestCand.Feedback),
+		}
+
+		// Seen before if distance <= 0.001 (near 0.00 match)
+		if bestDist <= 1e-3 {
+			res.SeenBefore = true
 		}
 	}
 
