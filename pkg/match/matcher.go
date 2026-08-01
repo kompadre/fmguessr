@@ -48,6 +48,11 @@ func reportProgress(cfg Config, percent int, phase string) {
 
 // Run executes the genetic algorithm optimization using a 32-Island Niche Model and Multi-Core Parallel Evaluation.
 func Run(target []float64, features TargetFeatures, cfg Config) Result {
+	rawTargetRMS := features.TargetRMS
+	if rawTargetRMS <= 0 {
+		rawTargetRMS = CalcRMS(target)
+	}
+
 	if cfg.Verbose {
 		printFeatures(features)
 	}
@@ -66,7 +71,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			topK := len(cb.Entries)
 			knnMatches := cb.SearchKNN(targetFp, topK)
 			if len(knnMatches) > 0 {
-				knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur)
+				knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 				knnMap = make(map[uint8]*Candidate)
 				bestDistPerAlgo := make(map[uint8]float64)
 
@@ -192,7 +197,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						cand = AttachNearestRawBase(cand, cb)
 					}
 				}
-				fits, _ := evaluateBatchParallel([]*Candidate{cand}, target, cfg.MIDINote, cfg.RenderDur)
+				fits, _ := evaluateBatchParallel([]*Candidate{cand}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 				scores = append(scores, algoScore{algo, fits[0], cand})
 			}
 
@@ -221,7 +226,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			if cfg.Verbose {
 				fmt.Println("--- NN Pre-optimization (live optimizer) ---")
 			}
-			globalLiveOpt = NewLiveOptimizer(target, scores[0].cand, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur)
+			globalLiveOpt = NewLiveOptimizer(target, scores[0].cand, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 			refined := globalLiveOpt.Run()
 			if globalLiveOpt.bestDist < scores[0].dist {
 				nnCandidates[0] = refined
@@ -247,7 +252,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		if cfg.Verbose {
 			fmt.Println("--- Pre-GA Acceleration Profiling (Piano 1 base) ---")
 		}
-		globalLiveOpt = NewLiveOptimizer(target, DecodeVoicePatch(epiano), 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur)
+		globalLiveOpt = NewLiveOptimizer(target, DecodeVoicePatch(epiano), 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		globalLiveOpt.Run()
 		if globalLiveOpt.bestDist <= 1e-4 {
 			if cfg.Verbose {
@@ -336,7 +341,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	}
 
 	// Multi-core parallel evaluation of initial population across all CPU cores
-	initialFits, initialFeats := evaluateBatchParallel(allInitialCandidates, target, cfg.MIDINote, cfg.RenderDur)
+	initialFits, initialFeats := evaluateBatchParallel(allInitialCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	totalEvals += len(allInitialCandidates)
 
 	// Distribute initial fitnesses back to islands
@@ -392,7 +397,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 		}
 
-		genFits, genFeats := evaluateBatchParallel(allGenCandidates, target, cfg.MIDINote, cfg.RenderDur)
+		genFits, genFeats := evaluateBatchParallel(allGenCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		totalEvals += len(allGenCandidates)
 
 		// Update each island's GA state
@@ -494,7 +499,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			pendingMutants = nil
 		}
 
-		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur)
+		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		totalEvals += len(nextCandidates)
 
 		// Immediate 1D Line Search Exploitation
@@ -513,7 +518,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 					applyStep(c, record.ParamIdx, step)
 					lineCands[s] = c
 				}
-				lineFits, lineFeats := evaluateBatchParallel(lineCands, target, cfg.MIDINote, cfg.RenderDur)
+				lineFits, lineFeats := evaluateBatchParallel(lineCands, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 				totalEvals += len(lineCands)
 				for s := 0; s < 2; s++ {
 					if lineFits[s] < nextFitnesses[i] {
@@ -566,7 +571,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	best := globalGA.Best()
 	gaBestDist := globalGA.BestFitness()
-	liveOpt := NewLiveOptimizer(target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur)
+	liveOpt := NewLiveOptimizer(target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	finalPatch := liveOpt.Run()
 	finalDist := liveOpt.bestDist
 
@@ -595,6 +600,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		if len(topN) > 32 {
 			topN = topN[:32]
 		}
+	}
+
+	// Calibrate carrier OutputLevels to match target RMS natively before export
+	best.CalibrateCarrierLevels(rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
+	for _, c := range topN {
+		c.CalibrateCarrierLevels(rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
 	}
 
 	reportProgress(cfg, 100, "Completed")
@@ -652,6 +663,10 @@ func applyStep(c *Candidate, which int, step int8) {
 // runMicroGA runs a small GA fine-tuning pass on a predicted candidate.
 // Only mutates OutputLevel, FreqFine, and Feedback. Algorithm is locked.
 func runMicroGA(seed *Candidate, target []float64, features TargetFeatures, cfg Config) Result {
+	rawTargetRMS := features.TargetRMS
+	if rawTargetRMS <= 0 {
+		rawTargetRMS = CalcRMS(target)
+	}
 	const microPop = 32
 	const microGens = 5
 
@@ -664,7 +679,7 @@ func runMicroGA(seed *Candidate, target []float64, features TargetFeatures, cfg 
 	}
 
 	// Evaluate initial population
-	fits, feats := evaluateBatchParallel(pop, target, cfg.MIDINote, cfg.RenderDur)
+	fits, feats := evaluateBatchParallel(pop, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	totalEvals := len(pop)
 
 	// Track best
@@ -694,7 +709,7 @@ func runMicroGA(seed *Candidate, target []float64, features TargetFeatures, cfg 
 
 	for gen := 0; gen < microGens; gen++ {
 		nextCandidates := microGA.Evolve(features)
-		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur)
+		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		totalEvals += len(nextCandidates)
 
 		microGA.SetPopulation(nextCandidates, nextFitnesses, nextFeatures)
@@ -732,8 +747,12 @@ func microMutate(c *Candidate, rng *rand.Rand) *Candidate {
 		// OutputLevel ±4
 		dl := int(rng.NormFloat64() * 2.0)
 		nl := int(d.Ops[i].OutputLevel) + dl
-		if nl < 75 {
-			nl = 75
+		minLevel := 75
+		if IsCarrier(d.Algorithm, i) {
+			minLevel = 85
+		}
+		if nl < minLevel {
+			nl = minLevel
 		}
 		if nl > 99 {
 			nl = 99
@@ -771,6 +790,10 @@ func microMutate(c *Candidate, rng *rand.Rand) *Candidate {
 // runEnvelopeGA optimizes envelope parameters (rates, levels) while holding timbre fixed.
 // Takes the best timbre candidate from Phase 1 and optimizes envelope shaping.
 func runEnvelopeGA(timbreCand *Candidate, target []float64, features TargetFeatures, cfg Config) Result {
+	rawTargetRMS := features.TargetRMS
+	if rawTargetRMS <= 0 {
+		rawTargetRMS = CalcRMS(target)
+	}
 	const envPop = 32
 	const envGens = 10
 
@@ -784,7 +807,7 @@ func runEnvelopeGA(timbreCand *Candidate, target []float64, features TargetFeatu
 	}
 
 	// Evaluate initial population
-	fits, feats := evaluateBatchParallel(pop, target, cfg.MIDINote, cfg.RenderDur)
+	fits, feats := evaluateBatchParallel(pop, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	totalEvals := len(pop)
 
 	// Track best
@@ -814,7 +837,7 @@ func runEnvelopeGA(timbreCand *Candidate, target []float64, features TargetFeatu
 
 	for gen := 0; gen < envGens; gen++ {
 		nextCandidates := envGA.Evolve(features)
-		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur)
+		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		totalEvals += len(nextCandidates)
 
 		envGA.SetPopulation(nextCandidates, nextFitnesses, nextFeatures)
@@ -896,7 +919,7 @@ func envelopeMutate(c *Candidate, rng *rand.Rand) *Candidate {
 }
 
 // evaluateBatchParallel evaluates candidates concurrently across CPU cores using a multi-threaded worker pool.
-func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8, dur time.Duration) ([]float64, []TargetFeatures) {
+func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8, dur time.Duration, rawTargetRMS float64) ([]float64, []TargetFeatures) {
 	n := len(candidates)
 	results := make([]float64, n)
 	features := make([]TargetFeatures, n)
@@ -919,9 +942,14 @@ func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8
 			defer wg.Done()
 			for idx := range taskChan {
 				candAudio := RenderCandidate(candidates[idx], note, dur)
-				candidate := TrimOrPad(candAudio, len(target))
-				candidate = NormalizeRMS(candidate)
-				results[idx] = SpectralDistance(target, candidate)
+				trimmed := TrimOrPad(candAudio, len(target))
+				rawCandRMS := CalcRMS(trimmed)
+				candidate := NormalizeRMS(trimmed)
+				dist := SpectralDistance(target, candidate)
+				if rawTargetRMS > 1e-4 {
+					dist += CalcDBPenalty(rawCandRMS, rawTargetRMS)
+				}
+				results[idx] = dist
 				features[idx] = ExtractBrightness(candidate, RenderSampleRate)
 			}
 		}()

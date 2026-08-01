@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"time"
 )
 
 // epiano is the default DX7 voice used as a base for encoding (128 bytes).
@@ -300,7 +301,11 @@ func (c *Candidate) MutateInformed(rng *rand.Rand, targetF, candF TargetFeatures
 		case 2:
 			d.Ops[opIdx].FreqFine = clampU8(d.Ops[opIdx].FreqFine, step, 0, 99)
 		case 3:
-			d.Ops[opIdx].OutputLevel = clampU8(d.Ops[opIdx].OutputLevel, step, 75, 99)
+			minLevel := uint8(75)
+			if IsCarrier(d.Algorithm, opIdx) {
+				minLevel = 85 // Carriers maintain minimum output level floor
+			}
+			d.Ops[opIdx].OutputLevel = clampU8(d.Ops[opIdx].OutputLevel, step, minLevel, 99)
 		case 4:
 			d.Ops[opIdx].Rate1 = clampU8(d.Ops[opIdx].Rate1, step, 10, 99)
 		case 5:
@@ -448,6 +453,36 @@ func SysexBulkDumpMultiple(candidates []*Candidate) []byte {
 	syx = append(syx, 0xF7)       // Sysex end
 
 	return syx
+}
+
+// CalibrateCarrierLevels boosts carrier operator OutputLevel settings so that the candidate's
+// native rendered RMS matches rawTargetRMS.
+func (c *Candidate) CalibrateCarrierLevels(rawTargetRMS float64, note uint8, dur time.Duration) {
+	if rawTargetRMS < 1e-4 {
+		return
+	}
+	audio := RenderCandidate(c, note, dur)
+	candRMS := CalcRMS(audio)
+	if candRMS < 1e-6 {
+		return
+	}
+
+	gainRatio := rawTargetRMS / candRMS
+	if gainRatio > 1.05 {
+		dbBoost := 20.0 * math.Log10(gainRatio)
+		levelBoost := int(math.Round(dbBoost / 0.75))
+		if levelBoost > 0 {
+			for op := 0; op < 6; op++ {
+				if IsCarrier(c.Algorithm, op) {
+					newLvl := int(c.Ops[op].OutputLevel) + levelBoost
+					if newLvl > 99 {
+						newLvl = 99
+					}
+					c.Ops[op].OutputLevel = uint8(newLvl)
+				}
+			}
+		}
+	}
 }
 
 func itoa(v int) string {

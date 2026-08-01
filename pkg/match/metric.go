@@ -20,6 +20,28 @@ func SpectralDistance(target, candidate []float64) float64 {
 	return spectralDistanceAtScale(target, candidate, 1024, 256)
 }
 
+// CalcDBPenalty calculates a fitness penalty if the un-normalized candidate RMS
+// is significantly quieter than the un-normalized target RMS (> 6.0 dB quieter).
+func CalcDBPenalty(rawCandRMS, targetRMS float64) float64 {
+	if rawCandRMS < 1e-4 {
+		return 10.0 // Hard discard / heavy penalty for near-silent candidates
+	}
+	if targetRMS < 1e-4 {
+		return 0.0 // Target itself is silent
+	}
+
+	candDB := 20.0 * math.Log10(rawCandRMS)
+	targetDB := 20.0 * math.Log10(targetRMS)
+	dropDB := targetDB - candDB
+
+	// Allow candidate to be up to 6.0 dB quieter without penalty.
+	// Beyond 6.0 dB drop, apply penalty proportional to dB drop.
+	if dropDB > 6.0 {
+		return (dropDB - 6.0) / 6.0 // e.g. 12 dB drop = +1.0 penalty, 18 dB drop = +2.0 penalty
+	}
+	return 0.0
+}
+
 func spectralDistanceAtScale(target, candidate []float64, winSize, hopSize int) float64 {
 	targetMag := stftMagnitude(target, winSize, hopSize)
 	candidateMag := stftMagnitude(candidate, winSize, hopSize)

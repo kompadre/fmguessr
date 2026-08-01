@@ -61,11 +61,11 @@ func main() {
 		target = target[:maxTargetSamples]
 	}
 
+	// Extract features on the raw target audio for absolute maximum accuracy and TargetRMS
+	features := match.ExtractFeatures(target, sampleRate)
+
 	// Normalize target
 	target = match.NormalizeRMS(target)
-
-	// Extract features on the full, untrimmed target for absolute maximum accuracy
-	features := match.ExtractFeatures(target, sampleRate)
 
 	// Automatically detect root note from target pitch if requested
 	if *note == -1 {

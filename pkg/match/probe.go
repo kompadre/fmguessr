@@ -203,7 +203,7 @@ func ProbeAudio(samples []float64, sampleRate int, codebookPath string, override
 		targetFp := ComputeFingerprint(norm, sampleRate)
 		matches := cb.SearchKNN(targetFp, len(cb.Entries))
 		if len(matches) > 0 {
-			fits, _ := evaluateBatchParallel(matches, norm, uint8(midiNote), 1*time.Second)
+			fits, _ := evaluateBatchParallel(matches, norm, uint8(midiNote), 1*time.Second, 0.0)
 			bestIdx := 0
 			bestDist := math.MaxFloat64
 			for i, d := range fits {

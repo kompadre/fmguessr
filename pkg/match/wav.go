@@ -153,6 +153,18 @@ func NormalizePeak(samples []float64) []float64 {
 	return out
 }
 
+// CalcRMS computes the un-normalized root mean square energy of a signal.
+func CalcRMS(samples []float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range samples {
+		sum += v * v
+	}
+	return math.Sqrt(sum / float64(len(samples)))
+}
+
 // NormalizeRMS scales samples so the RMS level is 0.1.
 // This preserves relative dynamic range better than peak normalization
 // for loud samples with sharp transients.

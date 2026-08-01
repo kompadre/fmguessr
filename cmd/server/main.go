@@ -113,8 +113,8 @@ func (s *Server) processJob(job *Job) {
 		targetSamples = targetSamples[:maxSamples]
 	}
 
+	features := match.ExtractFeatures(targetSamples, job.sampleRate)
 	targetNorm := match.NormalizeRMS(targetSamples)
-	features := match.ExtractFeatures(targetNorm, job.sampleRate)
 	features, midiNote := match.ApplyFeatureOverrides(features, job.overrides)
 	noteFreq := 440.0 * math.Pow(2, float64(midiNote-69)/12.0)
 

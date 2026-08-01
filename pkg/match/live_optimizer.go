@@ -11,6 +11,7 @@ import (
 type LiveOptimizer struct {
 	currentPatch *Candidate
 	targetNorm   []float64
+	rawTargetRMS float64
 	note         uint8
 	dur          time.Duration
 	bestDist     float64
@@ -77,13 +78,20 @@ func buildKnobs() []KnobDef {
 	return knobs
 }
 
-func NewLiveOptimizer(target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration) *LiveOptimizer {
+func NewLiveOptimizer(target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *LiveOptimizer {
 	targetNorm := NormalizeRMS(target)
 	optDur := dur
+	targetRMS := 0.0
+	if len(rawTargetRMS) > 0 && rawTargetRMS[0] > 0 {
+		targetRMS = rawTargetRMS[0]
+	} else {
+		targetRMS = CalcRMS(target)
+	}
 
 	return &LiveOptimizer{
 		currentPatch: initial.Copy(),
 		targetNorm:   targetNorm,
+		rawTargetRMS: targetRMS,
 		note:         note,
 		dur:          optDur,
 		bestDist:     math.MaxFloat64,
@@ -119,9 +127,14 @@ func (lo *LiveOptimizer) GeneratePermutationCandidate(rng *rand.Rand, algo uint8
 
 func (lo *LiveOptimizer) measureDeterministic(patch *Candidate) float64 {
 	candAudio := RenderCandidate(patch, lo.note, lo.dur)
-	candidate := TrimOrPad(candAudio, len(lo.targetNorm))
-	candidate = NormalizeRMS(candidate)
-	return SpectralDistance(lo.targetNorm, candidate)
+	trimmed := TrimOrPad(candAudio, len(lo.targetNorm))
+	rawCandRMS := CalcRMS(trimmed)
+	candidate := NormalizeRMS(trimmed)
+	dist := SpectralDistance(lo.targetNorm, candidate)
+	if lo.rawTargetRMS > 1e-4 {
+		dist += CalcDBPenalty(rawCandRMS, lo.rawTargetRMS)
+	}
+	return dist
 }
 
 type candidateMeta struct {
@@ -283,7 +296,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			algoCands[a] = c
 		}
 
-		fits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur)
+		fits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
 
 		type algoEntry struct {
 			cand *Candidate
@@ -350,7 +363,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// A. Acceleration Trough Probe Pass (ultra-fast leaps to cached 2nd-derivative troughs)
 			probeCands, probeMeta := generateProbeBatch(curPatch, knobs, accelCache)
 			if len(probeCands) > 0 {
-				fits, _ := evaluateBatchParallel(probeCands, lo.targetNorm, lo.note, lo.dur)
+				fits, _ := evaluateBatchParallel(probeCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
 
 				bestIdx := -1
 				bestFit := curDist
@@ -383,7 +396,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// B. Coarse pass
 			coarseCands, coarseMeta := generateBatch(curPatch, knobs, false)
 			if len(coarseCands) > 0 {
-				fits, _ := evaluateBatchParallel(coarseCands, lo.targetNorm, lo.note, lo.dur)
+				fits, _ := evaluateBatchParallel(coarseCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
 
 				bestIdx := -1
 				bestFit := curDist
@@ -421,7 +434,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// C. Fine pass
 			fineCands, fineMeta := generateBatch(curPatch, knobs, true)
 			if len(fineCands) > 0 {
-				fineFits, _ := evaluateBatchParallel(fineCands, lo.targetNorm, lo.note, lo.dur)
+				fineFits, _ := evaluateBatchParallel(fineCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
 
 				fineBestIdx := -1
 				fineBestFit := curDist
@@ -459,7 +472,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				algoCands[a] = c
 			}
 
-			algoFits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur)
+			algoFits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
 
 			algoBestIdx := -1
 			algoBestFit := curDist

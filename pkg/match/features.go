@@ -17,6 +17,7 @@ type TargetFeatures struct {
 	PitchJumpSemitones float64 // Semitone pitch jump detected during attack (e.g. +4 for chiptune arpeggio)
 
 	// Envelope
+	TargetRMS        float64 // Un-normalized RMS energy of target audio
 	AttackMs         float64 // Attack time in ms
 	AttackPeakSample int     // Sample index where peak amplitude occurs
 	DecayMs          float64 // Decay time in ms
@@ -85,6 +86,7 @@ func ExtractBrightness(samples []float64, sampleRate int) TargetFeatures {
 
 func ExtractFeatures(samples []float64, sampleRate int) TargetFeatures {
 	f := TargetFeatures{}
+	f.TargetRMS = CalcRMS(samples)
 
 	// Pitch detection & jump trajectory
 	f.F0, f.F0Confidence = detectPitch(samples, sampleRate)
@@ -423,15 +425,30 @@ func estimateEnvelope(samples []float64, sampleRate int) (attackMs float64, peak
 		attackMs = 0
 	}
 
-	// Sustain level: average RMS in the middle portion (after attack, before release)
+	// Release: find last active frame > 5% peak
+	releaseThreshold := peak * 0.05
+	releaseStart := nFrames - 1
+	for i := nFrames - 1; i >= 0; i-- {
+		if rms[i] > releaseThreshold {
+			releaseStart = i
+			break
+		}
+	}
+
+	// Sustain level: measure RMS near the end of the active sound (last 20% before release)
+	// For decaying sounds (plucks/hits), the tail level near release is near 0.
 	sustainStart := peakIdx + 1
-	sustainEnd := nFrames - 1
-	if sustainEnd <= sustainStart {
+	tailStart := int(float64(sustainStart) + float64(releaseStart-sustainStart)*0.80)
+	if tailStart < sustainStart {
+		tailStart = sustainStart
+	}
+	sustainEnd := releaseStart + 1
+	if sustainEnd <= tailStart {
 		sustainEnd = nFrames
 	}
 	sustainSum := 0.0
 	sustainCount := 0
-	for i := sustainStart; i < sustainEnd; i++ {
+	for i := tailStart; i < sustainEnd && i < len(rms); i++ {
 		sustainSum += rms[i]
 		sustainCount++
 	}
@@ -453,15 +470,6 @@ func estimateEnvelope(samples []float64, sampleRate int) (attackMs float64, peak
 		decayMs = 0
 	}
 
-	// Release: time from last significant sample to end
-	releaseThreshold := peak * 0.05
-	releaseStart := nFrames - 1
-	for i := nFrames - 1; i >= 0; i-- {
-		if rms[i] > releaseThreshold {
-			releaseStart = i
-			break
-		}
-	}
 	releaseMs = float64(nFrames-1-releaseStart) * float64(frameSize) / float64(sampleRate) * 1000.0
 	if releaseMs < 0 {
 		releaseMs = 0
