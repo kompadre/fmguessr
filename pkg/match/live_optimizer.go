@@ -779,6 +779,26 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				continue
 			}
 
+			// E. Operator Block Mini-GA Crossbreeding on Plateau
+			miniGABest := RunOperatorMiniGA([]*Candidate{curPatch, lo.bestPatch, SineBase(), SquareBase(), SawtoothBase(), TriangleBase()}, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, 10, 16, lo.verbose)
+			if miniGABest != nil && (curDist-miniGABest.Fitness) > 1e-4 {
+				prevDist := curDist
+				curDist = miniGABest.Fitness
+				curPatch = miniGABest.Copy()
+				accelCache = make(map[string][]int) // wipe cache on hybrid crossbreed
+
+				if curDist < lo.bestDist {
+					lo.bestDist = curDist
+					lo.bestPatch = curPatch.Copy()
+				}
+
+				if lo.verbose {
+					fmt.Printf("[live-miniGA] iter %d: Operator Hybrid Crossbreed (dist=%.6f, improved from %.6f)\n",
+						iter, curDist, prevDist)
+				}
+				continue
+			}
+
 			if lo.verbose {
 				fmt.Printf("[live] Local minimum reached for %s at dist=%.6f\n", seed.label, curDist)
 			}

@@ -455,6 +455,19 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		globalFeats = append(globalFeats, islandGAs[algo].currentFeatures[0])
 	}
 
+	// Run Operator Mini-GA to cross-breed modular operator blocks across island winners
+	if len(globalSeed) > 0 {
+		miniGABest := RunOperatorMiniGA(globalSeed, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, 10, 32, cfg.Verbose)
+		if miniGABest != nil && miniGABest.Fitness < globalFits[0] {
+			if cfg.Verbose {
+				fmt.Printf("[Phase 1->2 Transition] Operator Mini-GA created hybrid candidate: dist=%.6f (improved from %.6f)\n",
+					miniGABest.Fitness, globalFits[0])
+			}
+			globalSeed[0] = miniGABest.Copy()
+			globalFits[0] = miniGABest.Fitness
+		}
+	}
+
 	for len(globalSeed) < popSize {
 		for algo := 0; algo < 32 && len(globalSeed) < popSize; algo++ {
 			top := islandGAs[algo].TopN(2)
