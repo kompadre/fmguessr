@@ -54,15 +54,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	timbrePath := *outPath
+	if len(*outPath) > 4 && (*outPath)[len(*outPath)-4:] == ".bin" {
+		timbrePath = (*outPath)[:len(*outPath)-4] + "_timbre.bin"
+	} else {
+		timbrePath = *outPath + "_timbre.bin"
+	}
+
 	codebook := &match.Codebook{}
+	timbreCodebook := &match.TimbreCodebook{}
+
 	if !*overwrite {
 		if loaded, err := match.LoadCodebook(*outPath); err == nil {
 			codebook = loaded
 			fmt.Printf("Loaded existing codebook %s (%d existing patches)\n", *outPath, len(codebook.Entries))
 		}
+		if loadedT, err := match.LoadTimbreCodebook(timbrePath); err == nil {
+			timbreCodebook = loadedT
+			fmt.Printf("Loaded existing timbre codebook %s (%d existing patches)\n", timbrePath, len(timbreCodebook.Entries))
+		}
 	}
 
-	fmt.Printf("Indexing %d .syx file(s) into %s...\n", len(syxFiles), *outPath)
+	fmt.Printf("Indexing %d .syx file(s) into %s and %s...\n", len(syxFiles), *outPath, timbrePath)
 
 	startTime := time.Now()
 	addedTotal := 0
@@ -72,10 +85,18 @@ func main() {
 		fmt.Printf("[%d/%d] Indexing %s...\n", i+1, len(syxFiles), file)
 		entries, err := match.IndexSysexBank(file, uint8(*noteNum), *renderDur)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error indexing %s: %v\n", file, err)
+			fmt.Fprintf(os.Stderr, "  Error indexing fingerprint codebook for %s: %v\n", file, err)
 			continue
 		}
+		tEntries, err := match.IndexSysexBankTimbre(file, uint8(*noteNum), *renderDur)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Error indexing timbre codebook for %s: %v\n", file, err)
+			continue
+		}
+
 		added := codebook.AddEntriesDeduplicated(entries)
+		timbreCodebook.AddEntriesDeduplicated(tEntries)
+
 		skipped := len(entries) - added
 		addedTotal += added
 		skippedTotal += skipped
@@ -91,7 +112,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := timbreCodebook.Save(timbrePath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving timbre codebook: %v\n", err)
+		os.Exit(1)
+	}
+
 	elapsed := time.Since(startTime)
-	fmt.Printf("\nDone in %v: added %d new patches (%d duplicates skipped). Total codebook size: %d patches -> %s\n",
-		elapsed, addedTotal, skippedTotal, len(codebook.Entries), *outPath)
+	fmt.Printf("\nDone in %v: added %d new patches (%d duplicates skipped).\n  Fingerprint Index: %d patches -> %s\n  Timbre Index:      %d patches -> %s\n",
+		elapsed, addedTotal, skippedTotal, len(codebook.Entries), *outPath, len(timbreCodebook.Entries), timbrePath)
 }
