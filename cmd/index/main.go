@@ -10,23 +10,46 @@ import (
 	"github.com/kompadre/fmguessr/pkg/match"
 )
 
+// optionalString is a flag.Value that distinguishes between "not provided"
+// and "provided with empty value" (for --sync-timbre without argument).
+type optionalString struct {
+	value    string
+	provided bool
+}
+
+func (o *optionalString) String() string { return o.value }
+func (o *optionalString) Set(s string) error {
+	o.value = s
+	o.provided = true
+	return nil
+}
+
 func main() {
 	outPath := flag.String("o", "dx7_codebook.bin", "output codebook binary file")
 	overwrite := flag.Bool("overwrite", false, "overwrite existing codebook instead of appending")
-	syncTimbre := flag.Bool("sync-timbre", false, "backfill timbre codebook from existing fingerprint codebook entries (no .syx files needed)")
 	renderDur := flag.Duration("d", 1*time.Second, "audio render duration per patch")
 	noteNum := flag.Int("note", 48, "MIDI note number to render (default 48 = C3)")
+
+	var syncTimbre optionalString
+	flag.Var(&syncTimbre, "sync-timbre",
+		"backfill timbre codebook from fingerprint codebook entries.\n"+
+			"                         Provide a path to override the default (*_timbre.bin),\n"+
+			"                         or use without a value for auto-derived path from -o flag.\n"+
+			"                         No .syx files required — renders each entry through the synth.")
+
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <syx_file_or_directory...>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Build or update an audio fingerprint codebook index from DX7 .syx bank files.\n\n")
-		fmt.Fprintf(os.Stderr, "Flags:\n")
-		fmt.Fprintf(os.Stderr, "  --sync-timbre    Generate timbre codebook from existing fingerprint codebook.\n")
-		fmt.Fprintf(os.Stderr, "                   No .syx files required — renders each entry through the synth.\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  %s banks/*.syx                          Index .syx files\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --sync-timbre -o dx7_codebook.bin    Backfill timbre from existing DXCB\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --sync-timbre=custom.bin -o dx7.bin  Backfill to custom path\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
-	if flag.NArg() < 1 && !*syncTimbre {
+	if flag.NArg() < 1 && !syncTimbre.provided {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -53,16 +76,20 @@ func main() {
 		}
 	}
 
-	if len(syxFiles) == 0 && !*syncTimbre {
+	if len(syxFiles) == 0 && !syncTimbre.provided {
 		fmt.Fprintf(os.Stderr, "No .syx files found.\n")
 		os.Exit(1)
 	}
 
+	// Determine timbre codebook path: --sync-timbre=value overrides auto-derived
 	timbrePath := *outPath
 	if len(*outPath) > 4 && (*outPath)[len(*outPath)-4:] == ".bin" {
 		timbrePath = (*outPath)[:len(*outPath)-4] + "_timbre.bin"
 	} else {
 		timbrePath = *outPath + "_timbre.bin"
+	}
+	if syncTimbre.provided && syncTimbre.value != "" {
+		timbrePath = syncTimbre.value
 	}
 
 	codebook := &match.Codebook{}
@@ -112,8 +139,8 @@ func main() {
 	}
 
 	// Backfill timbre codebook from fingerprint codebook entries
-	if *syncTimbre && len(codebook.Entries) > 0 {
-		fmt.Printf("Syncing timbre codebook from %d fingerprint entries...\n", len(codebook.Entries))
+	if syncTimbre.provided && len(codebook.Entries) > 0 {
+		fmt.Printf("Syncing timbre codebook from %d fingerprint entries -> %s...\n", len(codebook.Entries), timbrePath)
 		startBackfill := time.Now()
 		added := timbreCodebook.BackfillFromCodebook(codebook, uint8(*noteNum), *renderDur)
 		elapsed := time.Since(startBackfill)
