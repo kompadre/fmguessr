@@ -914,7 +914,37 @@
         }
 
         let audioCtx;
-        function playNote(midi) {
+        async function playNote(midi, job) {
+            // Find the selected match from any table
+            let selected = null;
+            if (job && job.selectedMatches) {
+                selected = job.selectedMatches.primary || job.selectedMatches.timbral || job.selectedMatches.full;
+            }
+
+            if (selected && job.resultData && job.resultData.syx_url) {
+                // Call server to render patch at requested note
+                try {
+                    const resp = await fetch(baseUrl + '/api/play', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            syx_url: job.resultData.syx_url,
+                            slot: selected.rank - 1,
+                            note: midi
+                        })
+                    });
+                    const data = await resp.json();
+                    if (data.wav_url) {
+                        const audio = new Audio(baseUrl + data.wav_url);
+                        audio.play();
+                        return;
+                    }
+                } catch (err) {
+                    console.warn('API play failed, falling back to sine:', err);
+                }
+            }
+
+            // Fallback: sine tone
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const freq = 440 * Math.pow(2, (midi - 69) / 12);
             const osc = audioCtx.createOscillator();
@@ -929,7 +959,7 @@
             osc.stop(audioCtx.currentTime + 0.6);
         }
 
-        function buildKeyboard(matchedMidi) {
+        function buildKeyboard(matchedMidi, job) {
             const wrapper = document.createElement('div');
             wrapper.className = 'keyboard-wrapper';
 
@@ -973,7 +1003,7 @@
                     e.preventDefault();
                     pressed = true;
                     key.classList.add('pressed');
-                    playNote(n.midi);
+                    playNote(n.midi, job);
                 });
                 key.addEventListener('mouseup', () => { pressed = false; key.classList.remove('pressed'); });
                 key.addEventListener('mouseleave', () => { if (pressed) key.classList.remove('pressed'); });
@@ -1060,7 +1090,7 @@
             }
 
             // Keyboard
-            resultsArea.appendChild(buildKeyboard(data.midi_note));
+            resultsArea.appendChild(buildKeyboard(data.midi_note, job));
 
             tabContent.classList.add('visible');
         }

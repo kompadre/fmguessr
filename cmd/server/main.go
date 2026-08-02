@@ -557,6 +557,71 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(res)
 }
 
+func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SyxURL string `json:"syx_url"`
+		Slot   int    `json:"slot"`
+		Note   int    `json:"note"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8000)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Slot < 0 || req.Slot > 31 {
+		http.Error(w, `{"error":"slot must be 0-31"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Note < 0 || req.Note > 127 {
+		http.Error(w, `{"error":"note must be 0-127"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Resolve .syx file path from URL
+	syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(req.SyxURL, "/exports/"))
+	syxData, err := os.ReadFile(syxPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
+		return
+	}
+
+	// Extract 128-byte voice patch from bulk dump (offset 6 + slot*128)
+	patchStart := 6 + req.Slot*128
+	patchEnd := patchStart + 128
+	if patchEnd > len(syxData) {
+		http.Error(w, `{"error":".syx file too short for requested slot"}`, http.StatusBadRequest)
+		return
+	}
+	patch := syxData[patchStart:patchEnd]
+
+	// Decode into Candidate and render
+	cand := match.DecodeVoicePatch(patch)
+	gateDur := 500 * time.Millisecond
+	totalDur := 2 * time.Second
+	audio := match.RenderCandidateWithGate(cand, uint8(req.Note), gateDur, totalDur)
+
+	// Save WAV to exports
+	playID := fmt.Sprintf("play_%d", time.Now().UnixNano())
+	playDir := filepath.Join(s.exportDir, playID)
+	os.MkdirAll(playDir, 0755)
+	wavPath := filepath.Join(playDir, "play.wav")
+	if err := match.SaveWav(wavPath, audio, match.RenderSampleRate); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save wav: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	wavURL := fmt.Sprintf("/exports/%s/play.wav", playID)
+	_ = json.NewEncoder(w).Encode(map[string]string{"wav_url": wavURL})
+}
+
 func (s *Server) handleExports(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	fs := http.StripPrefix("/exports/", http.FileServer(http.Dir(s.exportDir)))
@@ -627,6 +692,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/match", server.handleMatch)
 	mux.HandleFunc("/api/probe", server.handleProbe)
+	mux.HandleFunc("/api/play", server.handlePlay)
 	mux.HandleFunc("/api/status/", server.handleStatus)
 	mux.HandleFunc("/api/health", server.handleHealth)
 	mux.HandleFunc("/exports/", server.handleExports)
