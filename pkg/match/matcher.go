@@ -98,8 +98,9 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			// Dual-codebook search: fingerprint → fullCohort, timbre → timbreCohort
 			if timbreCB != nil && len(timbreCB.Entries) > 0 {
 				timbreSpec := ExtractTimbreWindow(target, RenderSampleRate)
-				fpMatches, _ := cb.SearchKNNWithDistances(targetFp, len(cb.Entries))
-				timMatches, _ := timbreCB.SearchKNNTimbreWithDistances(timbreSpec, len(timbreCB.Entries))
+				const codebookTopK = 24 // evaluate top 24 from each codebook (~48 total renders)
+				fpMatches, _ := cb.SearchKNNWithDistances(targetFp, codebookTopK)
+				timMatches, _ := timbreCB.SearchKNNTimbreWithDistances(timbreSpec, codebookTopK)
 
 				// Evaluate fingerprint matches → fullCohort
 				var fpFits []float64
@@ -156,7 +157,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			} else {
 				// Fallback: fingerprint-only search
-				topK := len(cb.Entries)
+				topK := 48
+				if len(cb.Entries) < topK {
+					topK = len(cb.Entries)
+				}
 				knnMatches := cb.SearchKNN(targetFp, topK)
 				if len(knnMatches) > 0 {
 					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
