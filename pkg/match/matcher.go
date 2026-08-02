@@ -360,7 +360,8 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		if bestCodebookCand != nil {
 			startPatch = bestCodebookCand
 			if cfg.Verbose {
-				fmt.Printf("Using codebook candidate as pre-GA initial (dist=%.6f)\n", bestCodebookDist)
+				fmt.Printf("Using codebook candidate as pre-GA initial: Algo %d FB %d (dist=%.6f)\n",
+					bestCodebookCand.Algorithm+1, bestCodebookCand.Feedback, bestCodebookDist)
 			}
 		}
 		globalLiveOpt = NewLiveOptimizer(target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
