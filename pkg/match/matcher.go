@@ -114,6 +114,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 					knnMap = make(map[uint8]*Candidate)
 					bestDistPerAlgo := make(map[uint8]float64)
 
+					// Build name lookup from codebook entries
+					nameMap := make(map[string]string, len(cb.Entries))
+					for _, entry := range cb.Entries {
+						nameMap[string(entry.Candidate.Encode())] = entry.Name
+					}
+
 					for i, matchCand := range knnMatches {
 						algo := matchCand.Algorithm
 						dist := knnFits[i]
@@ -121,6 +127,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 							bestCodebookDist = dist
 							bestCodebookCand = matchCand.Copy()
 							bestCodebookCand.Fitness = dist
+							bestCodebookName = nameMap[string(matchCand.Encode())]
 						}
 						bestDist, exists := bestDistPerAlgo[algo]
 						if !exists || dist < bestDist {
@@ -360,8 +367,13 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		if bestCodebookCand != nil {
 			startPatch = bestCodebookCand
 			if cfg.Verbose {
-				fmt.Printf("Using codebook candidate as pre-GA initial: Algo %d FB %d (dist=%.6f)\n",
-					bestCodebookCand.Algorithm+1, bestCodebookCand.Feedback, bestCodebookDist)
+				if bestCodebookName != "" {
+					fmt.Printf("Using codebook candidate as pre-GA initial: %s Algo %d FB %d (dist=%.6f)\n",
+						bestCodebookName, bestCodebookCand.Algorithm+1, bestCodebookCand.Feedback, bestCodebookDist)
+				} else {
+					fmt.Printf("Using codebook candidate as pre-GA initial: Algo %d FB %d (dist=%.6f)\n",
+						bestCodebookCand.Algorithm+1, bestCodebookCand.Feedback, bestCodebookDist)
+				}
 			}
 		}
 		globalLiveOpt = NewLiveOptimizer(target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
