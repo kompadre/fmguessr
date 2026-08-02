@@ -393,6 +393,91 @@
             color: #777;
             margin-bottom: 0.75rem;
         }
+
+        #matches-table tr.selected td {
+            background-color: #1a2e1a;
+            color: #4caf50;
+        }
+
+        #matches-table .radio-cell {
+            width: 30px;
+            text-align: center;
+            padding: 0.5rem 0.2rem;
+        }
+
+        #matches-table .radio-cell input[type="radio"] {
+            accent-color: #e94560;
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+        }
+
+        .keyboard-wrapper {
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        .keyboard-wrapper .keyboard-label {
+            font-size: 0.75rem;
+            color: #666;
+            margin-bottom: 0.4rem;
+        }
+
+        .keyboard {
+            display: inline-flex;
+            position: relative;
+            height: 100px;
+            user-select: none;
+        }
+
+        .key {
+            position: relative;
+            cursor: pointer;
+            border-radius: 0 0 4px 4px;
+            transition: background 0.08s;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 6px;
+            font-size: 0.55rem;
+            color: #999;
+        }
+
+        .key.white {
+            width: 30px;
+            height: 100px;
+            background: #e8e8e8;
+            border: 1px solid #999;
+            z-index: 1;
+        }
+
+        .key.black {
+            width: 20px;
+            height: 60px;
+            background: #333;
+            border: 1px solid #111;
+            z-index: 2;
+            margin-left: -10px;
+            margin-right: -10px;
+            color: #666;
+        }
+
+        .key.white:active, .key.white.pressed {
+            background: #ccc;
+        }
+
+        .key.black:active, .key.black.pressed {
+            background: #555;
+        }
+
+        .key.matched {
+            border-color: #4caf50;
+            box-shadow: 0 0 6px #4caf50;
+        }
+
+        .key:hover {
+            filter: brightness(0.95);
+        }
     </style>
 </head>
 
@@ -423,7 +508,7 @@
         const statusBtn = document.getElementById('status-btn');
         const tabsEl = document.getElementById('tabs');
         const tabContent = document.getElementById('tab-content');
-        const baseUrl = window.location.origin;
+        const baseUrl = window.location.origin.indexOf("localhost") > -1 ? "http://localhost:8080" : window.location.origin;
 
         let pollInterval = null;
         let jobs = [];
@@ -441,7 +526,7 @@
 
             const objectUrl = URL.createObjectURL(file);
             const jobIndex = jobs.length;
-            const job = { file, objectUrl, probeData: null, resultData: null, statusUrl: null, tabEl: null };
+            const job = {file, objectUrl, probeData: null, resultData: null, statusUrl: null, tabEl: null};
             jobs.push(job);
             addTab(jobIndex);
             showJob(jobIndex);
@@ -586,7 +671,7 @@
                     playBtn.textContent = '\u25b6';
                 }
             });
-            audio.addEventListener('ended', () => { playBtn.textContent = '\u25b6'; });
+            audio.addEventListener('ended', () => {playBtn.textContent = '\u25b6';});
 
             const label = document.createElement('span');
             label.textContent = job.file.name;
@@ -629,11 +714,11 @@
             const info = document.createElement('div');
             info.className = 'probe-info';
             const badges = [
-                { label: 'Freq', value: data.f0_hz ? data.f0_hz.toFixed(1) + ' Hz' : null },
-                { label: 'Conf', value: data.f0_confidence ? data.f0_confidence.toFixed(2) : null },
-                { label: 'Centroid', value: data.spectral_centroid_hz ? data.spectral_centroid_hz.toFixed(0) + ' Hz' : null },
-                data.seen_before ? { label: 'SEEN BEFORE', value: '', cls: 'seen' } : null,
-                data.best_match ? { label: 'Best', value: `algo ${data.best_match.algorithm} fb ${data.best_match.feedback} (${data.best_match.distance.toFixed(3)})`, cls: 'match' } : null,
+                {label: 'Freq', value: data.f0_hz ? data.f0_hz.toFixed(1) + ' Hz' : null},
+                {label: 'Conf', value: data.f0_confidence ? data.f0_confidence.toFixed(2) : null},
+                {label: 'Centroid', value: data.spectral_centroid_hz ? data.spectral_centroid_hz.toFixed(0) + ' Hz' : null},
+                data.seen_before ? {label: 'SEEN BEFORE', value: '', cls: 'seen'} : null,
+                data.best_match ? {label: 'Best', value: `algo ${data.best_match.algorithm} fb ${data.best_match.feedback} (${data.best_match.distance.toFixed(3)})`, cls: 'match'} : null,
             ].filter(Boolean);
 
             badges.forEach(b => {
@@ -781,12 +866,13 @@
             }
         }
 
-        function buildMatchTable(matches) {
+        function buildMatchTable(matches, groupName, onSelect) {
             const table = document.createElement('table');
             table.id = 'matches-table';
             table.innerHTML = `
                 <thead>
                     <tr>
+                        <th></th>
                         <th>#</th>
                         <th>Algo</th>
                         <th>FB</th>
@@ -798,8 +884,9 @@
             const tbody = document.createElement('tbody');
             (matches || []).forEach((m, i) => {
                 const tr = document.createElement('tr');
-                if (i === 0) tr.classList.add('best');
+                if (i === 0) tr.classList.add('best', 'selected');
                 tr.innerHTML = `
+                    <td class="radio-cell"><input type="radio" name="${groupName}" ${i === 0 ? 'checked' : ''}></td>
                     <td>${m.rank}</td>
                     <td>${m.algorithm}</td>
                     <td>${m.feedback}</td>
@@ -808,10 +895,94 @@
                         <audio controls preload="none" src="${m.wav_url}"></audio>
                     </td>
                 `;
+                const radio = tr.querySelector('input[type="radio"]');
+                radio.addEventListener('change', () => {
+                    tbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
+                    tr.classList.add('selected');
+                    if (onSelect) onSelect(m);
+                });
+                tr.addEventListener('click', (e) => {
+                    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'AUDIO') {
+                        radio.checked = true;
+                        radio.dispatchEvent(new Event('change'));
+                    }
+                });
                 tbody.appendChild(tr);
             });
             table.appendChild(tbody);
             return table;
+        }
+
+        let audioCtx;
+        function playNote(midi) {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const freq = 440 * Math.pow(2, (midi - 69) / 12);
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.6);
+        }
+
+        function buildKeyboard(matchedMidi) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'keyboard-wrapper';
+
+            const label = document.createElement('div');
+            label.className = 'keyboard-label';
+            label.textContent = 'Click to preview note';
+            wrapper.appendChild(label);
+
+            const kb = document.createElement('div');
+            kb.className = 'keyboard';
+
+            const notes = [
+                { midi: 48, name: 'C3',  white: true },
+                { midi: 49, name: 'C#3', white: false },
+                { midi: 50, name: 'D3',  white: true },
+                { midi: 51, name: 'D#3', white: false },
+                { midi: 52, name: 'E3',  white: true },
+                { midi: 53, name: 'F3',  white: true },
+                { midi: 54, name: 'F#3', white: false },
+                { midi: 55, name: 'G3',  white: true },
+                { midi: 56, name: 'G#3', white: false },
+                { midi: 57, name: 'A3',  white: true },
+                { midi: 58, name: 'A#3', white: false },
+                { midi: 59, name: 'B3',  white: true },
+                { midi: 60, name: 'C4',  white: true },
+                { midi: 61, name: 'C#4', white: false },
+                { midi: 62, name: 'D4',  white: true },
+                { midi: 63, name: 'D#4', white: false },
+                { midi: 64, name: 'E4',  white: true },
+            ];
+
+            notes.forEach(n => {
+                const key = document.createElement('div');
+                key.className = 'key ' + (n.white ? 'white' : 'black');
+                key.title = n.name;
+                if (n.midi === matchedMidi) key.classList.add('matched');
+                if (n.white) key.textContent = n.name;
+
+                let pressed = false;
+                key.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    pressed = true;
+                    key.classList.add('pressed');
+                    playNote(n.midi);
+                });
+                key.addEventListener('mouseup', () => { pressed = false; key.classList.remove('pressed'); });
+                key.addEventListener('mouseleave', () => { if (pressed) key.classList.remove('pressed'); });
+
+                kb.appendChild(key);
+            });
+
+            wrapper.appendChild(kb);
+            return wrapper;
         }
 
         function renderResults(index) {
@@ -841,7 +1012,10 @@
             resultsArea.appendChild(info);
 
             // Primary matches table
-            resultsArea.appendChild(buildMatchTable(data.matches));
+            job.selectedMatches = job.selectedMatches || {};
+            resultsArea.appendChild(buildMatchTable(data.matches, 'primary-select', (m) => {
+                job.selectedMatches.primary = m;
+            }));
 
             const syxLink = document.createElement('a');
             syxLink.className = 'syx-link';
@@ -863,7 +1037,9 @@
                 subtitle.textContent = 'Best static timbre match \u2014 filtered by spectral similarity';
                 resultsArea.appendChild(subtitle);
 
-                resultsArea.appendChild(buildMatchTable(data.timbral_matches));
+                resultsArea.appendChild(buildMatchTable(data.timbral_matches, 'timbral-select', (m) => {
+                    job.selectedMatches.timbral = m;
+                }));
             }
 
             // Full Top 5 section
@@ -878,8 +1054,13 @@
                 subtitle.textContent = 'Best temporal match \u2014 DiffOptimizer-refined envelopes';
                 resultsArea.appendChild(subtitle);
 
-                resultsArea.appendChild(buildMatchTable(data.full_matches));
+                resultsArea.appendChild(buildMatchTable(data.full_matches, 'full-select', (m) => {
+                    job.selectedMatches.full = m;
+                }));
             }
+
+            // Keyboard
+            resultsArea.appendChild(buildKeyboard(data.midi_note));
 
             tabContent.classList.add('visible');
         }
