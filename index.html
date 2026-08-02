@@ -478,6 +478,46 @@
         .key:hover {
             filter: brightness(0.95);
         }
+
+        #progress-wrapper {
+            width: 100%;
+            max-width: 500px;
+            margin-bottom: 0.5rem;
+        }
+
+        #progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #progress-fill {
+            height: 100%;
+            width: 0%;
+            background: #e94560;
+            transition: width 0.3s ease;
+        }
+
+        #progress-label {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 0.3rem;
+            text-align: center;
+            min-height: 1rem;
+        }
+
+        footer {
+            margin-top: 2rem;
+            padding: 1rem;
+            text-align: center;
+            font-size: 0.75rem;
+            color: #555;
+            border-top: 1px solid #333;
+            width: 100%;
+            max-width: 500px;
+        }
     </style>
 </head>
 
@@ -493,6 +533,13 @@
     </div>
 
     <textarea id="log" readonly placeholder="Log output will appear here..."></textarea>
+
+    <div id="progress-wrapper" style="display:none;">
+        <div id="progress-bar">
+            <div id="progress-fill"></div>
+        </div>
+        <div id="progress-label"></div>
+    </div>
 
     <button id="status-btn" disabled>Check Status</button>
 
@@ -532,6 +579,10 @@
             showJob(jobIndex);
 
             appendLog(`Probing: ${file.name}`);
+            const wrapper = document.getElementById('progress-wrapper');
+            if (wrapper) wrapper.style.display = 'block';
+            const fill = document.getElementById('progress-fill');
+            if (fill) fill.style.width = '10%';
 
             try {
                 const formData = new FormData();
@@ -611,16 +662,28 @@
 
                 if (data.status === 'queued') {
                     appendLog(`[${job.file.name}] Queued, waiting on ${data.queue_position}`);
+                    const wrapper = document.getElementById('progress-wrapper');
+                    if (wrapper) wrapper.style.display = 'block';
+                    const fill = document.getElementById('progress-fill');
+                    if (fill) fill.style.width = '0%';
                 } else if (data.status === 'processing') {
                     appendLog(`[${job.file.name}] Processing: ${data.progress_percent}% — ${data.phase || ''}`);
+                    const wrapper = document.getElementById('progress-wrapper');
+                    if (wrapper) wrapper.style.display = 'block';
+                    const fill = document.getElementById('progress-fill');
+                    if (fill) fill.style.width = data.progress_percent + '%';
                 } else if (data.status === 'completed') {
                     appendLog(`[${job.file.name}] Completed`);
+                    const wrapper = document.getElementById('progress-wrapper');
+                    if (wrapper) wrapper.style.display = 'none';
                     job.resultData = data;
                     upgradeTab(jobIndex);
                     if (activeJobIndex === jobIndex) renderResults(jobIndex);
                     advanceQueue();
                 } else {
                     appendLog(`[${job.file.name}] ${JSON.stringify(data, null, 2)}`);
+                    const wrapper = document.getElementById('progress-wrapper');
+                    if (wrapper) wrapper.style.display = 'none';
                     advanceQueue();
                 }
             } catch (err) {
@@ -1099,8 +1162,15 @@
             const timestamp = new Date().toLocaleTimeString();
             log.value += `[${timestamp}] ${message}\n`;
             log.scrollTop = log.scrollHeight;
+            const label = document.getElementById('progress-label');
+            if (label) {
+                const short = message.replace(/^\[.*?\]\s*/, '').substring(0, 80);
+                label.textContent = short;
+            }
         }
     </script>
+
+    <footer>&copy; Alexey S. Kompaniets 2026</footer>
 </body>
 
 </html>
