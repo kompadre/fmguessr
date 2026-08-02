@@ -306,6 +306,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 			// Prefer codebook best if it beats the NN prediction
 			initialPatch := scores[0].cand
+			if cfg.Verbose {
+				fmt.Printf("[debug] bestCodebookCand=%v bestCodebookDist=%.6f scores[0].dist=%.6f\n",
+					bestCodebookCand != nil, bestCodebookDist, scores[0].dist)
+			}
 			if bestCodebookCand != nil && bestCodebookDist < scores[0].dist {
 				initialPatch = bestCodebookCand
 				if cfg.Verbose {
