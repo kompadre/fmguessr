@@ -524,6 +524,44 @@
             font-size: 0.9rem;
             margin-left: 0.3rem;
         }
+
+        .tab-close {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 0.7rem;
+            padding: 0 0.2rem;
+            margin-left: 0.3rem;
+            line-height: 1;
+        }
+
+        .tab-close:hover {
+            color: #e94560;
+        }
+
+        .tab-status {
+            font-size: 0.7rem;
+            color: #888;
+            margin-left: 0.2rem;
+        }
+
+        #clear-btn {
+            display: none;
+            padding: 0.3rem 0.75rem;
+            background: none;
+            border: 1px solid #555;
+            border-radius: 6px;
+            color: #888;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-left: 0.5rem;
+        }
+
+        #clear-btn:hover {
+            color: #e94560;
+            border-color: #e94560;
+        }
     </style>
 </head>
 
@@ -550,6 +588,7 @@
     <button id="status-btn" disabled>Check Status</button>
 
     <div id="tabs"></div>
+    <button id="clear-btn">Clear History</button>
 
     <div id="tab-content"></div>
 
@@ -570,6 +609,144 @@
 
         const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
 
+        // --- Session Persistence (localStorage + IndexedDB) ---
+        const STORAGE_KEY = 'fmguessr_sessions';
+        const ACTIVE_KEY = 'fmguessr_active';
+        const MAX_SESSIONS = 50;
+        const DB_NAME = 'fmguessr';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'uploads';
+
+        const dbPromise = new Promise((resolve, reject) => {
+            const req = indexedDB.open(DB_NAME, DB_VERSION);
+            req.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
+            req.onsuccess = (e) => resolve(e.target.result);
+            req.onerror = (e) => reject(e.target.error);
+        });
+
+        async function dbPut(key, value) {
+            const db = await dbPromise;
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).put(value, key);
+        }
+
+        async function dbGet(key) {
+            const db = await dbPromise;
+            const tx = db.transaction(STORE_NAME, 'readonly');
+            return new Promise((resolve, reject) => {
+                const req = tx.objectStore(STORE_NAME).get(key);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function dbDelete(key) {
+            const db = await dbPromise;
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).delete(key);
+        }
+
+        async function dbClear() {
+            const db = await dbPromise;
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).clear();
+        }
+
+        function saveSessions() {
+            const data = jobs.map(j => ({
+                id: j.id,
+                fileName: j.fileName,
+                statusUrl: j.statusUrl,
+                probeData: j.probeData,
+                resultData: j.resultData,
+                selectedMatch: j.selectedMatch
+            }));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+            localStorage.setItem(ACTIVE_KEY, String(activeJobIndex));
+            updateClearBtn();
+        }
+
+        function updateClearBtn() {
+            const btn = document.getElementById('clear-btn');
+            if (btn) btn.style.display = jobs.length > 0 ? 'inline-block' : 'none';
+        }
+
+        async function restoreSessions() {
+            let saved;
+            try {
+                saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+            } catch { saved = []; }
+            const activeIdx = parseInt(localStorage.getItem(ACTIVE_KEY) || '-1');
+
+            for (const s of saved) {
+                const arrayBuffer = await dbGet(s.id);
+                if (!arrayBuffer) continue;
+
+                const blob = new Blob([arrayBuffer]);
+                const file = new File([blob], s.fileName, { type: 'audio/wav' });
+                const objectUrl = URL.createObjectURL(blob);
+
+                const job = {
+                    id: s.id,
+                    file, objectUrl,
+                    fileName: s.fileName,
+                    probeData: s.probeData,
+                    resultData: s.resultData,
+                    statusUrl: null, // don't restore polling
+                    selectedMatch: s.selectedMatch || null,
+                    tabEl: null
+                };
+                jobs.push(job);
+                const idx = jobs.length - 1;
+                addTab(idx);
+                if (job.resultData) upgradeTab(idx);
+            }
+
+            if (activeIdx >= 0 && activeIdx < jobs.length) {
+                showJob(activeIdx);
+            }
+            updateClearBtn();
+        }
+
+        async function deleteSession(jobIndex) {
+            const job = jobs[jobIndex];
+            if (!job) return;
+            await dbDelete(job.id);
+            if (job.objectUrl) URL.revokeObjectURL(job.objectUrl);
+            jobs.splice(jobIndex, 1);
+            // Re-index remaining tabs
+            tabsEl.innerHTML = '';
+            jobs.forEach((j, i) => {
+                j.tabEl = null;
+                addTab(i);
+                if (j.resultData) upgradeTab(i);
+            });
+            // Adjust active index
+            if (activeJobIndex === jobIndex) {
+                activeJobIndex = jobs.length > 0 ? 0 : -1;
+                if (activeJobIndex >= 0) showJob(0);
+                else tabContent.innerHTML = '';
+            } else if (activeJobIndex > jobIndex) {
+                activeJobIndex--;
+            }
+            saveSessions();
+        }
+
+        async function clearAllSessions() {
+            jobs = [];
+            activeJobIndex = -1;
+            stopPolling();
+            pollQueue = [];
+            localStorage.removeItem(STORAGE_KEY);
+            localStorage.removeItem(ACTIVE_KEY);
+            await dbClear();
+            tabsEl.innerHTML = '';
+            tabsEl.classList.remove('visible');
+            tabContent.innerHTML = '';
+            tabContent.classList.remove('visible');
+            updateClearBtn();
+        }
+
         fileInput.addEventListener('change', async () => {
             const file = fileInput.files[0];
             if (!file) return;
@@ -578,11 +755,29 @@
             fileLabel.classList.add('selected');
 
             const objectUrl = URL.createObjectURL(file);
+            const jobId = 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
             const jobIndex = jobs.length;
-            const job = {file, objectUrl, probeData: null, resultData: null, statusUrl: null, tabEl: null};
+            const job = {
+                id: jobId,
+                file, objectUrl,
+                fileName: file.name,
+                probeData: null, resultData: null,
+                statusUrl: null, tabEl: null,
+                selectedMatch: null, pollCount: 0
+            };
             jobs.push(job);
+
+            // Store WAV in IndexedDB
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                await dbPut(jobId, arrayBuffer);
+            } catch (e) {
+                console.warn('Failed to store WAV in IndexedDB:', e);
+            }
+
             addTab(jobIndex);
             showJob(jobIndex);
+            saveSessions();
 
             appendLog(`Probing: ${file.name}`);
             const wrapper = document.getElementById('progress-wrapper');
@@ -616,6 +811,7 @@
 
                 appendLog(`[${response.status}] ${JSON.stringify(data, null, 2)}`);
                 job.probeData = data;
+                saveSessions();
                 if (activeJobIndex === jobIndex) renderProbe(jobIndex);
             } catch (err) {
                 appendLog(`Error: ${err.message}`);
@@ -666,30 +862,43 @@
                     return;
                 }
 
+                // Update tab label with status
+                const tabLabel = job.tabEl ? job.tabEl.querySelector('.tab-label') : null;
+
                 if (data.status === 'queued') {
-                    appendLog(`[${job.file.name}] Queued, waiting on ${data.queue_position}`);
+                    job.pollCount = (job.pollCount || 0) + 1;
+                    appendLog(`[${job.fileName}] Queued, waiting on ${data.queue_position}`);
+                    if (tabLabel) tabLabel.textContent = job.fileName + ' (queued)';
                     const wrapper = document.getElementById('progress-wrapper');
                     if (wrapper) wrapper.style.display = 'block';
                     const fill = document.getElementById('progress-fill');
                     if (fill) fill.style.width = '0%';
                 } else if (data.status === 'processing') {
-                    appendLog(`[${job.file.name}] Processing: ${data.progress_percent}% — ${data.phase || ''}`);
+                    job.pollCount = (job.pollCount || 0) + 1;
+                    appendLog(`[${job.fileName}] Processing: ${data.progress_percent}% — ${data.phase || ''}`);
+                    if (tabLabel) tabLabel.textContent = job.fileName + ' [' + job.pollCount + ']';
                     const wrapper = document.getElementById('progress-wrapper');
                     if (wrapper) wrapper.style.display = 'block';
                     const fill = document.getElementById('progress-fill');
                     if (fill) fill.style.width = data.progress_percent + '%';
                 } else if (data.status === 'completed') {
-                    appendLog(`[${job.file.name}] Completed`);
+                    appendLog(`[${job.fileName}] Completed`);
                     const wrapper = document.getElementById('progress-wrapper');
                     if (wrapper) wrapper.style.display = 'none';
+                    if (tabLabel) tabLabel.textContent = job.fileName;
                     job.resultData = data;
+                    job.pollCount = 0;
+                    saveSessions();
                     upgradeTab(jobIndex);
                     if (activeJobIndex === jobIndex) renderResults(jobIndex);
                     advanceQueue();
                 } else {
-                    appendLog(`[${job.file.name}] ${JSON.stringify(data, null, 2)}`);
+                    appendLog(`[${job.fileName}] ${JSON.stringify(data, null, 2)}`);
                     const wrapper = document.getElementById('progress-wrapper');
                     if (wrapper) wrapper.style.display = 'none';
+                    if (tabLabel) tabLabel.textContent = job.fileName;
+                    advanceQueue();
+                }
                     advanceQueue();
                 }
             } catch (err) {
@@ -707,10 +916,21 @@
             spinner.className = 'spinner';
 
             const label = document.createElement('span');
-            label.textContent = job.file.name;
+            label.className = 'tab-label';
+            label.textContent = job.fileName;
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'tab-close';
+            closeBtn.textContent = '\u00d7';
+            closeBtn.title = 'Remove';
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteSession(index);
+            });
 
             tab.appendChild(spinner);
             tab.appendChild(label);
+            tab.appendChild(closeBtn);
             tab.addEventListener('click', () => showJob(index));
             tabsEl.appendChild(tab);
             tabsEl.classList.add('visible');
@@ -743,10 +963,21 @@
             audio.addEventListener('ended', () => {playBtn.textContent = '\u25b6';});
 
             const label = document.createElement('span');
-            label.textContent = job.file.name;
+            label.className = 'tab-label';
+            label.textContent = job.fileName;
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'tab-close';
+            closeBtn.textContent = '\u00d7';
+            closeBtn.title = 'Remove';
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteSession(index);
+            });
 
             tab.appendChild(playBtn);
             tab.appendChild(label);
+            tab.appendChild(closeBtn);
             tab.addEventListener('click', () => showJob(index));
         }
 
@@ -1210,6 +1441,15 @@
                 label.textContent = short;
             }
         }
+
+        // Clear history button
+        document.getElementById('clear-btn').addEventListener('click', async () => {
+            if (!confirm('Clear all session history?')) return;
+            await clearAllSessions();
+        });
+
+        // Restore sessions on page load
+        restoreSessions();
     </script>
 
     <footer>&copy; Alexey S. Kompaniets 2026</footer>
