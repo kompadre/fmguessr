@@ -303,9 +303,11 @@ func detectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
 
 	bestLag := 0
 	threshold := absMax * 0.70
-	for _, p := range peaks {
-		if p.val >= threshold {
-			bestLag = p.lag
+	// Iterate from longest lag to shortest (fundamental first, highest harmonics last).
+	// For periodic signals like foghorns, the fundamental at the longest lag is the true F0.
+	for i := len(peaks) - 1; i >= 0; i-- {
+		if peaks[i].val >= threshold {
+			bestLag = peaks[i].lag
 			break
 		}
 	}
@@ -314,18 +316,16 @@ func detectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
 		return 0, 0
 	}
 
-	// For F0 <= 500 Hz (musical notes where 2nd harmonic can exceed fundamental),
-	// check if doubleLag (2 * bestLag) is also a strong peak (>= 0.75 * bestLag val).
-	if float64(sampleRate)/float64(bestLag) <= 500.0 {
-		doubleLag := bestLag * 2
-		bestVal := acorrReal[bestLag]
-		for l := doubleLag - 2; l <= doubleLag+2; l++ {
-			if l > 0 && l < len(acorrReal) {
-				if acorrReal[l] >= bestVal*0.75 {
-					bestLag = l
-					break
-				}
-			}
+	// Octave correction: if a lower harmonic (2x, 3x, 4x lag) is also a strong peak,
+	// prefer it — the fundamental is at the longest lag, not the shortest.
+	bestVal := acorrReal[bestLag]
+	for _, mult := range []int{2, 3, 4} {
+		candidateLag := bestLag * mult
+		if candidateLag >= len(acorrReal) {
+			break
+		}
+		if acorrReal[candidateLag] >= bestVal*0.75 {
+			bestLag = candidateLag
 		}
 	}
 
