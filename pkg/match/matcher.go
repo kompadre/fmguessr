@@ -355,7 +355,15 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		if cfg.Verbose {
 			fmt.Println("--- Pre-GA Acceleration Profiling (Waveform Base Seeds) ---")
 		}
-		globalLiveOpt = NewLiveOptimizer(target, SineBase(), 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		// Prefer codebook best as starting point if available
+		startPatch := SineBase()
+		if bestCodebookCand != nil {
+			startPatch = bestCodebookCand
+			if cfg.Verbose {
+				fmt.Printf("Using codebook candidate as pre-GA initial (dist=%.6f)\n", bestCodebookDist)
+			}
+		}
+		globalLiveOpt = NewLiveOptimizer(target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		globalLiveOpt.Run()
 		if globalLiveOpt.bestDist <= 1e-4 {
 			if cfg.Verbose {
