@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WavToFM</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 2rem;
+            gap: 2rem;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            display: none;
+        }
+
+        .file-input-label {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #16213e;
+            border: 2px dashed #0f3460;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color 0.2s, background-color 0.2s;
+            text-align: center;
+            min-width: 300px;
+        }
+
+        .file-input-label:hover {
+            border-color: #e94560;
+            background-color: #1a1a3e;
+        }
+
+        .file-input-label.selected {
+            border-style: solid;
+            border-color: #4caf50;
+            background-color: #1a2e1a;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            background-color: #e94560;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #c73550;
+        }
+
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+
+        .file-name {
+            display: block;
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            color: #aaa;
+        }
+
+        textarea {
+            width: 100%;
+            max-width: 500px;
+            min-height: 200px;
+            padding: 1rem;
+            background-color: #0f0f23;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: monospace;
+            font-size: 0.9rem;
+            resize: vertical;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        #tabs {
+            display: none;
+            width: 100%;
+            max-width: 500px;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+        }
+
+        #tabs.visible {
+            display: flex;
+        }
+
+        .tab {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.75rem;
+            background-color: #0f0f23;
+            border: 1px solid #333;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            color: #aaa;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .tab:hover {
+            background-color: #16213e;
+            color: #fff;
+        }
+
+        .tab.active {
+            background-color: #16213e;
+            border-color: #e94560;
+            color: #fff;
+        }
+
+        .tab .spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #555;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .tab-play {
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .tab-play:hover {
+            color: #e94560;
+        }
+
+        #tab-content {
+            display: none;
+            width: 100%;
+            max-width: 500px;
+            background-color: #16213e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        #tab-content.visible {
+            display: block;
+        }
+
+        .config-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            margin-bottom: 0.75rem;
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+
+        .config-header:hover {
+            color: #fff;
+        }
+
+        .config-arrow {
+            font-size: 0.75rem;
+            transition: transform 0.2s;
+        }
+
+        .config-header.collapsed .config-arrow {
+            transform: rotate(-90deg);
+        }
+
+        .config-body {
+            overflow: hidden;
+            transition: max-height 0.25s ease;
+        }
+
+        .config-body.collapsed {
+            max-height: 0 !important;
+            margin: 0;
+        }
+
+        .probe-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .probe-info .badge {
+            background-color: #0f0f23;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+
+        .probe-info .badge strong {
+            color: #e0e0e0;
+        }
+
+        .probe-info .badge.seen {
+            color: #e94560;
+            font-weight: 600;
+        }
+
+        .probe-info .badge.match {
+            color: #4caf50;
+        }
+
+        .probe-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .probe-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+
+        .probe-field label {
+            font-size: 0.75rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .probe-field input {
+            background-color: #0f0f23;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 0.4rem 0.5rem;
+            color: #e0e0e0;
+            font-size: 0.85rem;
+            font-family: monospace;
+            width: 100%;
+        }
+
+        .probe-field input:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        .probe-actions {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+        }
+
+        .probe-actions button {
+            flex: 1;
+            font-size: 0.85rem;
+            padding: 0.6rem 1rem;
+        }
+
+        .btn-match {
+            background-color: #4caf50;
+        }
+
+        .btn-match:hover {
+            background-color: #3d8b40;
+        }
+
+        .btn-reset {
+            background-color: #333;
+        }
+
+        .btn-reset:hover {
+            background-color: #444;
+        }
+
+        .result-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+
+        .result-info span {
+            background-color: #0f0f23;
+            padding: 0.25rem 0.6rem;
+            border-radius: 4px;
+        }
+
+        .result-info strong {
+            color: #4caf50;
+        }
+
+        #matches-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        #matches-table th,
+        #matches-table td {
+            padding: 0.5rem 0.4rem;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+
+        #matches-table th {
+            color: #888;
+            font-weight: 600;
+        }
+
+        #matches-table tr.best td {
+            color: #4caf50;
+        }
+
+        .player-cell {
+            display: flex;
+            align-items: center;
+        }
+
+        .player-cell audio {
+            height: 28px;
+        }
+
+        .syx-link {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background-color: #0f3460;
+            border-radius: 6px;
+            color: #fff;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: background-color 0.2s;
+        }
+
+        .syx-link:hover {
+            background-color: #1a5276;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ffffff;
+            margin-top: 1.25rem;
+            margin-bottom: 0.15rem;
+        }
+
+        .section-subtitle {
+            font-size: 0.8rem;
+            color: #777;
+            margin-bottom: 0.75rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>WavToFM</h1>
+
+    <div class="file-input-wrapper">
+        <input type="file" id="wav-input" accept=".wav">
+        <label for="wav-input" class="file-input-label" id="file-label">
+            Select a .wav file
+            <span class="file-name" id="file-name">No file chosen</span>
+        </label>
+    </div>
+
+    <textarea id="log" readonly placeholder="Log output will appear here..."></textarea>
+
+    <button id="status-btn" disabled>Check Status</button>
+
+    <div id="tabs"></div>
+
+    <div id="tab-content"></div>
+
+    <script>
+        const fileInput = document.getElementById('wav-input');
+        const fileLabel = document.getElementById('file-label');
+        const fileName = document.getElementById('file-name');
+        const log = document.getElementById('log');
+        const statusBtn = document.getElementById('status-btn');
+        const tabsEl = document.getElementById('tabs');
+        const tabContent = document.getElementById('tab-content');
+        const baseUrl = 'http://localhost:8080';
+
+        let pollInterval = null;
+        let jobs = [];
+        let activeJobIndex = -1;
+        let pollQueue = [];
+
+        const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
+
+        fileInput.addEventListener('change', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            fileName.textContent = file.name;
+            fileLabel.classList.add('selected');
+
+            const objectUrl = URL.createObjectURL(file);
+            const jobIndex = jobs.length;
+            const job = { file, objectUrl, probeData: null, resultData: null, statusUrl: null, tabEl: null };
+            jobs.push(job);
+            addTab(jobIndex);
+            showJob(jobIndex);
+
+            appendLog(`Probing: ${file.name}`);
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch(baseUrl + '/api/probe', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const text = await response.text();
+
+                if (!response.ok) {
+                    appendLog(`[${response.status}] ${text}`);
+                    return;
+                }
+
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    appendLog(`[${response.status}] ${text}`);
+                    return;
+                }
+
+                appendLog(`[${response.status}] ${JSON.stringify(data, null, 2)}`);
+                job.probeData = data;
+                if (activeJobIndex === jobIndex) renderProbe(jobIndex);
+            } catch (err) {
+                appendLog(`Error: ${err.message}`);
+            }
+        });
+
+        statusBtn.addEventListener('click', () => {
+            if (pollQueue.length > 0) checkStatus(pollQueue[0]);
+        });
+
+        function startPolling() {
+            stopPolling();
+            statusBtn.disabled = false;
+            pollInterval = setInterval(() => {
+                if (pollQueue.length > 0) checkStatus(pollQueue[0]);
+            }, 3000);
+            checkStatus(pollQueue[0]);
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+
+        function advanceQueue() {
+            pollQueue.shift();
+            if (pollQueue.length > 0) {
+                startPolling();
+            } else {
+                statusBtn.disabled = true;
+            }
+        }
+
+        async function checkStatus(jobIndex) {
+            const job = jobs[jobIndex];
+            if (!job || !job.statusUrl) return;
+            try {
+                const response = await fetch(baseUrl + job.statusUrl);
+                const text = await response.text();
+
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    appendLog(`[status] ${text}`);
+                    return;
+                }
+
+                if (data.status === 'queued') {
+                    appendLog(`[${job.file.name}] Queued, waiting on ${data.queue_position}`);
+                } else if (data.status === 'processing') {
+                    appendLog(`[${job.file.name}] Processing: ${data.progress_percent}% — ${data.phase || ''}`);
+                } else if (data.status === 'completed') {
+                    appendLog(`[${job.file.name}] Completed`);
+                    job.resultData = data;
+                    upgradeTab(jobIndex);
+                    if (activeJobIndex === jobIndex) renderResults(jobIndex);
+                    advanceQueue();
+                } else {
+                    appendLog(`[${job.file.name}] ${JSON.stringify(data, null, 2)}`);
+                    advanceQueue();
+                }
+            } catch (err) {
+                appendLog(`[status error] ${err.message}`);
+            }
+        }
+
+        function addTab(index) {
+            const job = jobs[index];
+            const tab = document.createElement('div');
+            tab.className = 'tab';
+            tab.dataset.index = index;
+
+            const spinner = document.createElement('div');
+            spinner.className = 'spinner';
+
+            const label = document.createElement('span');
+            label.textContent = job.file.name;
+
+            tab.appendChild(spinner);
+            tab.appendChild(label);
+            tab.addEventListener('click', () => showJob(index));
+            tabsEl.appendChild(tab);
+            tabsEl.classList.add('visible');
+            job.tabEl = tab;
+        }
+
+        function upgradeTab(index) {
+            const job = jobs[index];
+            const tab = job.tabEl;
+            if (!tab) return;
+
+            tab.innerHTML = '';
+
+            const playBtn = document.createElement('button');
+            playBtn.className = 'tab-play';
+            playBtn.textContent = '\u25b6';
+            playBtn.title = 'Play original';
+            const audio = new Audio(job.objectUrl);
+            playBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (audio.paused) {
+                    audio.play();
+                    playBtn.textContent = '\u23f9';
+                } else {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    playBtn.textContent = '\u25b6';
+                }
+            });
+            audio.addEventListener('ended', () => { playBtn.textContent = '\u25b6'; });
+
+            const label = document.createElement('span');
+            label.textContent = job.file.name;
+
+            tab.appendChild(playBtn);
+            tab.appendChild(label);
+            tab.addEventListener('click', () => showJob(index));
+        }
+
+        function showJob(index) {
+            activeJobIndex = index;
+            document.querySelectorAll('.tab').forEach(t => {
+                t.classList.toggle('active', Number(t.dataset.index) === index);
+            });
+            const job = jobs[index];
+            if (job.resultData) {
+                renderResults(index);
+            } else if (job.probeData) {
+                renderProbe(index);
+            } else {
+                tabContent.innerHTML = '<div class="result-info"><span>Probing...</span></div>';
+                tabContent.classList.add('visible');
+            }
+        }
+
+        function renderProbe(index) {
+            const job = jobs[index];
+            const data = job.probeData;
+            const locked = !!job.statusUrl;
+            tabContent.innerHTML = '';
+
+            const header = document.createElement('div');
+            header.className = 'config-header' + (locked ? ' collapsed' : '');
+            header.innerHTML = `<span>Configuration</span><span class="config-arrow">\u25bc</span>`;
+            tabContent.appendChild(header);
+
+            const body = document.createElement('div');
+            body.className = 'config-body' + (locked ? ' collapsed' : '');
+
+            const info = document.createElement('div');
+            info.className = 'probe-info';
+            const badges = [
+                { label: 'Freq', value: data.f0_hz ? data.f0_hz.toFixed(1) + ' Hz' : null },
+                { label: 'Conf', value: data.f0_confidence ? data.f0_confidence.toFixed(2) : null },
+                { label: 'Centroid', value: data.spectral_centroid_hz ? data.spectral_centroid_hz.toFixed(0) + ' Hz' : null },
+                data.seen_before ? { label: 'SEEN BEFORE', value: '', cls: 'seen' } : null,
+                data.best_match ? { label: 'Best', value: `algo ${data.best_match.algorithm} fb ${data.best_match.feedback} (${data.best_match.distance.toFixed(3)})`, cls: 'match' } : null,
+            ].filter(Boolean);
+
+            badges.forEach(b => {
+                const span = document.createElement('span');
+                span.className = 'badge' + (b.cls ? ' ' + b.cls : '');
+                span.innerHTML = b.value ? `<strong>${b.label}:</strong> ${b.value}` : `<strong>${b.label}</strong>`;
+                info.appendChild(span);
+            });
+            body.appendChild(info);
+
+            const form = document.createElement('form');
+            form.className = 'probe-form';
+            form.onsubmit = () => false;
+
+            const noteField = document.createElement('div');
+            noteField.className = 'probe-field';
+            noteField.innerHTML = `<label for="pf-note-${index}">Note</label>`;
+            const noteInput = document.createElement('input');
+            noteInput.type = 'text';
+            noteInput.id = `pf-note-${index}`;
+            noteInput.name = 'note';
+            noteInput.value = data.root_note || '';
+            noteInput.title = 'e.g. C4 or 48';
+            if (locked) noteInput.disabled = true;
+            noteField.appendChild(noteInput);
+            form.appendChild(noteField);
+
+            probeFields.forEach(key => {
+                const field = document.createElement('div');
+                field.className = 'probe-field';
+                const numVal = data[key];
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.id = `pf-${key}-${index}`;
+                input.name = key;
+                input.step = key === 'sustain_level' || key === 'harmonicity' ? '0.001' : '0.01';
+                input.min = '0';
+                if (key === 'sustain_level' || key === 'brightness' || key === 'harmonicity') input.max = '1';
+                input.value = numVal !== undefined ? roundForInput(numVal) : '';
+                if (locked) input.disabled = true;
+                field.innerHTML = `<label for="pf-${key}-${index}">${key.replace(/_/g, ' ')}</label>`;
+                field.appendChild(input);
+                form.appendChild(field);
+            });
+
+            if (!locked) {
+                const actions = document.createElement('div');
+                actions.className = 'probe-actions';
+
+                const resetBtn = document.createElement('button');
+                resetBtn.type = 'button';
+                resetBtn.className = 'btn-reset';
+                resetBtn.textContent = 'Reset';
+                resetBtn.addEventListener('click', () => renderProbe(index));
+
+                const matchBtn = document.createElement('button');
+                matchBtn.type = 'button';
+                matchBtn.className = 'btn-match';
+                matchBtn.textContent = 'Start Matching';
+                matchBtn.addEventListener('click', () => startMatch(index));
+
+                actions.appendChild(resetBtn);
+                actions.appendChild(matchBtn);
+                form.appendChild(actions);
+            }
+
+            body.appendChild(form);
+            tabContent.appendChild(body);
+
+            requestAnimationFrame(() => {
+                if (!body.classList.contains('collapsed')) {
+                    body.style.maxHeight = body.scrollHeight + 'px';
+                }
+            });
+
+            header.addEventListener('click', () => {
+                const collapsed = body.classList.toggle('collapsed');
+                header.classList.toggle('collapsed', collapsed);
+                if (!collapsed) {
+                    body.style.maxHeight = body.scrollHeight + 'px';
+                }
+            });
+
+            tabContent.classList.add('visible');
+        }
+
+        function roundForInput(val) {
+            if (Number.isInteger(val)) return val;
+            return parseFloat(val.toFixed(6));
+        }
+
+        async function startMatch(index) {
+            const job = jobs[index];
+            if (!job || !job.probeData) return;
+
+            appendLog(`Matching: ${job.file.name}`);
+
+            try {
+                const formData = new FormData();
+                formData.append('file', job.file);
+
+                const noteInput = tabContent.querySelector(`[name="note"]`);
+                if (noteInput && noteInput.value !== '') {
+                    formData.append('note', noteInput.value);
+                }
+
+                probeFields.forEach(key => {
+                    const input = tabContent.querySelector(`[name="${key}"]`);
+                    if (input && input.value !== '') {
+                        formData.append(key, input.value);
+                    }
+                });
+
+                const response = await fetch(baseUrl + '/api/match', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const text = await response.text();
+
+                if (!response.ok) {
+                    appendLog(`[${response.status}] ${text}`);
+                    return;
+                }
+
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    appendLog(`[${response.status}] ${text}`);
+                    return;
+                }
+
+                appendLog(`[${response.status}] ${JSON.stringify(data, null, 2)}`);
+
+                if (data.status_url) {
+                    job.statusUrl = data.status_url;
+                    appendLog(`Status URL: ${data.status_url}`);
+                    renderProbe(index);
+                    pollQueue.push(index);
+                    if (pollQueue.length === 1) startPolling();
+                }
+            } catch (err) {
+                appendLog(`Error: ${err.message}`);
+            }
+        }
+
+        function buildMatchTable(matches) {
+            const table = document.createElement('table');
+            table.id = 'matches-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Algo</th>
+                        <th>FB</th>
+                        <th>Dist</th>
+                        <th>Listen</th>
+                    </tr>
+                </thead>
+            `;
+            const tbody = document.createElement('tbody');
+            (matches || []).forEach((m, i) => {
+                const tr = document.createElement('tr');
+                if (i === 0) tr.classList.add('best');
+                tr.innerHTML = `
+                    <td>${m.rank}</td>
+                    <td>${m.algorithm}</td>
+                    <td>${m.feedback}</td>
+                    <td>${m.distance.toFixed(4)}</td>
+                    <td class="player-cell">
+                        <audio controls preload="none" src="${m.wav_url}"></audio>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            return table;
+        }
+
+        function renderResults(index) {
+            const job = jobs[index];
+            const data = job.resultData;
+
+            if (!tabContent.querySelector('.config-body')) {
+                renderProbe(index);
+            }
+
+            let resultsArea = tabContent.querySelector('.results-area');
+            if (!resultsArea) {
+                resultsArea = document.createElement('div');
+                resultsArea.className = 'results-area';
+                tabContent.appendChild(resultsArea);
+            }
+            resultsArea.innerHTML = '';
+
+            const info = document.createElement('div');
+            info.className = 'result-info';
+            info.innerHTML = `
+                <span><strong>${data.root_note}</strong></span>
+                <span>MIDI ${data.midi_note}</span>
+                <span>${data.f0_hz.toFixed(1)} Hz</span>
+                <span>Best: ${data.best_distance.toFixed(4)}</span>
+            `;
+            resultsArea.appendChild(info);
+
+            // Primary matches table
+            resultsArea.appendChild(buildMatchTable(data.matches));
+
+            const syxLink = document.createElement('a');
+            syxLink.className = 'syx-link';
+            syxLink.href = data.syx_url;
+            syxLink.target = '_blank';
+            syxLink.rel = 'noopener';
+            syxLink.textContent = 'Download bank.syx';
+            resultsArea.appendChild(syxLink);
+
+            // Timbral Top 5 section
+            if (data.timbral_matches && data.timbral_matches.length > 0) {
+                const title = document.createElement('h3');
+                title.className = 'section-title';
+                title.textContent = 'Timbral Top 5';
+                resultsArea.appendChild(title);
+
+                const subtitle = document.createElement('p');
+                subtitle.className = 'section-subtitle';
+                subtitle.textContent = 'Best static timbre match \u2014 filtered by spectral similarity';
+                resultsArea.appendChild(subtitle);
+
+                resultsArea.appendChild(buildMatchTable(data.timbral_matches));
+            }
+
+            // Full Top 5 section
+            if (data.full_matches && data.full_matches.length > 0) {
+                const title = document.createElement('h3');
+                title.className = 'section-title';
+                title.textContent = 'Full Top 5';
+                resultsArea.appendChild(title);
+
+                const subtitle = document.createElement('p');
+                subtitle.className = 'section-subtitle';
+                subtitle.textContent = 'Best temporal match \u2014 DiffOptimizer-refined envelopes';
+                resultsArea.appendChild(subtitle);
+
+                resultsArea.appendChild(buildMatchTable(data.full_matches));
+            }
+
+            tabContent.classList.add('visible');
+        }
+
+        function appendLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            log.value += `[${timestamp}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+    </script>
+</body>
+
+</html>
