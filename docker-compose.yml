@@ -1,0 +1,31 @@
+services:
+  fmguessr:
+    build: .
+    container_name: fmguessr
+    restart: unless-stopped
+    environment:
+      - GOMAXPROCS=4
+    volumes:
+      - ./data:/data
+      - exports:/app/exports
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./index.html:/srv/index.html:ro
+      - exports:/exports:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  exports:
+  caddy_data:
+  caddy_config:

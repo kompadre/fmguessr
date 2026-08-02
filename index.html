@@ -423,7 +423,7 @@
         const statusBtn = document.getElementById('status-btn');
         const tabsEl = document.getElementById('tabs');
         const tabContent = document.getElementById('tab-content');
-        const baseUrl = 'http://localhost:8080';
+        const baseUrl = window.location.origin;
 
         let pollInterval = null;
         let jobs = [];

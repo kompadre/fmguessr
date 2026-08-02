@@ -75,6 +75,48 @@ func NewPredictor(modelPath string) (*Predictor, error) {
 	}, nil
 }
 
+// NewPredictorFromBytes initializes the ONNX runtime session from embedded model bytes.
+func NewPredictorFromBytes(data []byte) (*Predictor, error) {
+	ort.SetSharedLibraryPath("./lib/libonnxruntime.so")
+	if !ort.IsInitialized() {
+		if err := ort.InitializeEnvironment(); err != nil {
+			return nil, fmt.Errorf("failed to init ONNX env: %w", err)
+		}
+	}
+
+	inputNames := []string{"spectrogram"}
+	outputNames := []string{"continuous"}
+
+	inputTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, 1, TimbreSpecBins))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create input tensor: %w", err)
+	}
+
+	continuousTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, 13))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create continuous tensor: %w", err)
+	}
+
+	inputs := []ort.Value{inputTensor}
+	outputs := []ort.Value{continuousTensor}
+
+	p, err := ort.NewAdvancedSessionWithONNXData(
+		data,
+		inputNames,
+		outputNames,
+		inputs, outputs, nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ONNX session from bytes: %w", err)
+	}
+
+	return &Predictor{
+		session:          p,
+		inputTensor:      inputTensor,
+		continuousTensor: continuousTensor,
+	}, nil
+}
+
 // Close releases the ONNX session resources.
 func (p *Predictor) Close() {
 	if p.session != nil {

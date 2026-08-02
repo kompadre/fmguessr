@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	_ "embed"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +20,9 @@ import (
 	"github.com/kompadre/fmguessr/pkg/match"
 )
 
+//go:embed data/model.onnx
+var defaultModelData []byte
+
 type ServerConfig struct {
 	Port         int
 	MaxQueue     int
@@ -27,6 +31,7 @@ type ServerConfig struct {
 	ModelPath    string
 	CodebookPath string
 	ExportDir    string
+	ModelData    []byte // Embedded ONNX model bytes (overrides ModelPath)
 }
 
 type MatchResult struct {
@@ -131,6 +136,7 @@ func (s *Server) processJob(job *Job) {
 		NoteFreq:     noteFreq,
 		CodebookPath: s.cfg.CodebookPath,
 		ModelPath:    s.cfg.ModelPath,
+		ModelData:    s.cfg.ModelData,
 		Verbose:      true,
 		GA:           gaCfg,
 		ProgressCallback: func(pct int, phase string) {
@@ -567,11 +573,43 @@ func main() {
 	maxQueue := flag.Int("max-queue", 5, "maximum pending jobs in queue")
 	generations := flag.Int("generations", 20, "GA generations")
 	population := flag.Int("population", 64, "GA population size")
-	modelPath := flag.String("model", "smaller_model.onnx", "path to ONNX model file")
+	modelPath := flag.String("model", "", "path to ONNX model file (default: embedded)")
 	codebookPath := flag.String("codebook", "dx7_codebook.bin", "path to pre-indexed dx7_codebook.bin")
 	exportDir := flag.String("exports", "./exports", "path to export directory for static files")
 
 	flag.Parse()
+
+	// Model: use embedded data unless -model flag is provided
+	var modelData []byte
+	if *modelPath != "" {
+		if !fileExists(*modelPath) {
+			log.Fatalf("FATAL: model file not found: %s\n", *modelPath)
+		}
+		fmt.Printf("  Model: %s (file)\n", *modelPath)
+	} else {
+		modelData = defaultModelData
+		fmt.Printf("  Model: embedded (%d bytes)\n", len(modelData))
+	}
+
+	// Codebook: fail-fast if fingerprint codebook is missing
+	if *codebookPath == "" {
+		fmt.Fprintln(os.Stderr, "Warning: no codebook path specified (-codebook)")
+	} else if !fileExists(*codebookPath) {
+		log.Fatalf("FATAL: fingerprint codebook not found: %s\n"+
+			"  Run ./index to build it, or pass -codebook flag\n", *codebookPath)
+	} else {
+		// Check timbre codebook (warn only)
+		timbrePath := *codebookPath
+		if len(*codebookPath) > 4 && (*codebookPath)[len(*codebookPath)-4:] == ".bin" {
+			timbrePath = (*codebookPath)[:len(*codebookPath)-4] + "_timbre.bin"
+		} else {
+			timbrePath = *codebookPath + "_timbre.bin"
+		}
+		if !fileExists(timbrePath) {
+			fmt.Fprintf(os.Stderr, "Warning: timbre codebook not found: %s\n"+
+				"  Run ./index --sync-timbre to create it\n", timbrePath)
+		}
+	}
 
 	cfg := ServerConfig{
 		Port:         *port,
@@ -581,6 +619,7 @@ func main() {
 		ModelPath:    *modelPath,
 		CodebookPath: *codebookPath,
 		ExportDir:    *exportDir,
+		ModelData:    modelData,
 	}
 
 	server := NewServer(cfg)
@@ -594,7 +633,6 @@ func main() {
 
 	fmt.Printf("fmguessr REST API Server listening on http://localhost:%d\n", cfg.Port)
 	fmt.Printf("  Max Queue: %d, Generations: %d, Population: %d\n", cfg.MaxQueue, cfg.Generations, cfg.Population)
-	fmt.Printf("  Model: %s (exists: %v)\n", cfg.ModelPath, fileExists(cfg.ModelPath))
 	fmt.Printf("  Codebook: %s (exists: %v)\n", cfg.CodebookPath, fileExists(cfg.CodebookPath))
 	fmt.Printf("  Exports Dir: %s\n", server.exportDir)
 

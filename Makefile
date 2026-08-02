@@ -1,6 +1,6 @@
 # fmguessr Makefile
 
-.PHONY: all match index play server test clean
+.PHONY: all match index play server release docker-build test clean
 
 all: match index play server
 
@@ -15,6 +15,12 @@ play:
 
 server:
 	go build -o server ./cmd/server/main.go
+
+release:
+	CGO_ENABLED=1 go build -ldflags="-s -w" -trimpath -o server ./cmd/server/
+
+docker-build:
+	docker compose build
 
 test: all
 	go test -v ./tests/...

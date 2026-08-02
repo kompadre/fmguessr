@@ -1,0 +1,15 @@
+.git
+data/
+*.syx
+*.wav
+*.npz
+*.py
+*.log
+exports/
+scripts/
+temp_timdata/
+rendered_*/
+test_*/
+onnxruntime-linux-x64-*/
+go.work
+*.onnx.backup

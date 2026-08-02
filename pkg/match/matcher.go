@@ -17,6 +17,7 @@ type Config struct {
 	NoteFreq     float64 // User-specified note frequency (0 = use detected F0)
 	CodebookPath string  // Path to pre-indexed dx7_codebook.bin (optional)
 	ModelPath    string  // Path to ONNX model for NN prediction (optional)
+	ModelData    []byte  // Optional: raw ONNX model bytes (overrides ModelPath)
 	Verbose      bool
 	GA           GAConfig
 	ProgressCallback func(percent int, phase string) // Optional callback for API server progress reporting
@@ -206,15 +207,25 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	// Step 2: Try NN prediction if model available
 	var nnCandidates []*Candidate
-	if cfg.ModelPath != "" {
-		predictor, err := NewPredictor(cfg.ModelPath)
+	if len(cfg.ModelData) > 0 || cfg.ModelPath != "" {
+		var predictor *Predictor
+		var err error
+		if len(cfg.ModelData) > 0 {
+			predictor, err = NewPredictorFromBytes(cfg.ModelData)
+		} else {
+			predictor, err = NewPredictor(cfg.ModelPath)
+		}
 		if err != nil {
 			fmt.Printf("Warning: could not load NN model: %v\n", err)
 		} else {
 			defer predictor.Close()
 
 			if cfg.Verbose {
-				fmt.Printf("Using NN predictor: %s\n", cfg.ModelPath)
+				if len(cfg.ModelData) > 0 {
+					fmt.Printf("Using NN predictor: embedded (%d bytes)\n", len(cfg.ModelData))
+				} else {
+					fmt.Printf("Using NN predictor: %s\n", cfg.ModelPath)
+				}
 			}
 
 			// Load timbre codebook for RawBase attachment
