@@ -87,6 +87,43 @@ func (cb *Codebook) SearchKNN(targetFp Fingerprint, k int) []*Candidate {
 	return cands
 }
 
+// SearchKNNWithDistances finds the k closest entries by cosine distance and returns both candidates and distances.
+func (cb *Codebook) SearchKNNWithDistances(targetFp Fingerprint, k int) ([]*Candidate, []float64) {
+	if len(cb.Entries) == 0 {
+		return nil, nil
+	}
+
+	type matchResult struct {
+		cand *Candidate
+		dist float64
+	}
+
+	results := make([]matchResult, len(cb.Entries))
+	for i, entry := range cb.Entries {
+		results[i] = matchResult{
+			cand: entry.Candidate,
+			dist: targetFp.CosineDistance(entry.Fingerprint),
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].dist < results[j].dist
+	})
+
+	if k > len(results) {
+		k = len(results)
+	}
+
+	cands := make([]*Candidate, k)
+	dists := make([]float64, k)
+	for i := 0; i < k; i++ {
+		cands[i] = results[i].cand.Copy()
+		dists[i] = results[i].dist
+	}
+
+	return cands, dists
+}
+
 // Save writes the codebook to a binary file.
 func (cb *Codebook) Save(filePath string) error {
 	f, err := os.Create(filePath)

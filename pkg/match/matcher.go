@@ -75,46 +75,104 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	bestCodebookDist := math.MaxFloat64
 
 	if cfg.CodebookPath != "" {
-		if cb, err := LoadCodebook(cfg.CodebookPath); err == nil && len(cb.Entries) > 0 {
+		// Load fingerprint codebook
+		cb, cbErr := LoadCodebook(cfg.CodebookPath)
+
+		// Load timbre codebook (auto-derived path: *_timbre.bin)
+		var timbreCB *TimbreCodebook
+		timbreCBPath := cfg.CodebookPath
+		if len(cfg.CodebookPath) > 4 && cfg.CodebookPath[len(cfg.CodebookPath)-4:] == ".bin" {
+			timbreCBPath = cfg.CodebookPath[:len(cfg.CodebookPath)-4] + "_timbre.bin"
+		} else {
+			timbreCBPath = cfg.CodebookPath + "_timbre.bin"
+		}
+		if tc, err := LoadTimbreCodebook(timbreCBPath); err == nil && len(tc.Entries) > 0 {
+			timbreCB = tc
+			if cfg.Verbose {
+				fmt.Printf("Loaded timbre codebook: %d entries from %s\n", len(tc.Entries), timbreCBPath)
+			}
+		}
+
+		if cbErr == nil && len(cb.Entries) > 0 {
 			targetFp := ComputeFingerprint(target, RenderSampleRate)
-			topK := len(cb.Entries)
-			knnMatches := cb.SearchKNN(targetFp, topK)
-			if len(knnMatches) > 0 {
-				knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-				knnMap = make(map[uint8]*Candidate)
-				bestDistPerAlgo := make(map[uint8]float64)
 
-				for i, matchCand := range knnMatches {
-					algo := matchCand.Algorithm
-					dist := knnFits[i]
-					if dist < bestCodebookDist {
-						bestCodebookDist = dist
-						bestCodebookCand = matchCand.Copy()
-						bestCodebookCand.Fitness = dist
-					}
-					bestDist, exists := bestDistPerAlgo[algo]
-					if !exists || dist < bestDist {
-						bestDistPerAlgo[algo] = dist
-						knnMap[algo] = matchCand
-					}
-				}
+			// Dual-codebook search when both are available
+			if timbreCB != nil && len(timbreCB.Entries) > 0 {
+				timbreSpec := ExtractTimbreWindow(target, RenderSampleRate)
+				fpMatches, fpDists := cb.SearchKNNWithDistances(targetFp, len(cb.Entries))
+				timMatches, timDists := timbreCB.SearchKNNTimbreWithDistances(timbreSpec, len(timbreCB.Entries))
+
+				knnMatches := mergeCodebookResults(fpMatches, fpDists, timMatches, timDists, 48, 0.10)
 				if cfg.Verbose {
-					fmt.Printf("Step 1 Codebook Lookup: evaluated %d candidates (best dist=%.6f)\n",
-						len(knnMatches), bestCodebookDist)
+					fmt.Printf("Dual-codebook: %d FP + %d Timbre → %d merged candidates\n",
+						len(fpMatches), len(timMatches), len(knnMatches))
 				}
 
-				// Early return check if codebook match is exact (dist <= 0.0001)
-				if bestCodebookDist <= 1e-4 {
+				if len(knnMatches) > 0 {
+					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					knnMap = make(map[uint8]*Candidate)
+					bestDistPerAlgo := make(map[uint8]float64)
+
+					for i, matchCand := range knnMatches {
+						algo := matchCand.Algorithm
+						dist := knnFits[i]
+						if dist < bestCodebookDist {
+							bestCodebookDist = dist
+							bestCodebookCand = matchCand.Copy()
+							bestCodebookCand.Fitness = dist
+						}
+						bestDist, exists := bestDistPerAlgo[algo]
+						if !exists || dist < bestDist {
+							bestDistPerAlgo[algo] = dist
+							knnMap[algo] = matchCand
+						}
+					}
 					if cfg.Verbose {
-						fmt.Printf("Exact codebook match found in Step 1 (dist=%.6f <= 0.0001). Returning early!\n", bestCodebookDist)
+						fmt.Printf("Step 1 Dual-Codebook: evaluated %d candidates (best dist=%.6f)\n",
+							len(knnMatches), bestCodebookDist)
 					}
-					reportProgress(cfg, 100, "Completed (Exact Codebook Match)")
-					return Result{
-						Best:     bestCodebookCand,
-						BestDist: bestCodebookDist,
-						Iters:    len(knnMatches),
-						Top:      []*Candidate{bestCodebookCand},
+				}
+			} else {
+				// Fallback: fingerprint-only search
+				topK := len(cb.Entries)
+				knnMatches := cb.SearchKNN(targetFp, topK)
+				if len(knnMatches) > 0 {
+					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					knnMap = make(map[uint8]*Candidate)
+					bestDistPerAlgo := make(map[uint8]float64)
+
+					for i, matchCand := range knnMatches {
+						algo := matchCand.Algorithm
+						dist := knnFits[i]
+						if dist < bestCodebookDist {
+							bestCodebookDist = dist
+							bestCodebookCand = matchCand.Copy()
+							bestCodebookCand.Fitness = dist
+						}
+						bestDist, exists := bestDistPerAlgo[algo]
+						if !exists || dist < bestDist {
+							bestDistPerAlgo[algo] = dist
+							knnMap[algo] = matchCand
+						}
 					}
+					if cfg.Verbose {
+						fmt.Printf("Step 1 Fingerprint-Only: evaluated %d candidates (best dist=%.6f)\n",
+							len(knnMatches), bestCodebookDist)
+					}
+				}
+			}
+
+			// Early return check if codebook match is exact (dist <= 0.0001)
+			if bestCodebookDist <= 1e-4 {
+				if cfg.Verbose {
+					fmt.Printf("Exact codebook match found in Step 1 (dist=%.6f <= 0.0001). Returning early!\n", bestCodebookDist)
+				}
+				reportProgress(cfg, 100, "Completed (Exact Codebook Match)")
+				return Result{
+					Best:     bestCodebookCand,
+					BestDist: bestCodebookDist,
+					Iters:    len(cb.Entries),
+					Top:      []*Candidate{bestCodebookCand},
 				}
 			}
 
@@ -812,6 +870,110 @@ func staticOnlyDist(a, b TemporalTimbreSpec) float64 {
 		sum += d * d
 	}
 	return math.Sqrt(sum) / math.Sqrt(float64(TimbreSpecBins))
+}
+
+// candidateScore tracks a candidate's distances from both codebooks for merged scoring.
+type candidateScore struct {
+	cand       *Candidate
+	normFP     float64
+	normTim    float64
+	hasFP      bool
+	hasTim     bool
+	finalScore float64
+}
+
+// mergeCodebookResults merges fingerprint and timbre KNN results with preference scoring.
+// Candidates found in BOTH codebooks get a bonus (lower score = better).
+// Distances are min-max normalized per query batch to handle varying scales.
+func mergeCodebookResults(
+	fpCands []*Candidate, fpDists []float64,
+	timCands []*Candidate, timDists []float64,
+	topK int, bonus float64,
+) []*Candidate {
+	// Min-max normalize a distance slice to [0, 1]
+	norm := func(dists []float64) []float64 {
+		if len(dists) == 0 {
+			return nil
+		}
+		min, max := dists[0], dists[0]
+		for _, v := range dists {
+			if v < min {
+				min = v
+			}
+			if v > max {
+				max = v
+			}
+		}
+		span := max - min
+		if span < 1e-6 {
+			span = 1.0
+		}
+		res := make([]float64, len(dists))
+		for i, v := range dists {
+			res[i] = (v - min) / span
+		}
+		return res
+	}
+
+	normFP := norm(fpDists)
+	normTim := norm(timDists)
+
+	scores := make(map[string]*candidateScore)
+
+	// Index fingerprint results
+	for i, c := range fpCands {
+		sig := string(c.Encode())
+		scores[sig] = &candidateScore{
+			cand:   c,
+			normFP: normFP[i],
+			hasFP:  true,
+		}
+	}
+
+	// Index timbre results, detect overlaps
+	for i, c := range timCands {
+		sig := string(c.Encode())
+		if entry, exists := scores[sig]; exists {
+			// Candidate appears in BOTH codebooks — dual-agreement
+			entry.normTim = normTim[i]
+			entry.hasTim = true
+		} else {
+			scores[sig] = &candidateScore{
+				cand:    c,
+				normTim: normTim[i],
+				hasTim:  true,
+			}
+		}
+	}
+
+	// Calculate final scores
+	mergedList := make([]*candidateScore, 0, len(scores))
+	for _, entry := range scores {
+		if entry.hasFP && entry.hasTim {
+			// Dual-agreement: 50/50 blend with preference bonus
+			entry.finalScore = 0.5*entry.normFP + 0.5*entry.normTim - bonus
+		} else if entry.hasFP {
+			entry.finalScore = entry.normFP
+		} else {
+			entry.finalScore = entry.normTim
+		}
+		mergedList = append(mergedList, entry)
+	}
+
+	// Sort ascending by finalScore (lower = better)
+	sort.Slice(mergedList, func(i, j int) bool {
+		return mergedList[i].finalScore < mergedList[j].finalScore
+	})
+
+	if topK > len(mergedList) {
+		topK = len(mergedList)
+	}
+	result := make([]*Candidate, topK)
+	for i := 0; i < topK; i++ {
+		result[i] = mergedList[i].cand
+	}
+
+	return result
 }
 
 // checkExactMatch returns true if any island has found a match <= 0.0001.

@@ -98,6 +98,43 @@ func (tc *TimbreCodebook) SearchKNNTimbre(targetSpec [TimbreSpecBins]float64, k 
 	return cands
 }
 
+// SearchKNNTimbreWithDistances finds the k closest timbre entries by Euclidean distance and returns both candidates and distances.
+func (tc *TimbreCodebook) SearchKNNTimbreWithDistances(targetSpec [TimbreSpecBins]float64, k int) ([]*Candidate, []float64) {
+	if len(tc.Entries) == 0 {
+		return nil, nil
+	}
+
+	type matchResult struct {
+		cand *Candidate
+		dist float64
+	}
+
+	results := make([]matchResult, len(tc.Entries))
+	for i, entry := range tc.Entries {
+		results[i] = matchResult{
+			cand: entry.Candidate,
+			dist: TimbreSpecDistance(targetSpec, entry.TimbreSpec),
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].dist < results[j].dist
+	})
+
+	if k > len(results) {
+		k = len(results)
+	}
+
+	cands := make([]*Candidate, k)
+	dists := make([]float64, k)
+	for i := 0; i < k; i++ {
+		cands[i] = results[i].cand.Copy()
+		dists[i] = results[i].dist
+	}
+
+	return cands, dists
+}
+
 // Save writes the timbre codebook to a binary file.
 func (tc *TimbreCodebook) Save(filePath string) error {
 	f, err := os.Create(filePath)
