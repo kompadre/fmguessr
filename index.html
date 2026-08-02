@@ -953,10 +953,9 @@
             const tbody = document.createElement('tbody');
             (matches || []).forEach((m, i) => {
                 const tr = document.createElement('tr');
-                if (i === 0) tr.classList.add('best', 'selected');
                 const isFav = favSet && favSet.has(m.algorithm + '-' + m.feedback);
                 tr.innerHTML = `
-                    <td class="radio-cell"><input type="radio" name="${groupName}" ${i === 0 ? 'checked' : ''}></td>
+                    <td class="radio-cell"><input type="radio" name="match-select"></td>
                     <td>${m.rank}${isFav ? '<span class="fav-star" title="Favorite">&#9733;</span>' : ''}</td>
                     <td>${m.algorithm}</td>
                     <td>${m.feedback}</td>
@@ -967,7 +966,8 @@
                 `;
                 const radio = tr.querySelector('input[type="radio"]');
                 radio.addEventListener('change', () => {
-                    tbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
+                    // Deselect all rows across all tables
+                    document.querySelectorAll('#matches-table tr.selected').forEach(r => r.classList.remove('selected'));
                     tr.classList.add('selected');
                     if (onSelect) onSelect(m);
                 });
@@ -985,11 +985,7 @@
 
         let audioCtx;
         async function playNote(midi, job) {
-            // Find the selected match from any table
-            let selected = null;
-            if (job && job.selectedMatches) {
-                selected = job.selectedMatches.primary || job.selectedMatches.timbral || job.selectedMatches.full;
-            }
+            let selected = job ? job.selectedMatch : null;
 
             if (selected && job.resultData && job.resultData.syx_url) {
                 // Call server to render patch at requested note
@@ -1112,9 +1108,9 @@
             resultsArea.appendChild(info);
 
             // Primary matches table
-            job.selectedMatches = job.selectedMatches || {};
+            job.selectedMatch = job.selectedMatch || null;
             resultsArea.appendChild(buildMatchTable(data.matches, 'primary-select', (m) => {
-                job.selectedMatches.primary = m;
+                job.selectedMatch = m;
             }));
 
             const syxLink = document.createElement('a');
@@ -1142,7 +1138,7 @@
                 resultsArea.appendChild(subtitle);
 
                 resultsArea.appendChild(buildMatchTable(data.timbral_matches, 'timbral-select', (m) => {
-                    job.selectedMatches.timbral = m;
+                    job.selectedMatch = m;
                 }, favSet));
             }
 
@@ -1159,7 +1155,7 @@
                 resultsArea.appendChild(subtitle);
 
                 resultsArea.appendChild(buildMatchTable(data.full_matches, 'full-select', (m) => {
-                    job.selectedMatches.full = m;
+                    job.selectedMatch = m;
                 }, favSet));
             }
 
@@ -1176,8 +1172,26 @@
                 resultsArea.appendChild(subtitle);
 
                 resultsArea.appendChild(buildMatchTable(data.favorites, 'fav-select', (m) => {
-                    job.selectedMatches.favorite = m;
+                    job.selectedMatch = m;
                 }));
+            }
+
+            // Auto-select first row if nothing selected yet
+            if (!job.selectedMatch && data.matches && data.matches.length > 0) {
+                job.selectedMatch = data.matches[0];
+            }
+            // Highlight the selected row
+            if (job.selectedMatch) {
+                const sig = job.selectedMatch.algorithm + '-' + job.selectedMatch.feedback;
+                document.querySelectorAll('#matches-table tbody tr').forEach(tr => {
+                    const algo = parseInt(tr.cells[2]?.textContent);
+                    const fb = parseInt(tr.cells[3]?.textContent);
+                    if (algo + '-' + fb === sig) {
+                        tr.classList.add('selected');
+                        const radio = tr.querySelector('input[type="radio"]');
+                        if (radio) radio.checked = true;
+                    }
+                });
             }
 
             // Keyboard
