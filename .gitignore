@@ -25,5 +25,11 @@
 __pycache__/
 *.pyc
 
+# Temporary data directories
+temp_timdata/
+
+# Backup models
+*.onnx.backup
+
 # Go workspace
 /go.work

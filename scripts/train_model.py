@@ -32,18 +32,18 @@ class DX7ParameterEstimator(nn.Module):
         self.shared = nn.Sequential(
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.1),
             nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.05),
         )
 
         # Output: 13 continuous params (6 fines + 6 levels + 1 feedback)
+        # Raw logits — sigmoid is applied inside BCEWithLogitsLoss for stable gradients.
         self.head_continuous = nn.Sequential(
             nn.Linear(64, 32),
             nn.ReLU(),
             nn.Linear(32, 13),
-            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -140,9 +140,9 @@ class DX7Dataset(Dataset):
         continuous = np.zeros(13, dtype=np.float32)
         for op in range(6):
             base = 1 + op * 8
-            continuous[op] = label[base + 2]      # FreqFine (already [0,1])
-            continuous[op + 6] = label[base + 3]  # OutputLevel (already [0,1])
-        continuous[12] = label[49]  # Feedback (already [0,1])
+            continuous[op] = label[base + 2]      # FreqFine
+            continuous[op + 6] = label[base + 3]  # OutputLevel
+        continuous[12] = label[49]                # Feedback
 
         return {
             "spec": spec_tensor,
@@ -151,15 +151,15 @@ class DX7Dataset(Dataset):
 
 
 class DX7MultiTaskLoss(nn.Module):
-    """MSE loss for continuous timbre parameters only."""
+    """BCEWithLogitsLoss for continuous timbre parameters (raw logits)."""
 
     def __init__(self):
         super(DX7MultiTaskLoss, self).__init__()
-        self.mse_loss = nn.MSELoss()
+        self.bce_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, predictions, targets):
-        # Only penalize continuous params (fines, levels, feedback)
-        loss_cont = self.mse_loss(predictions["continuous"], targets["continuous"])
+        # Raw logits vs [0,1] targets — sigmoid applied internally
+        loss_cont = self.bce_loss(predictions["continuous"], targets["continuous"])
 
         return loss_cont, {
             "loss_cont": loss_cont.item()
@@ -206,8 +206,8 @@ def validate(model, dataloader, criterion, device):
             total_loss += loss.item()
             n_batches += 1
 
-            # MAE metric
-            mae_sum += (predictions["continuous"] - targets["continuous"]).abs().mean().item()
+            # MAE metric on sigmoid-activated outputs (meaningful [0,1] range)
+            mae_sum += (torch.sigmoid(predictions["continuous"]) - targets["continuous"]).abs().mean().item()
             total_samples += specs.size(0)
 
     return {
@@ -241,10 +241,10 @@ def export_to_onnx(model, output_path, device):
 
 def main():
     parser = argparse.ArgumentParser(description='Train DX7 parameter estimation CNN')
-    parser.add_argument('--dataset', default='dataset.npz', help='Input dataset')
+    parser.add_argument('--dataset', default='dataset_timbre.npz', help='Input dataset')
     parser.add_argument('--output', default='model.onnx', help='Output ONNX model')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
-    parser.add_argument('--batch-size', type=int, default=64, help='Batch size')
+    parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--device', default='auto', help='Device (auto/cpu/cuda)')
@@ -294,7 +294,7 @@ def main():
     if True: 
         criterion = DX7MultiTaskLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=15)
 
         print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -322,9 +322,9 @@ def main():
                       f"train_loss={train_loss:.4f} val_loss={val_metrics['loss']:.4f} "
                       f"mae={val_metrics['mae']:.4f}")
 
-                if patience_counter >= args.patience:
-                    print(f"  Early stopping at epoch {epoch+1}")
-                    break
+            if patience_counter >= args.patience:
+                print(f"  Early stopping at epoch {epoch+1}")
+                break
 
     # Load best model and export
     model.load_state_dict(torch.load("model_best.pth"))

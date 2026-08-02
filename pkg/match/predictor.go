@@ -112,18 +112,23 @@ func (p *Predictor) PredictToCandidate(spec [TimbreSpecBins]float64) (*Candidate
 	var result PredictResult
 	result.Confidence = 0.95
 
+	// Model outputs raw logits — apply sigmoid to get [0,1] range.
+	sigmoid := func(x float32) float64 {
+		return float64(1.0 / (1.0 + math.Exp(-float64(x))))
+	}
+
 	// Extract fines (indices 0-5)
 	for op := 0; op < 6; op++ {
-		result.FreqFine[op] = float64(continuous[op])
+		result.FreqFine[op] = sigmoid(continuous[op])
 	}
 
 	// Extract levels (indices 6-11)
 	for op := 0; op < 6; op++ {
-		result.OutputLevel[op] = float64(continuous[6+op])
+		result.OutputLevel[op] = sigmoid(continuous[6+op])
 	}
 
 	// Extract feedback (index 12)
-	result.Feedback = float64(continuous[12])
+	result.Feedback = sigmoid(continuous[12])
 
 	cand := p.resultToCandidate(result)
 	return cand, result
