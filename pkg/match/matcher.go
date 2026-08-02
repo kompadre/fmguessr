@@ -304,7 +304,16 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			if cfg.Verbose {
 				fmt.Println("--- NN Pre-optimization (live optimizer & diff optimizer) ---")
 			}
-			globalLiveOpt = NewLiveOptimizer(target, scores[0].cand, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+			// Prefer codebook best if it beats the NN prediction
+			initialPatch := scores[0].cand
+			if bestCodebookCand != nil && bestCodebookDist < scores[0].dist {
+				initialPatch = bestCodebookCand
+				if cfg.Verbose {
+					fmt.Printf("Using codebook candidate as initial (dist=%.6f < NN dist=%.6f)\n",
+						bestCodebookDist, scores[0].dist)
+				}
+			}
+			globalLiveOpt = NewLiveOptimizer(target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 			refined := globalLiveOpt.Run()
 
 			// Differential Jacobian steering on extended temporal timbre features
