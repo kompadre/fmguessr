@@ -316,21 +316,21 @@ func detectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
 		return 0, 0
 	}
 
-	// Octave correction: if a lower harmonic (2x, 3x, 4x lag) is also a strong peak,
-	// prefer it — the fundamental is at the longest lag, not the shortest.
-	bestVal := acorrReal[bestLag]
-	for _, mult := range []int{2, 3, 4} {
-		candidateLag := bestLag * mult
-		if candidateLag >= len(acorrReal) {
-			break
-		}
-		if acorrReal[candidateLag] >= bestVal*0.75 {
-			bestLag = candidateLag
+	// Octave correction: when detected frequency is very low (< 80 Hz),
+	// it's likely a sub-harmonic. Check if a higher harmonic (shorter lag)
+	// at 1/2, 1/3, 1/4 of the lag is also a strong peak.
+	f0 := float64(sampleRate) / float64(bestLag)
+	if f0 < 80.0 {
+		for _, div := range []int{2, 3, 4} {
+			candidateLag := bestLag / div
+			if candidateLag >= minLag && acorrReal[candidateLag] >= threshold {
+				bestLag = candidateLag
+			}
 		}
 	}
 
 	conf := acorrReal[bestLag] / acorrReal[0]
-	f0 := float64(sampleRate) / float64(bestLag)
+	f0 = float64(sampleRate) / float64(bestLag)
 	return f0, math.Min(conf, 1.0)
 }
 
@@ -341,18 +341,107 @@ func detectPitch(samples []float64, sampleRate int) (float64, float64) {
 
 	frameSize := 2048
 	hopSize := 1024
-	bestF0 := 0.0
-	bestConfidence := 0.0
+
+	type detection struct {
+		f0   float64
+		conf float64
+		rms  float64
+	}
+
+	var all []detection
 
 	for start := 0; start+frameSize <= len(samples); start += hopSize {
-		f0, conf := detectPitchFrame(samples[start:start+frameSize], sampleRate)
-		if conf > bestConfidence {
-			bestConfidence = conf
-			bestF0 = f0
+		frame := samples[start : start+frameSize]
+
+		// Compute frame RMS for energy weighting
+		var sumSq float64
+		for _, s := range frame {
+			sumSq += s * s
+		}
+		rms := math.Sqrt(sumSq / float64(frameSize))
+
+		f0, conf := detectPitchFrame(frame, sampleRate)
+		if f0 > 20 && conf > 0.2 {
+			all = append(all, detection{f0, conf, rms})
 		}
 	}
 
-	return bestF0, bestConfidence
+	if len(all) == 0 {
+		return 0, 0
+	}
+
+	// Normalize energies so attack transients don't dominate
+	maxRMS := 0.0
+	for _, d := range all {
+		if d.rms > maxRMS {
+			maxRMS = d.rms
+		}
+	}
+
+	// Group detections by frequency (±10% tolerance)
+	type freqGroup struct {
+		freq     float64
+		count    int
+		bestConf float64
+		totalW   float64 // weighted sum for weighted mean
+	}
+
+	var groups []freqGroup
+	for _, d := range all {
+		// Energy weight: quiet frames get downweighted (prevents attack skew)
+		energyW := 0.3 + 0.7*(d.rms/maxRMS) // range [0.3, 1.0]
+		score := d.conf * energyW
+
+		found := false
+		for g := range groups {
+			if math.Abs(d.f0-groups[g].freq)/groups[g].freq < 0.10 {
+				groups[g].count++
+				groups[g].totalW += score
+				if d.conf > groups[g].bestConf {
+					groups[g].bestConf = d.conf
+				}
+				// Update running weighted-mean frequency
+				groups[g].freq = (groups[g].freq*float64(groups[g].count-1) + d.f0) / float64(groups[g].count)
+				found = true
+				break
+			}
+		}
+		if !found {
+			groups = append(groups, freqGroup{freq: d.f0, count: 1, bestConf: d.conf, totalW: score})
+		}
+	}
+
+	// Sort groups by weighted score (count × total confidence × energy weight)
+	bestGroup := &groups[0]
+	for g := range groups {
+		if groups[g].totalW > bestGroup.totalW {
+			bestGroup = &groups[g]
+		}
+	}
+
+	// Sub-harmonic correction: if the winning frequency is very low,
+	// check if a harmonic at 2× or 3× also has a strong group
+	if bestGroup.freq < 80.0 {
+		bestIdx := -1
+		for i := range groups {
+			if &groups[i] == bestGroup {
+				bestIdx = i
+				break
+			}
+		}
+		for _, mult := range []int{2, 3} {
+			for g := range groups {
+				if g != bestIdx && math.Abs(groups[g].freq-bestGroup.freq*float64(mult))/bestGroup.freq < 0.15 {
+					// Higher harmonic exists with reasonable support
+					if groups[g].totalW > bestGroup.totalW*0.6 {
+						bestGroup = &groups[g]
+					}
+				}
+			}
+		}
+	}
+
+	return bestGroup.freq, math.Min(bestGroup.bestConf, 1.0)
 }
 
 func detectPitchJump(samples []float64, sampleRate int) float64 {
