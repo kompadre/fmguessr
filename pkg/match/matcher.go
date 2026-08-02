@@ -478,14 +478,29 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	// Run Operator Mini-GA to cross-breed modular operator blocks across island winners
 	if len(globalSeed) > 0 {
+		// Find the true global best across all 32 islands
+		globalBestFit := globalFits[0]
+		for _, f := range globalFits {
+			if f < globalBestFit {
+				globalBestFit = f
+			}
+		}
+
 		miniGABest := RunOperatorMiniGA(globalSeed, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, 10, 32, cfg.Verbose)
-		if miniGABest != nil && miniGABest.Fitness < globalFits[0] {
+		if miniGABest != nil && miniGABest.Fitness < globalBestFit {
 			if cfg.Verbose {
 				fmt.Printf("[Phase 1->2 Transition] Operator Mini-GA created hybrid candidate: dist=%.6f (improved from %.6f)\n",
-					miniGABest.Fitness, globalFits[0])
+					miniGABest.Fitness, globalBestFit)
 			}
-			globalSeed[0] = miniGABest.Copy()
-			globalFits[0] = miniGABest.Fitness
+			// Find the slot with the worst fitness to replace (preserving diversity)
+			worstIdx := 0
+			for i, f := range globalFits {
+				if f > globalFits[worstIdx] {
+					worstIdx = i
+				}
+			}
+			globalSeed[worstIdx] = miniGABest.Copy()
+			globalFits[worstIdx] = miniGABest.Fitness
 		}
 	}
 
