@@ -127,7 +127,7 @@
         }
 
         #log-details summary::before {
-            content: '\u25b6';
+            content: '▶';
             font-size: 0.65rem;
             transition: transform 0.2s;
         }
@@ -613,11 +613,6 @@
         </label>
     </div>
 
-    <details id="log-details">
-        <summary class="config-header">Log Output</summary>
-        <textarea id="log" readonly placeholder="Log output will appear here..."></textarea>
-    </details>
-
     <div id="progress-wrapper" style="display:none;">
         <div id="progress-bar">
             <div id="progress-fill"></div>
@@ -625,11 +620,14 @@
         <div id="progress-label"></div>
     </div>
 
-    <button id="status-btn" disabled>Check Status</button>
-
     <div id="tabs"></div>
 
     <div id="tab-content"></div>
+
+    <details id="log-details">
+        <summary class="config-header">Log Output</summary>
+        <textarea id="log" readonly placeholder="Log output will appear here..."></textarea>
+    </details>
 
     <button id="clear-btn">Clear History</button>
 
@@ -638,7 +636,6 @@
         const fileLabel = document.getElementById('file-label');
         const fileName = document.getElementById('file-name');
         const log = document.getElementById('log');
-        const statusBtn = document.getElementById('status-btn');
         const tabsEl = document.getElementById('tabs');
         const tabContent = document.getElementById('tab-content');
         const baseUrl = window.location.origin.indexOf("localhost") > -1 ? "http://localhost:8080" : window.location.origin;
@@ -859,13 +856,8 @@
             }
         });
 
-        statusBtn.addEventListener('click', () => {
-            if (pollQueue.length > 0) checkStatus(pollQueue[0]);
-        });
-
         function startPolling() {
             stopPolling();
-            statusBtn.disabled = false;
             pollInterval = setInterval(() => {
                 if (pollQueue.length > 0) checkStatus(pollQueue[0]);
             }, 3000);
@@ -883,8 +875,6 @@
             pollQueue.shift();
             if (pollQueue.length > 0) {
                 startPolling();
-            } else {
-                statusBtn.disabled = true;
             }
         }
 
@@ -985,21 +975,21 @@
 
             const playBtn = document.createElement('button');
             playBtn.className = 'tab-play';
-            playBtn.textContent = '\u25b6';
+            playBtn.textContent = '▶';
             playBtn.title = 'Play original';
             const audio = new Audio(job.objectUrl);
             playBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (audio.paused) {
                     audio.play();
-                    playBtn.textContent = '\u23f9';
+                    playBtn.textContent = '⏸';
                 } else {
                     audio.pause();
                     audio.currentTime = 0;
-                    playBtn.textContent = '\u25b6';
+                    playBtn.textContent = '▶';
                 }
             });
-            audio.addEventListener('ended', () => {playBtn.textContent = '\u25b6';});
+            audio.addEventListener('ended', () => {playBtn.textContent = '▶';});
 
             const label = document.createElement('span');
             label.className = 'tab-label';
