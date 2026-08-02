@@ -40,7 +40,8 @@ type Result struct {
 	Iters       int
 	Top         []*Candidate // Top 32 candidates for .syx export
 	TimbralTop5 []*Candidate // Top 5 by static timbre distance (deduplicated)
-	FullTop5    []*Candidate // Top 5 by temporal distance (DiffOptimizer-refined, deduplicated)
+	FullTop5    []*Candidate // Top 5 by temporal distance (deduplicated)
+	Favorites   []*Candidate // Candidates appearing in both TimbralTop5 and FullTop5
 }
 
 func reportProgress(cfg Config, percent int, phase string) {
@@ -68,6 +69,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	var bestCodebookCand *Candidate
 	bestCodebookDist := math.MaxFloat64
 
+	// Initialize elite cohorts early — populated during codebook search
+	timbreCohort := NewEliteCohort(5)
+	fullCohort := NewEliteCohort(5)
+
 	if cfg.CodebookPath != "" {
 		// Load fingerprint codebook
 		cb, cbErr := LoadCodebook(cfg.CodebookPath)
@@ -90,48 +95,64 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		if cbErr == nil && len(cb.Entries) > 0 {
 			targetFp := ComputeFingerprint(target, RenderSampleRate)
 
-			// Dual-codebook search when both are available
+			// Dual-codebook search: fingerprint → fullCohort, timbre → timbreCohort
 			if timbreCB != nil && len(timbreCB.Entries) > 0 {
 				timbreSpec := ExtractTimbreWindow(target, RenderSampleRate)
-				fpMatches, fpDists := cb.SearchKNNWithDistances(targetFp, len(cb.Entries))
-				timMatches, timDists := timbreCB.SearchKNNTimbreWithDistances(timbreSpec, len(timbreCB.Entries))
+				fpMatches, _ := cb.SearchKNNWithDistances(targetFp, len(cb.Entries))
+				timMatches, _ := timbreCB.SearchKNNTimbreWithDistances(timbreSpec, len(timbreCB.Entries))
 
-				knnMatches := mergeCodebookResults(fpMatches, fpDists, timMatches, timDists, 48, 0.10)
-				if cfg.Verbose {
-					fmt.Printf("Dual-codebook: %d FP + %d Timbre → %d merged candidates\n",
-						len(fpMatches), len(timMatches), len(knnMatches))
-				}
-
-				if len(knnMatches) > 0 {
-					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-					knnMap = make(map[uint8]*Candidate)
-					bestDistPerAlgo := make(map[uint8]float64)
-
-					// Build name lookup from codebook entries
-					nameMap := make(map[string]string, len(cb.Entries))
-					for _, entry := range cb.Entries {
-						nameMap[string(entry.Candidate.Encode())] = entry.Name
-					}
-
-					for i, matchCand := range knnMatches {
-						algo := matchCand.Algorithm
-						dist := knnFits[i]
-						if dist < bestCodebookDist {
-							bestCodebookDist = dist
-							bestCodebookCand = matchCand.Copy()
-							bestCodebookCand.Fitness = dist
-							bestCodebookName = nameMap[string(matchCand.Encode())]
-						}
-						bestDist, exists := bestDistPerAlgo[algo]
-						if !exists || dist < bestDist {
-							bestDistPerAlgo[algo] = dist
-							knnMap[algo] = matchCand
-						}
+				// Evaluate fingerprint matches → fullCohort
+				var fpFits []float64
+				if len(fpMatches) > 0 {
+					fpFits, _ = evaluateBatchParallel(fpMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					for i, c := range fpMatches {
+						fullCohort.TryInsert(c, fpFits[i])
 					}
 					if cfg.Verbose {
-						fmt.Printf("Step 1 Dual-Codebook: evaluated %d candidates (best dist=%.6f)\n",
-							len(knnMatches), bestCodebookDist)
+						fmt.Printf("Fingerprint codebook: evaluated %d candidates\n", len(fpMatches))
 					}
+				}
+
+				// Evaluate timbre matches → timbreCohort
+				var timFits []float64
+				if len(timMatches) > 0 {
+					timFits, _ = evaluateBatchParallel(timMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					for i, c := range timMatches {
+						timbreCohort.TryInsert(c, timFits[i])
+					}
+					if cfg.Verbose {
+						fmt.Printf("Timbre codebook: evaluated %d candidates\n", len(timMatches))
+					}
+				}
+
+				// Build knnMap for GA seeding (union of both codebooks)
+				knnMap = make(map[uint8]*Candidate)
+				bestDistPerAlgo := make(map[uint8]float64)
+				nameMap := make(map[string]string, len(cb.Entries))
+				for _, entry := range cb.Entries {
+					nameMap[string(entry.Candidate.Encode())] = entry.Name
+				}
+
+				allMatches := append(fpMatches, timMatches...)
+				allFits := append(fpFits, timFits...)
+				for i, matchCand := range allMatches {
+					dist := allFits[i]
+					if dist < bestCodebookDist {
+						bestCodebookDist = dist
+						bestCodebookCand = matchCand.Copy()
+						bestCodebookCand.Fitness = dist
+						bestCodebookName = nameMap[string(matchCand.Encode())]
+					}
+					algo := matchCand.Algorithm
+					bestDist, exists := bestDistPerAlgo[algo]
+					if !exists || dist < bestDist {
+						bestDistPerAlgo[algo] = dist
+						knnMap[algo] = matchCand
+					}
+				}
+				if cfg.Verbose {
+					fmt.Printf("Step 1 Dual-Codebook: FP=%d Timbre=%d → best dist=%.6f\n",
+						len(fpMatches), len(timMatches), bestCodebookDist)
 				}
 			} else {
 				// Fallback: fingerprint-only search
@@ -197,14 +218,8 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
-	// Initialize elite cohorts — accumulate the best candidates throughout the pipeline
-	timbreCohort := NewEliteCohort(5)
-	fullCohort := NewEliteCohort(5)
-	if bestCodebookCand != nil {
-		timbreCohort.TryInsert(bestCodebookCand, bestCodebookDist)
-		if cfg.Verbose {
-			fmt.Printf("Elite cohort initialized: codebook best (dist=%.6f)\n", bestCodebookDist)
-		}
+	if bestCodebookCand != nil && cfg.Verbose {
+		fmt.Printf("Elite cohorts: codebook best (dist=%.6f)\n", bestCodebookDist)
 	}
 
 	reportProgress(cfg, 10, "Step 2: Timbre & NN Prediction")
@@ -788,7 +803,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	// -------------------------------------------------------------------------
 	// Step 7-8: Elite Cohort → Full Top Selection
-	// Render timbre cohort candidates, evaluate with temporal distance, insert into full cohort
+	// Render timbre cohort candidates (skip those already in fullCohort), evaluate with temporal distance
 	// -------------------------------------------------------------------------
 	if cfg.Verbose {
 		fmt.Printf("Elite timbre cohort: %d candidates\n", timbreCohort.Len())
@@ -796,6 +811,18 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	targetSpec := ExtractTemporalTimbreSpec(target, RenderSampleRate)
 	for _, entry := range timbreCohort.entries {
+		// Skip if already in fullCohort (e.g., from fingerprint codebook)
+		sig := string(entry.cand.Encode())
+		alreadyInFull := false
+		for _, fe := range fullCohort.entries {
+			if string(fe.cand.Encode()) == sig {
+				alreadyInFull = true
+				break
+			}
+		}
+		if alreadyInFull {
+			continue
+		}
 		pcm := RenderCandidate(entry.cand, cfg.MIDINote, cfg.RenderDur)
 		norm := NormalizeRMS(pcm)
 		spec := ExtractTemporalTimbreSpec(norm, RenderSampleRate)
@@ -810,6 +837,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	timbralTop5 := timbreCohort.Candidates()
 	fullTop5 := fullCohort.Candidates()
 
+	// Compute favorites: candidates in both TimbralTop5 and FullTop5
+	favorites := findFavorites(timbralTop5, fullTop5)
+	if cfg.Verbose && len(favorites) > 0 {
+		fmt.Printf("Favorites (in both cohorts): %d candidates\n", len(favorites))
+	}
+
 	reportProgress(cfg, 100, "Completed")
 
 	return Result{
@@ -819,111 +852,23 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		Top:         topN,
 		TimbralTop5: timbralTop5,
 		FullTop5:    fullTop5,
+		Favorites:   favorites,
 	}
 }
 
-// candidateScore tracks a candidate's distances from both codebooks for merged scoring.
-type candidateScore struct {
-	cand       *Candidate
-	normFP     float64
-	normTim    float64
-	hasFP      bool
-	hasTim     bool
-	finalScore float64
-}
-
-// mergeCodebookResults merges fingerprint and timbre KNN results with preference scoring.
-// Candidates found in BOTH codebooks get a bonus (lower score = better).
-// Distances are min-max normalized per query batch to handle varying scales.
-func mergeCodebookResults(
-	fpCands []*Candidate, fpDists []float64,
-	timCands []*Candidate, timDists []float64,
-	topK int, bonus float64,
-) []*Candidate {
-	// Min-max normalize a distance slice to [0, 1]
-	norm := func(dists []float64) []float64 {
-		if len(dists) == 0 {
-			return nil
-		}
-		min, max := dists[0], dists[0]
-		for _, v := range dists {
-			if v < min {
-				min = v
-			}
-			if v > max {
-				max = v
-			}
-		}
-		span := max - min
-		if span < 1e-6 {
-			span = 1.0
-		}
-		res := make([]float64, len(dists))
-		for i, v := range dists {
-			res[i] = (v - min) / span
-		}
-		return res
+// findFavorites returns candidates that appear in both lists (by encoded patch signature).
+func findFavorites(timbral, full []*Candidate) []*Candidate {
+	fullSet := make(map[string]bool, len(full))
+	for _, c := range full {
+		fullSet[string(c.Encode())] = true
 	}
-
-	normFP := norm(fpDists)
-	normTim := norm(timDists)
-
-	scores := make(map[string]*candidateScore)
-
-	// Index fingerprint results
-	for i, c := range fpCands {
-		sig := string(c.Encode())
-		scores[sig] = &candidateScore{
-			cand:   c,
-			normFP: normFP[i],
-			hasFP:  true,
+	var favs []*Candidate
+	for _, c := range timbral {
+		if fullSet[string(c.Encode())] {
+			favs = append(favs, c)
 		}
 	}
-
-	// Index timbre results, detect overlaps
-	for i, c := range timCands {
-		sig := string(c.Encode())
-		if entry, exists := scores[sig]; exists {
-			// Candidate appears in BOTH codebooks — dual-agreement
-			entry.normTim = normTim[i]
-			entry.hasTim = true
-		} else {
-			scores[sig] = &candidateScore{
-				cand:    c,
-				normTim: normTim[i],
-				hasTim:  true,
-			}
-		}
-	}
-
-	// Calculate final scores
-	mergedList := make([]*candidateScore, 0, len(scores))
-	for _, entry := range scores {
-		if entry.hasFP && entry.hasTim {
-			// Dual-agreement: 50/50 blend with preference bonus
-			entry.finalScore = 0.5*entry.normFP + 0.5*entry.normTim - bonus
-		} else if entry.hasFP {
-			entry.finalScore = entry.normFP
-		} else {
-			entry.finalScore = entry.normTim
-		}
-		mergedList = append(mergedList, entry)
-	}
-
-	// Sort ascending by finalScore (lower = better)
-	sort.Slice(mergedList, func(i, j int) bool {
-		return mergedList[i].finalScore < mergedList[j].finalScore
-	})
-
-	if topK > len(mergedList) {
-		topK = len(mergedList)
-	}
-	result := make([]*Candidate, topK)
-	for i := 0; i < topK; i++ {
-		result[i] = mergedList[i].cand
-	}
-
-	return result
+	return favs
 }
 
 // checkExactMatch returns true if any island has found a match <= 0.0001.

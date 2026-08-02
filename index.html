@@ -518,6 +518,12 @@
             width: 100%;
             max-width: 500px;
         }
+
+        .fav-star {
+            color: #ffc107;
+            font-size: 0.9rem;
+            margin-left: 0.3rem;
+        }
     </style>
 </head>
 
@@ -929,7 +935,7 @@
             }
         }
 
-        function buildMatchTable(matches, groupName, onSelect) {
+        function buildMatchTable(matches, groupName, onSelect, favSet) {
             const table = document.createElement('table');
             table.id = 'matches-table';
             table.innerHTML = `
@@ -948,9 +954,10 @@
             (matches || []).forEach((m, i) => {
                 const tr = document.createElement('tr');
                 if (i === 0) tr.classList.add('best', 'selected');
+                const isFav = favSet && favSet.has(m.algorithm + '-' + m.feedback);
                 tr.innerHTML = `
                     <td class="radio-cell"><input type="radio" name="${groupName}" ${i === 0 ? 'checked' : ''}></td>
-                    <td>${m.rank}</td>
+                    <td>${m.rank}${isFav ? '<span class="fav-star" title="Favorite">&#9733;</span>' : ''}</td>
                     <td>${m.algorithm}</td>
                     <td>${m.feedback}</td>
                     <td>${m.distance.toFixed(4)}</td>
@@ -1118,6 +1125,10 @@
             syxLink.textContent = 'Download bank.syx';
             resultsArea.appendChild(syxLink);
 
+            // Build favorites set for star badges
+            const favSet = new Set();
+            (data.favorites || []).forEach(f => favSet.add(f.algorithm + '-' + f.feedback));
+
             // Timbral Top 5 section
             if (data.timbral_matches && data.timbral_matches.length > 0) {
                 const title = document.createElement('h3');
@@ -1132,7 +1143,7 @@
 
                 resultsArea.appendChild(buildMatchTable(data.timbral_matches, 'timbral-select', (m) => {
                     job.selectedMatches.timbral = m;
-                }));
+                }, favSet));
             }
 
             // Full Top 5 section
@@ -1149,6 +1160,23 @@
 
                 resultsArea.appendChild(buildMatchTable(data.full_matches, 'full-select', (m) => {
                     job.selectedMatches.full = m;
+                }, favSet));
+            }
+
+            // Favorites section
+            if (data.favorites && data.favorites.length > 0) {
+                const title = document.createElement('h3');
+                title.className = 'section-title';
+                title.innerHTML = '&#9733; Favorites';
+                resultsArea.appendChild(title);
+
+                const subtitle = document.createElement('p');
+                subtitle.className = 'section-subtitle';
+                subtitle.textContent = 'Top matches in both timbral and full cohorts';
+                resultsArea.appendChild(subtitle);
+
+                resultsArea.appendChild(buildMatchTable(data.favorites, 'fav-select', (m) => {
+                    job.selectedMatches.favorite = m;
                 }));
             }
 

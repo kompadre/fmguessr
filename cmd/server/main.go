@@ -57,6 +57,7 @@ type Job struct {
 	Matches         []MatchResult `json:"matches,omitempty"`
 	TimbralMatches  []MatchResult `json:"timbral_matches,omitempty"`
 	FullMatches     []MatchResult `json:"full_matches,omitempty"`
+	Favorites       []MatchResult `json:"favorites,omitempty"`
 
 	// Internal fields
 	audioSamples []float64
@@ -244,6 +245,32 @@ func (s *Server) processJob(job *Job) {
 		})
 	}
 
+	// Build Favorites: candidates in both TimbralTop5 and FullTop5
+	var favoriteMatches []MatchResult
+	fullSigs := make(map[string]bool, len(result.FullTop5))
+	for _, c := range result.FullTop5 {
+		fullSigs[string(c.Encode())] = true
+	}
+	for _, c := range result.TimbralTop5 {
+		if fullSigs[string(c.Encode())] {
+			favAudio := match.RenderCandidateWithGate(c, uint8(midiNote), gateDur, matchCfg.RenderDur)
+			favID := fmt.Sprintf("fav_%d", len(favoriteMatches)+1)
+			favPath := filepath.Join(jobDir, favID+".wav")
+			if err := match.SaveWav(favPath, favAudio, match.RenderSampleRate); err != nil {
+				continue
+			}
+			favNorm := match.NormalizeRMS(match.TrimOrPad(favAudio, len(targetNorm)))
+			favDist := match.SpectralDistance(targetNorm, favNorm)
+			favoriteMatches = append(favoriteMatches, MatchResult{
+				Rank:      len(favoriteMatches) + 1,
+				Algorithm: int(c.Algorithm + 1),
+				Feedback:  int(c.Feedback),
+				Distance:  favDist,
+				WavURL:    fmt.Sprintf("/exports/%s/%s.wav", job.ID, favID),
+			})
+		}
+	}
+
 	s.mu.Lock()
 	job.Status = "completed"
 	job.ProgressPercent = 100
@@ -256,6 +283,7 @@ func (s *Server) processJob(job *Job) {
 	job.Matches = matches
 	job.TimbralMatches = timbralMatches
 	job.FullMatches = fullMatches
+	job.Favorites = favoriteMatches
 	s.mu.Unlock()
 }
 
