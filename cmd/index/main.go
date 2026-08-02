@@ -13,16 +13,20 @@ import (
 func main() {
 	outPath := flag.String("o", "dx7_codebook.bin", "output codebook binary file")
 	overwrite := flag.Bool("overwrite", false, "overwrite existing codebook instead of appending")
+	syncTimbre := flag.Bool("sync-timbre", false, "backfill timbre codebook from existing fingerprint codebook entries (no .syx files needed)")
 	renderDur := flag.Duration("d", 1*time.Second, "audio render duration per patch")
 	noteNum := flag.Int("note", 48, "MIDI note number to render (default 48 = C3)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <syx_file_or_directory...>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Build or update an audio fingerprint codebook index from DX7 .syx bank files.\n\n")
+		fmt.Fprintf(os.Stderr, "Flags:\n")
+		fmt.Fprintf(os.Stderr, "  --sync-timbre    Generate timbre codebook from existing fingerprint codebook.\n")
+		fmt.Fprintf(os.Stderr, "                   No .syx files required — renders each entry through the synth.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
-	if flag.NArg() < 1 {
+	if flag.NArg() < 1 && !*syncTimbre {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -49,7 +53,7 @@ func main() {
 		}
 	}
 
-	if len(syxFiles) == 0 {
+	if len(syxFiles) == 0 && !*syncTimbre {
 		fmt.Fprintf(os.Stderr, "No .syx files found.\n")
 		os.Exit(1)
 	}
@@ -105,6 +109,16 @@ func main() {
 		} else {
 			fmt.Printf("  -> Added %d new patches\n", added)
 		}
+	}
+
+	// Backfill timbre codebook from fingerprint codebook entries
+	if *syncTimbre && len(codebook.Entries) > 0 {
+		fmt.Printf("Syncing timbre codebook from %d fingerprint entries...\n", len(codebook.Entries))
+		startBackfill := time.Now()
+		added := timbreCodebook.BackfillFromCodebook(codebook, uint8(*noteNum), *renderDur)
+		elapsed := time.Since(startBackfill)
+		fmt.Printf("  -> Added %d new timbre entries (%d already existed) in %v\n",
+			added, len(codebook.Entries)-added, elapsed)
 	}
 
 	if err := codebook.Save(*outPath); err != nil {

@@ -179,6 +179,37 @@ func (tc *TimbreCodebook) Save(filePath string) error {
 	return nil
 }
 
+// BackfillFromCodebook renders each fingerprint codebook entry through the MSFA synth
+// and extracts the timbre spectrum, adding any missing entries to the timbre codebook.
+// Returns the number of new entries added.
+func (tc *TimbreCodebook) BackfillFromCodebook(cb *Codebook, noteNum uint8, dur time.Duration) int {
+	// Build set of existing signatures in timbre codebook
+	existing := make(map[string]bool, len(tc.Entries))
+	for _, entry := range tc.Entries {
+		existing[string(entry.Candidate.Encode())] = true
+	}
+
+	// Render each DXCB entry missing from DXCT
+	added := 0
+	for _, entry := range cb.Entries {
+		sig := string(entry.Candidate.Encode())
+		if existing[sig] {
+			continue
+		}
+
+		audio := RenderCandidate(entry.Candidate, noteNum, dur)
+		timbreSpec := ExtractTimbreWindow(audio, RenderSampleRate)
+		tc.Entries = append(tc.Entries, TimbreCodebookEntry{
+			Name:       entry.Name,
+			Candidate:  entry.Candidate.Copy(),
+			TimbreSpec: timbreSpec,
+		})
+		existing[sig] = true
+		added++
+	}
+	return added
+}
+
 // LoadTimbreCodebook reads a timbre codebook from a binary file.
 func LoadTimbreCodebook(filePath string) (*TimbreCodebook, error) {
 	f, err := os.Open(filePath)
