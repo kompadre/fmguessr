@@ -246,7 +246,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-    parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
+    parser.add_argument('--patience', type=int, default=20, help='Early stopping patience')
     parser.add_argument('--device', default='auto', help='Device (auto/cpu/cuda)')
     args = parser.parse_args()
 
@@ -294,30 +294,31 @@ def main():
     if True: 
         criterion = DX7MultiTaskLoss()
 
-        # Head gets 5× LR so logits can reach ±5 magnitude without optimizer drag
-        head_lr = args.lr * 5
+        # Head gets 2× LR so logits can reach ±5 magnitude without optimizer drag
+        head_lr = args.lr * 2
         optimizer = torch.optim.Adam([
             {'params': model.shared.parameters(), 'lr': args.lr, 'weight_decay': 0},
             {'params': model.head_continuous.parameters(), 'lr': head_lr, 'weight_decay': 0},
         ], lr=args.lr, weight_decay=0)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=15)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
 
         print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
         print(f"  Head LR: {head_lr} (shared: {args.lr})")
 
         # Training loop
-        best_val_loss = float('inf')
+        best_val_mae = float('inf')
         patience_counter = 0
 
         for epoch in range(args.epochs):
             train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
             val_metrics = validate(model, val_loader, criterion, device)
 
-            scheduler.step(val_metrics["loss"])
+            # Track val_mae — BCE loss can plateau while MAE still improves
+            scheduler.step(val_metrics["mae"])
 
-            # Early stopping
-            if val_metrics["loss"] < best_val_loss:
-                best_val_loss = val_metrics["loss"]
+            # Early stopping on val_mae (not BCE loss)
+            if val_metrics["mae"] < best_val_mae:
+                best_val_mae = val_metrics["mae"]
                 patience_counter = 0
                 # Save best model
                 torch.save(model.state_dict(), "model_best.pth")

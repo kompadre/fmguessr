@@ -106,10 +106,10 @@ def run_ground_truth_test():
                    'OutLevel1','OutLevel2','OutLevel3','OutLevel4','OutLevel5','OutLevel6','Feedback']
 
     model = DX7ParameterEstimator()
-    # Head gets 5× LR (matching train_model.py)
+    # Head gets 2× LR (matching train_model.py)
     optimizer = torch.optim.Adam([
         {'params': model.shared.parameters(), 'lr': 1e-3, 'weight_decay': 0},
-        {'params': model.head_continuous.parameters(), 'lr': 5e-3, 'weight_decay': 0},
+        {'params': model.head_continuous.parameters(), 'lr': 2e-3, 'weight_decay': 0},
     ], lr=1e-3, weight_decay=0)
 
     model.train()
