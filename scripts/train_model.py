@@ -293,10 +293,17 @@ def main():
     model = DX7ParameterEstimator().to(device)
     if True: 
         criterion = DX7MultiTaskLoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+        # Head gets 5× LR so logits can reach ±5 magnitude without optimizer drag
+        head_lr = args.lr * 5
+        optimizer = torch.optim.Adam([
+            {'params': model.shared.parameters(), 'lr': args.lr, 'weight_decay': 0},
+            {'params': model.head_continuous.parameters(), 'lr': head_lr, 'weight_decay': 0},
+        ], lr=args.lr, weight_decay=0)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=15)
 
         print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+        print(f"  Head LR: {head_lr} (shared: {args.lr})")
 
         # Training loop
         best_val_loss = float('inf')

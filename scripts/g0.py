@@ -102,12 +102,21 @@ def run_ground_truth_test():
     # TEST 2: Overfit Sprint (200 epochs on 16 samples)
     # -------------------------------------------------------------------------
     print("\n--- TEST 2: 200-Epoch Overfit Test ---")
+    param_names = ['FreqFine1','FreqFine2','FreqFine3','FreqFine4','FreqFine5','FreqFine6',
+                   'OutLevel1','OutLevel2','OutLevel3','OutLevel4','OutLevel5','OutLevel6','Feedback']
+
     model = DX7ParameterEstimator()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # Head gets 5× LR (matching train_model.py)
+    optimizer = torch.optim.Adam([
+        {'params': model.shared.parameters(), 'lr': 1e-3, 'weight_decay': 0},
+        {'params': model.head_continuous.parameters(), 'lr': 5e-3, 'weight_decay': 0},
+    ], lr=1e-3, weight_decay=0)
 
     model.train()
-    for epoch in range(1, 201):
+    for epoch in range(1, 2001):
         optimizer.zero_grad()
+        # Use eval mode to disable dropout — this is a pure memorization test
+        model.eval()
         preds = model(specs)
         loss, details = criterion(preds, targets)
         loss.backward()
@@ -115,18 +124,28 @@ def run_ground_truth_test():
 
         if epoch == 1:
             initial_loss = loss.item()
-        if epoch % 50 == 0 or epoch == 1:
-            print(f"  Epoch {epoch:03d} | Loss: {loss.item():.5f}")
+        if epoch % 500 == 0 or epoch == 1:
+            print(f"  Epoch {epoch:04d} | Loss: {loss.item():.5f}")
 
+    # Evaluate MAE on sigmoid-activated outputs (DX7 steps)
     final_loss = loss.item()
-    print(f"\nFinal loss after 200 epochs: {final_loss:.6f}")
+    model.eval()
+    with torch.no_grad():
+        final_logits = model(specs)["continuous"]
+        final_probs = torch.sigmoid(final_logits)
+        per_param_mae = (final_probs - targets["continuous"]).abs().mean(dim=0)
+        overall_mae = per_param_mae.mean().item()
 
-    # BCE loss is bounded below by binary entropy (~0.19 for this dataset)
-    # Check that loss dropped significantly from initial value
-    if final_loss < initial_loss * 0.5:
-        print("PASS: Model converged well below initial loss on 16 samples.")
+    print(f"\nFinal BCE loss: {final_loss:.6f}  (theoretical min: ~{expected_min:.4f})")
+    print(f"Overall MAE: {overall_mae:.6f} DX7 steps")
+    print("Per-param MAE:")
+    for name, mae in zip(param_names, per_param_mae):
+        print(f"  {name:12s}: {mae:.6f}")
+
+    if overall_mae < 0.005:
+        print(f"PASS: MAE {overall_mae:.5f} < 0.005 (half DX7 step).")
     else:
-        print(f"WARNING: Final loss {final_loss:.4f} did not improve enough from initial {initial_loss:.4f}.")
+        print(f"WARNING: MAE {overall_mae:.5f} >= 0.005.")
 
     # -------------------------------------------------------------------------
     # TEST 3: Single-Sample Round-Trip
