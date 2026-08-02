@@ -92,15 +92,52 @@
         textarea {
             width: 100%;
             max-width: 500px;
-            min-height: 200px;
+            min-height: 150px;
             padding: 1rem;
             background-color: #0f0f23;
             border: 1px solid #333;
-            border-radius: 8px;
+            border-radius: 0 0 8px 8px;
             color: #e0e0e0;
             font-family: monospace;
             font-size: 0.9rem;
             resize: vertical;
+        }
+
+        #log-details {
+            width: 100%;
+            max-width: 500px;
+        }
+
+        #log-details summary {
+            cursor: pointer;
+            padding: 0.5rem 0.75rem;
+            background-color: #16213e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            color: #aaa;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        #log-details summary::-webkit-details-marker {
+            display: none;
+        }
+
+        #log-details summary::before {
+            content: '\u25b6';
+            font-size: 0.65rem;
+            transition: transform 0.2s;
+        }
+
+        #log-details[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        #log-details summary:hover {
+            color: #fff;
         }
 
         textarea:focus {
@@ -576,7 +613,10 @@
         </label>
     </div>
 
-    <textarea id="log" readonly placeholder="Log output will appear here..."></textarea>
+    <details id="log-details">
+        <summary class="config-header">Log Output</summary>
+        <textarea id="log" readonly placeholder="Log output will appear here..."></textarea>
+    </details>
 
     <div id="progress-wrapper" style="display:none;">
         <div id="progress-bar">
@@ -588,9 +628,10 @@
     <button id="status-btn" disabled>Check Status</button>
 
     <div id="tabs"></div>
-    <button id="clear-btn">Clear History</button>
 
     <div id="tab-content"></div>
+
+    <button id="clear-btn">Clear History</button>
 
     <script>
         const fileInput = document.getElementById('wav-input');
