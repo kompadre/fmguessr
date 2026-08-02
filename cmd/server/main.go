@@ -50,6 +50,8 @@ type Job struct {
 	BestDistance    float64       `json:"best_distance,omitempty"`
 	SyxURL          string        `json:"syx_url,omitempty"`
 	Matches         []MatchResult `json:"matches,omitempty"`
+	TimbralMatches  []MatchResult `json:"timbral_matches,omitempty"`
+	FullMatches     []MatchResult `json:"full_matches,omitempty"`
 
 	// Internal fields
 	audioSamples []float64
@@ -190,6 +192,52 @@ func (s *Server) processJob(job *Job) {
 		})
 	}
 
+	// Render Timbral Top 5 to WAV files
+	var timbralMatches []MatchResult
+	for rank, cand := range result.TimbralTop5 {
+		candAudio := match.RenderCandidateWithGate(cand, uint8(midiNote), gateDur, matchCfg.RenderDur)
+		wavPath := filepath.Join(jobDir, fmt.Sprintf("timbral_%d.wav", rank+1))
+
+		if err := match.SaveWav(wavPath, candAudio, match.RenderSampleRate); err != nil {
+			s.failJob(job, fmt.Sprintf("failed to save timbral candidate WAV: %v", err))
+			return
+		}
+
+		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
+		candDist := match.SpectralDistance(targetNorm, candNorm)
+
+		timbralMatches = append(timbralMatches, MatchResult{
+			Rank:      rank + 1,
+			Algorithm: int(cand.Algorithm + 1),
+			Feedback:  int(cand.Feedback),
+			Distance:  candDist,
+			WavURL:    fmt.Sprintf("/exports/%s/timbral_%d.wav", job.ID, rank+1),
+		})
+	}
+
+	// Render Full Top 5 to WAV files
+	var fullMatches []MatchResult
+	for rank, cand := range result.FullTop5 {
+		candAudio := match.RenderCandidateWithGate(cand, uint8(midiNote), gateDur, matchCfg.RenderDur)
+		wavPath := filepath.Join(jobDir, fmt.Sprintf("full_%d.wav", rank+1))
+
+		if err := match.SaveWav(wavPath, candAudio, match.RenderSampleRate); err != nil {
+			s.failJob(job, fmt.Sprintf("failed to save full candidate WAV: %v", err))
+			return
+		}
+
+		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
+		candDist := match.SpectralDistance(targetNorm, candNorm)
+
+		fullMatches = append(fullMatches, MatchResult{
+			Rank:      rank + 1,
+			Algorithm: int(cand.Algorithm + 1),
+			Feedback:  int(cand.Feedback),
+			Distance:  candDist,
+			WavURL:    fmt.Sprintf("/exports/%s/full_%d.wav", job.ID, rank+1),
+		})
+	}
+
 	s.mu.Lock()
 	job.Status = "completed"
 	job.ProgressPercent = 100
@@ -200,6 +248,8 @@ func (s *Server) processJob(job *Job) {
 	job.BestDistance = result.BestDist
 	job.SyxURL = fmt.Sprintf("/exports/%s/bank.syx", job.ID)
 	job.Matches = matches
+	job.TimbralMatches = timbralMatches
+	job.FullMatches = fullMatches
 	s.mu.Unlock()
 }
 

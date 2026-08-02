@@ -26,6 +26,14 @@ type DiffOptimizer struct {
 	verbose      bool
 	sampleRate   int
 	rng          *rand.Rand
+
+	// Cached final render — avoids re-rendering after optimization
+	bestSpec    TemporalTimbreSpec
+	bestSpecPCM []float64
+	specCached  bool
+
+	// When true, skips the 32-algorithm topology sweep in RunAlternating
+	skipTopology bool
 }
 
 func NewDiffOptimizer(target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *DiffOptimizer {
@@ -63,6 +71,34 @@ func (opt *DiffOptimizer) BestDist() float64 {
 
 func (opt *DiffOptimizer) BestPatch() *Candidate {
 	return opt.bestPatch
+}
+
+// BestSpec returns the cached TemporalTimbreSpec of the best candidate's final render.
+// Returns a zero spec if no render has been cached yet.
+func (opt *DiffOptimizer) BestSpec() TemporalTimbreSpec {
+	return opt.bestSpec
+}
+
+// BestPCM returns the cached rendered PCM of the best candidate.
+// Returns nil if no render has been cached yet.
+func (opt *DiffOptimizer) BestPCM() []float64 {
+	return opt.bestSpecPCM
+}
+
+// SetSkipTopology controls whether RunAlternating skips the 32-algorithm topology sweep.
+// Use this when the algorithm is already fixed (e.g., during temporal expansion from timbral templates).
+func (opt *DiffOptimizer) SetSkipTopology(skip bool) {
+	opt.skipTopology = skip
+}
+
+// cacheBestSpec renders the current bestPatch and caches its TemporalTimbreSpec + PCM.
+// Called after optimization phases to avoid re-rendering later.
+func (opt *DiffOptimizer) cacheBestSpec() {
+	pcm := RenderCandidate(opt.bestPatch, opt.note, opt.dur)
+	norm := NormalizeRMS(pcm)
+	opt.bestSpecPCM = pcm
+	opt.bestSpec = ExtractTemporalTimbreSpec(norm, opt.sampleRate)
+	opt.specCached = true
 }
 
 // CrunchWavFile loads an arbitrary WAV file from disk and crunches it using DiffOptimizer.
@@ -313,6 +349,8 @@ func (opt *DiffOptimizer) RunPhase(knobs []KnobDef, phaseName string, maxIters i
 					opt.bestPatch = lineCands[i].Copy()
 					opt.currentPatch = lineCands[i].Copy()
 					improved = true
+					// Cache the rendered spec of the new best
+					opt.cacheBestSpec()
 					if opt.verbose {
 						fmt.Printf("[DiffOpt-%s] Iter %d: New Best Dist %.6f via %s\n", phaseName, iter+1, opt.bestDist, lineLabels[i])
 					}
@@ -331,6 +369,8 @@ func (opt *DiffOptimizer) RunPhase(knobs []KnobDef, phaseName string, maxIters i
 						opt.bestPatch = coupledCands[i].Copy()
 						opt.currentPatch = coupledCands[i].Copy()
 						improved = true
+						// Cache the rendered spec of the new best
+						opt.cacheBestSpec()
 						if opt.verbose {
 							fmt.Printf("[DiffOpt-%s-Coupled] Iter %d: New Best Dist %.6f via %s\n", phaseName, iter+1, opt.bestDist, coupledMeta[i].knobName)
 						}
@@ -347,7 +387,7 @@ func (opt *DiffOptimizer) RunPhase(knobs []KnobDef, phaseName string, maxIters i
 	return opt.bestDist
 }
 
-// RunAlternating performs a 32-algorithm topology sweep followed by alternating
+// RunAlternating performs a 32-algorithm topology sweep (unless skipTopology) followed by alternating
 // back-to-back Timbre and Temporal optimization phases.
 func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
 	initialFits, _ := evaluateBatchParallel([]*Candidate{opt.currentPatch}, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS)
@@ -360,10 +400,13 @@ func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
 	}
 
 	if opt.bestDist <= 1e-4 {
+		opt.cacheBestSpec()
 		return opt.bestPatch
 	}
 
-	opt.RunTopologySweep()
+	if !opt.skipTopology {
+		opt.RunTopologySweep()
+	}
 
 	timbreKnobs := buildTimbreKnobs()
 	temporalKnobs := buildTemporalKnobs()
@@ -388,6 +431,11 @@ func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
 			}
 			break
 		}
+	}
+
+	// Cache the final best spec if not already cached (e.g. no improvement during phases)
+	if !opt.specCached {
+		opt.cacheBestSpec()
 	}
 
 	return opt.bestPatch

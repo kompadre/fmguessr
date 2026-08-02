@@ -133,6 +133,22 @@ func main() {
 	fmt.Printf("Best match found (distance=%.6f, %d evaluations):\n", result.BestDist, result.Iters)
 	fmt.Println(result.Best.String())
 
+	// Print Timbral Top 5
+	if len(result.TimbralTop5) > 0 {
+		fmt.Printf("\n--- Timbral Top %d (by static timbre distance) ---\n", len(result.TimbralTop5))
+		for i, c := range result.TimbralTop5 {
+			fmt.Printf("  #%d: %s\n", i+1, c.String())
+		}
+	}
+
+	// Print Full Top 5
+	if len(result.FullTop5) > 0 {
+		fmt.Printf("\n--- Full Top %d (by temporal distance, DiffOptimizer-refined) ---\n", len(result.FullTop5))
+		for i, c := range result.FullTop5 {
+			fmt.Printf("  #%d: %s\n", i+1, c.String())
+		}
+	}
+
 	// Export .syx if requested
 	if *syxOut != "" {
 		fmt.Printf("Dumping result top: %v.\n", result.Top)

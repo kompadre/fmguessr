@@ -12,32 +12,41 @@ import (
 
 // Config holds optimization parameters.
 type Config struct {
-	RenderDur        time.Duration
-	MIDINote         uint8
-	NoteFreq         float64 // User-specified note frequency (0 = use detected F0)
-	CodebookPath     string  // Path to pre-indexed dx7_codebook.bin (optional)
-	ModelPath        string  // Path to ONNX model for NN prediction (optional)
-	Verbose          bool
-	GA               GAConfig
+	RenderDur    time.Duration
+	MIDINote     uint8
+	NoteFreq     float64 // User-specified note frequency (0 = use detected F0)
+	CodebookPath string  // Path to pre-indexed dx7_codebook.bin (optional)
+	ModelPath    string  // Path to ONNX model for NN prediction (optional)
+	Verbose      bool
+	GA           GAConfig
 	ProgressCallback func(percent int, phase string) // Optional callback for API server progress reporting
+
+	// Deduplication thresholds for timbral/full top-N selection.
+	// Candidates closer than the threshold are considered duplicates; the better one is kept.
+	StaticDedupThreshold   float64 // Step 7: timbral dedup by SpectralDistance (default 0.015)
+	TemporalDedupThreshold float64 // Step 8: full dedup by TemporalTimbreDistance (default 0.020)
 }
 
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		RenderDur: 2 * time.Second,
-		MIDINote:  60,
-		Verbose:   false,
-		GA:        DefaultGAConfig(),
+		RenderDur:             2 * time.Second,
+		MIDINote:              60,
+		Verbose:               false,
+		GA:                    DefaultGAConfig(),
+		StaticDedupThreshold:  0.015,
+		TemporalDedupThreshold: 0.020,
 	}
 }
 
 // Result holds the output of the optimization.
 type Result struct {
-	Best     *Candidate
-	BestDist float64
-	Iters    int
-	Top      []*Candidate // Top 32 candidates for .syx export
+	Best        *Candidate
+	BestDist    float64
+	Iters       int
+	Top         []*Candidate // Top 32 candidates for .syx export
+	TimbralTop5 []*Candidate // Top 5 by static timbre distance (deduplicated)
+	FullTop5    []*Candidate // Top 5 by temporal distance (DiffOptimizer-refined, deduplicated)
 }
 
 func reportProgress(cfg Config, percent int, phase string) {
@@ -642,14 +651,152 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		c.CalibrateCarrierLevels(rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
 	}
 
+	// -------------------------------------------------------------------------
+	// Step 7: Timbral Top Selection — top 10 by static SpectralDistance, dedup to ≤5
+	// Step 8: Full Top Selection — DiffOptimizer on those 10, dedup to ≤5 by temporal distance
+	// -------------------------------------------------------------------------
+	timbralTop5, fullTop5 := selectTopCandidates(topN, target, cfg, rawTargetRMS)
+
 	reportProgress(cfg, 100, "Completed")
 
 	return Result{
-		Best:     best,
-		BestDist: best.Fitness,
-		Iters:    totalEvals,
-		Top:      topN,
+		Best:        best,
+		BestDist:    best.Fitness,
+		Iters:       totalEvals,
+		Top:         topN,
+		TimbralTop5: timbralTop5,
+		FullTop5:    fullTop5,
 	}
+}
+
+// selectTopCandidates implements Step 7 (timbral top selection) and Step 8 (full top selection).
+// Step 7: renders topN candidates, sorts by static SpectralDistance, deduplicates to ≤5.
+// Step 8: runs DiffOptimizer on up to 10 candidates, sorts by TemporalTimbreDistance, deduplicates to ≤5.
+func selectTopCandidates(topN []*Candidate, target []float64, cfg Config, rawTargetRMS float64) (timbralTop5, fullTop5 []*Candidate) {
+	const timbralLimit = 5
+	const fullLimit = 5
+	const expandPool = 10 // feed more than 5 into temporal expansion to guarantee ≥5 after dedup
+
+	probeCount := len(topN)
+	if probeCount > expandPool {
+		probeCount = expandPool
+	}
+	if probeCount == 0 {
+		return nil, nil
+	}
+
+	probes := topN[:probeCount]
+
+	// --- Step 7: Timbral Top Selection ---
+	type timbralEntry struct {
+		cand *Candidate
+		spec TemporalTimbreSpec
+		dist float64
+	}
+
+	timbrePool := make([]timbralEntry, len(probes))
+	for i, c := range probes {
+		pcm := RenderCandidate(c, cfg.MIDINote, cfg.RenderDur)
+		norm := NormalizeRMS(pcm)
+		spec := ExtractTemporalTimbreSpec(norm, 44100)
+		dist := SpectralDistance(target, norm)
+		timbrePool[i] = timbralEntry{cand: c, spec: spec, dist: dist}
+	}
+
+	sort.Slice(timbrePool, func(i, j int) bool { return timbrePool[i].dist < timbrePool[j].dist })
+
+	staticThreshold := cfg.StaticDedupThreshold
+	if staticThreshold <= 0 {
+		staticThreshold = 0.015
+	}
+
+	// Greedy deduplication on static specs
+	var staticSelected []timbralEntry
+	for _, item := range timbrePool {
+		tooSimilar := false
+		for _, sel := range staticSelected {
+			if staticOnlyDist(sel.spec, item.spec) < staticThreshold {
+				tooSimilar = true
+				break
+			}
+		}
+		if !tooSimilar {
+			staticSelected = append(staticSelected, item)
+			if len(staticSelected) >= timbralLimit {
+				break
+			}
+		}
+	}
+	timbralTop5 = make([]*Candidate, len(staticSelected))
+	for i, s := range staticSelected {
+		timbralTop5[i] = s.cand
+	}
+
+	// --- Step 8: Full Top Selection (DiffOptimizer on the pool) ---
+	type fullEntry struct {
+		cand *Candidate
+		spec TemporalTimbreSpec
+		dist float64
+	}
+
+	targetSpec := ExtractTemporalTimbreSpec(target, 44100)
+	fullPool := make([]fullEntry, 0, len(probes))
+
+	for i, c := range probes {
+		reportProgress(cfg, 85+i*1, fmt.Sprintf("Step 8: Temporal expansion %d/%d", i+1, len(probes)))
+
+		diffOpt := NewDiffOptimizer(target, c, 2, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		diffOpt.SetSkipTopology(true)
+		_ = diffOpt.RunAlternating(1) // 1 cycle: fast timbre + temporal pass
+
+		optimized := diffOpt.BestPatch()
+		optimized.Fitness = diffOpt.BestDist()
+		spec := diffOpt.BestSpec() // cached — no re-render
+		dist := TemporalTimbreDistance(targetSpec, spec)
+
+		fullPool = append(fullPool, fullEntry{cand: optimized, spec: spec, dist: dist})
+	}
+
+	sort.Slice(fullPool, func(i, j int) bool { return fullPool[i].dist < fullPool[j].dist })
+
+	temporalThreshold := cfg.TemporalDedupThreshold
+	if temporalThreshold <= 0 {
+		temporalThreshold = 0.020
+	}
+
+	// Greedy deduplication on temporal specs
+	var temporalSelected []fullEntry
+	for _, item := range fullPool {
+		tooSimilar := false
+		for _, sel := range temporalSelected {
+			if TemporalTimbreDistance(sel.spec, item.spec) < temporalThreshold {
+				tooSimilar = true
+				break
+			}
+		}
+		if !tooSimilar {
+			temporalSelected = append(temporalSelected, item)
+			if len(temporalSelected) >= fullLimit {
+				break
+			}
+		}
+	}
+	fullTop5 = make([]*Candidate, len(temporalSelected))
+	for i, s := range temporalSelected {
+		fullTop5[i] = s.cand
+	}
+
+	return timbralTop5, fullTop5
+}
+
+// staticOnlyDist computes Euclidean distance between two TemporalTimbreSpec using only the 256-bin static component.
+func staticOnlyDist(a, b TemporalTimbreSpec) float64 {
+	var sum float64
+	for i := 0; i < TimbreSpecBins; i++ {
+		d := a.StaticSpec[i] - b.StaticSpec[i]
+		sum += d * d
+	}
+	return math.Sqrt(sum) / math.Sqrt(float64(TimbreSpecBins))
 }
 
 // checkExactMatch returns true if any island has found a match <= 0.0001.
