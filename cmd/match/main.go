@@ -21,6 +21,11 @@ func main() {
 	generations := flag.Int("generations", 200, "GA generations")
 	population := flag.Int("population", 128, "GA population size (32-256)")
 	autoIndex := flag.Bool("auto-index", true, "automatically index best result into codebook")
+	beam := flag.Bool("beam", false, "enable constructive beam search (experimental)")
+	beamWidth := flag.Int("beam-width", 4, "beam search width (K best candidates per step)")
+	beamRenders := flag.Int("beam-renders", 20000, "beam search render budget")
+	cspoa := flag.Bool("cspoa", false, "enable CSPOA progressive attachment (explorative)")
+	cspoaBudget := flag.Int("cspoa-budget", 5000, "CSPOA render budget")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <target.wav>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Find DX7 FM parameters that produce a sound similar to the target WAV.\n\n")
@@ -120,6 +125,13 @@ func main() {
 		ModelPath:    *modelPath,
 		Verbose:      *verbose,
 		GA:           gaCfg,
+		UseBeamSearch:  *beam,
+		BeamWidth:      *beamWidth,
+		BeamMaxRenders: *beamRenders,
+		CSPOA: match.CSPOAConfig{
+			Enabled:    *cspoa,
+			MaxRenders: *cspoaBudget,
+		},
 	}
 
 	fmt.Printf("\nStarting GA: %d generations × %d population = %d evaluations max\n",

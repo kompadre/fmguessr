@@ -21,6 +21,14 @@ type Config struct {
 	Verbose      bool
 	GA           GAConfig
 	ProgressCallback func(percent int, phase string) // Optional callback for API server progress reporting
+
+	// Constructive Beam Search (experimental)
+	UseBeamSearch  bool // Enable the 6-step constructive beam builder
+	BeamWidth      int  // K best candidates per step (default 4)
+	BeamMaxRenders int  // Render budget cap (default 20000)
+
+	// CSPOA: Codebook-Seeded Progressive Operator Attachment (explorative)
+	CSPOA CSPOAConfig
 }
 
 // DefaultConfig returns sensible defaults.
@@ -237,23 +245,23 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	// Step 2: Try NN prediction if model available
 	var nnCandidates []*Candidate
 	if len(cfg.ModelData) > 0 || cfg.ModelPath != "" {
-		var predictor *Predictor
+		var probePredictor *ProbePredictor
 		var err error
 		if len(cfg.ModelData) > 0 {
-			predictor, err = NewPredictorFromBytes(cfg.ModelData)
+			probePredictor, err = NewProbePredictorFromBytes(cfg.ModelData)
 		} else {
-			predictor, err = NewPredictor(cfg.ModelPath)
+			probePredictor, err = NewProbePredictor(cfg.ModelPath)
 		}
 		if err != nil {
 			fmt.Printf("Warning: could not load NN model: %v\n", err)
 		} else {
-			defer predictor.Close()
+			defer probePredictor.Close()
 
 			if cfg.Verbose {
 				if len(cfg.ModelData) > 0 {
-					fmt.Printf("Using NN predictor: embedded (%d bytes)\n", len(cfg.ModelData))
+					fmt.Printf("Using probe NN predictor: embedded (%d bytes)\n", len(cfg.ModelData))
 				} else {
-					fmt.Printf("Using NN predictor: %s\n", cfg.ModelPath)
+					fmt.Printf("Using probe NN predictor: %s\n", cfg.ModelPath)
 				}
 			}
 
@@ -271,8 +279,8 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 
-			// NN predicts continuous params (fines, levels, feedback)
-			predicted, nnResult := predictor.PredictToCandidate(timbreSpec)
+			// NN predicts probe params → converts to Candidate via heuristic chain
+			predicted, probeResult := probePredictor.PredictToProbeCandidate(timbreSpec, int(cfg.MIDINote))
 
 			// Attach RawBase from nearest timbre codebook entry
 			if timbreCB != nil {
@@ -284,7 +292,8 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 
 			if cfg.Verbose {
-				fmt.Printf("NN continuous prediction: Feedback=%.2f\n", nnResult.Feedback)
+				fmt.Printf("NN probe prediction: algo=%d feedback=%d brightness=%.2f harmonicity=%.2f\n",
+					predicted.Algorithm, predicted.Feedback, probeResult.Brightness, probeResult.Harmonicity)
 			}
 
 			type algoScore struct {
@@ -385,6 +394,141 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
+	// Step 2.5 — Constructive Beam Search (experimental)
+	// Precompute target peak shape and cached STFT for 3-tier filtering
+	targetPeakShape := ExtractPeakShapeFromAudio(target, RenderSampleRate)
+	targetCachedSTFT := ComputeTargetSTFT(target)
+
+	var beamResult *PatchEvolution
+	var opCache *OperatorCache
+	var beamCB *Codebook
+	if cfg.UseBeamSearch {
+		if cfg.Verbose {
+			fmt.Println("--- Step 2.5: Constructive Beam Search ---")
+		}
+		reportProgress(cfg, 35, "Step 2.5: Constructive Beam Search")
+
+		// Build operator cache from codebook if available
+		var beamTimbreCB *TimbreCodebook
+		if cfg.CodebookPath != "" {
+			cb, cbErr := LoadCodebook(cfg.CodebookPath)
+			if cbErr == nil && len(cb.Entries) > 0 {
+				beamCB = cb
+				opCache = BuildOperatorCache(cb)
+				if cfg.Verbose {
+					fmt.Printf("Operator cache built from %d codebook entries\n", len(cb.Entries))
+				}
+			}
+			// Load timbre codebook for Tier 1 peak shape filtering
+			timbreCBPath := cfg.CodebookPath
+			if len(cfg.CodebookPath) > 4 && cfg.CodebookPath[len(cfg.CodebookPath)-4:] == ".bin" {
+				timbreCBPath = cfg.CodebookPath[:len(cfg.CodebookPath)-4] + "_timbre.bin"
+			} else {
+				timbreCBPath = cfg.CodebookPath + "_timbre.bin"
+			}
+			if tcb, err := LoadTimbreCodebook(timbreCBPath); err == nil && len(tcb.Entries) > 0 {
+				beamTimbreCB = tcb
+				if cfg.Verbose {
+					fmt.Printf("Beam search: loaded timbre codebook: %d entries\n", len(tcb.Entries))
+				}
+			}
+		}
+		if opCache == nil {
+			opCache = BuildOperatorCacheFromWaveformSeeds()
+			if cfg.Verbose {
+				fmt.Println("Operator cache built from waveform base seeds (no codebook)")
+			}
+		}
+
+		beamWidth := cfg.BeamWidth
+		if beamWidth <= 0 {
+			beamWidth = 4
+		}
+		beamRenders := cfg.BeamMaxRenders
+		if beamRenders <= 0 {
+			beamRenders = 20000
+		}
+
+		beamResult = RunConstructiveBeam(
+			target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur,
+			opCache, beamCB, beamTimbreCB, targetPeakShape, targetCachedSTFT,
+			beamWidth, beamRenders,
+			func(s string) { if cfg.Verbose { fmt.Println(s) } },
+		)
+
+		if beamResult != nil {
+			beamResult.Final.Fitness = beamResult.Trace[len(beamResult.Trace)-1].Distance
+
+			// Insert beam result into elite cohorts
+			timbreCohort.TryInsert(&beamResult.Final, beamResult.Trace[len(beamResult.Trace)-1].Distance)
+			fullCohort.TryInsert(&beamResult.Final, beamResult.Trace[len(beamResult.Trace)-1].Distance)
+
+			if cfg.Verbose {
+				fmt.Printf("Beam search complete: dist=%.4f, %d renders, algo=%d\n",
+					beamResult.Trace[len(beamResult.Trace)-1].Distance,
+					beamResult.TotalRenders,
+					beamResult.Algorithm+1)
+				for _, step := range beamResult.Trace {
+					fmt.Printf("  %s — dist=%.4f\n", step.Description, step.Distance)
+				}
+			}
+		}
+	}
+
+	// Step 2.6 — CSPOA: Codebook-Seeded Progressive Operator Attachment (explorative)
+	if cfg.CSPOA.Enabled {
+		// Load codebook for CSPOA if not already loaded by beam search
+		cspoaCB := beamCB
+		if cspoaCB == nil && cfg.CodebookPath != "" {
+			cb, cbErr := LoadCodebook(cfg.CodebookPath)
+			if cbErr != nil {
+				if cfg.Verbose {
+					fmt.Printf("[CSPOA] Codebook load error: %v\n", cbErr)
+				}
+			} else if len(cb.Entries) > 0 {
+				cspoaCB = cb
+				if cfg.Verbose {
+					fmt.Printf("CSPOA: loaded fingerprint codebook: %d entries\n", len(cb.Entries))
+				}
+			}
+		}
+		// Also build opCache for CSPOA if not available from beam search
+		cspoaCache := opCache
+		if cspoaCache == nil {
+			if cspoaCB != nil {
+				cspoaCache = BuildOperatorCache(cspoaCB)
+			} else {
+				cspoaCache = BuildOperatorCacheFromWaveformSeeds()
+			}
+		}
+
+		if cspoaCB != nil {
+			if cfg.Verbose {
+				fmt.Println("--- Step 2.6: CSPOA Progressive Attachment ---")
+			}
+			reportProgress(cfg, 40, "Step 2.6: CSPOA Progressive Search")
+
+			deltaLib := BuildDeltaLibrary(cspoaCB)
+			cspoaResults := RunCSPOA(
+				target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur,
+				deltaLib, cspoaCache, bestCodebookCand, cfg.CSPOA,
+				func(s string) { if cfg.Verbose { fmt.Println(s) } },
+			)
+
+			for _, c := range cspoaResults {
+				timbreCohort.TryInsert(c, c.Fitness)
+				fullCohort.TryInsert(c, c.Fitness)
+			}
+
+			if cfg.Verbose && len(cspoaResults) > 0 {
+				fmt.Printf("CSPOA complete: %d candidates, best dist=%.6f, algo=%d\n",
+					len(cspoaResults), cspoaResults[0].Fitness, cspoaResults[0].Algorithm+1)
+			}
+		} else if cfg.Verbose {
+			fmt.Println("[CSPOA] Skipped: no codebook available for delta extraction")
+		}
+	}
+
 	// If no NN model was run, run pre-GA acceleration profiling on Waveform Base Seeds to seed GA islands
 	var globalLiveOpt *LiveOptimizer
 	if nnCandidates == nil {
@@ -466,6 +610,11 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						break
 					}
 				}
+			}
+
+			// Priority 1.5: Beam search result for this algorithm (Slot 0)
+			if cand == nil && c == 0 && beamResult != nil && beamResult.Final.Algorithm == uint8(algo) {
+				cand = beamResult.Final.Copy()
 			}
 
 			// Priority 2: KNN codebook match (Slot 0)
