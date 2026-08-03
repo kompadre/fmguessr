@@ -1,0 +1,2060 @@
+import { createPatchRow, createPatchList, highlightPatchRow } from './components/patch.js';
+import { createPiano } from './components/piano.js';
+import { createSpectrogram } from './components/spectrogram.js';
+import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
+import { createPatchCard } from './components/patch-card.js';
+
+const fileInput = document.getElementById('wav-input');
+const fileLabel = document.getElementById('file-label');
+const fileName = document.getElementById('file-name');
+const log = document.getElementById('log');
+const tabsEl = document.getElementById('tabs');
+const tabContent = document.getElementById('tab-content');
+const baseUrl = window.location.origin.indexOf("localhost") > -1 ? "http://localhost:8080" : window.location.origin;
+
+let pollInterval = null;
+let jobs = [];
+let activeJobIndex = -1;
+let pollQueue = [];
+
+const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
+
+// --- Session Persistence (localStorage + IndexedDB) ---
+const STORAGE_KEY = 'fmguessr_sessions';
+const ACTIVE_KEY = 'fmguessr_active';
+const FAVORITES_KEY = 'fmguessr_favorites';
+const MAX_SESSIONS = 50;
+const DB_NAME = 'fmguessr';
+const DB_VERSION = 1;
+const STORE_NAME = 'uploads';
+
+const dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+});
+
+async function dbPut(key, value) {
+    const db = await dbPromise;
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(value, key);
+}
+
+async function dbGet(key) {
+    const db = await dbPromise;
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    return new Promise((resolve, reject) => {
+        const req = tx.objectStore(STORE_NAME).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function dbDelete(key) {
+    const db = await dbPromise;
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(key);
+}
+
+async function dbClear() {
+    const db = await dbPromise;
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).clear();
+}
+
+function saveSessions() {
+    const data = jobs.map(j => ({
+        id: j.id,
+        fileName: j.fileName,
+        statusUrl: j.statusUrl,
+        probeData: j.probeData,
+        resultData: j.resultData,
+        selectedMatch: j.selectedMatch
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(ACTIVE_KEY, String(activeJobIndex));
+    updateClearBtn();
+}
+
+function updateClearBtn() {
+    const btn = document.getElementById('clear-btn');
+    if (btn) btn.style.display = jobs.length > 0 ? 'inline-block' : 'none';
+}
+
+async function restoreSessions() {
+    let saved;
+    try {
+        saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    } catch { saved = []; }
+    const activeIdx = parseInt(localStorage.getItem(ACTIVE_KEY) || '-1');
+
+    const inProgressJobs = [];
+
+    for (const s of saved) {
+        const arrayBuffer = await dbGet(s.id);
+        if (!arrayBuffer) continue;
+
+        const blob = new Blob([arrayBuffer]);
+        const file = new File([blob], s.fileName, { type: 'audio/wav' });
+        const objectUrl = URL.createObjectURL(blob);
+
+        const job = {
+            id: s.id,
+            file, objectUrl,
+            fileName: s.fileName,
+            probeData: s.probeData,
+            resultData: s.resultData,
+            statusUrl: s.statusUrl || null,
+            selectedMatch: s.selectedMatch || null,
+            tabEl: null,
+            pollCount: 0
+        };
+        jobs.push(job);
+        const idx = jobs.length - 1;
+        addTab(idx);
+        if (job.resultData) {
+            upgradeTab(idx);
+        } else if (job.statusUrl) {
+            // Job was in-progress when page was unloaded — resume polling
+            inProgressJobs.push(idx);
+        }
+    }
+
+    if (activeIdx >= 0 && activeIdx < jobs.length) {
+        showJob(activeIdx);
+    }
+    updateClearBtn();
+
+    // Resume polling for in-progress jobs
+    if (inProgressJobs.length > 0) {
+        for (const idx of inProgressJobs) {
+            pollQueue.push(idx);
+        }
+        appendLog(`[restore] Resuming ${inProgressJobs.length} in-progress job(s)`);
+        startPolling();
+    }
+}
+
+async function deleteSession(jobIndex) {
+    const job = jobs[jobIndex];
+    if (!job) return;
+    await dbDelete(job.id);
+    if (job.objectUrl) URL.revokeObjectURL(job.objectUrl);
+    jobs.splice(jobIndex, 1);
+    tabsEl.innerHTML = '';
+    jobs.forEach((j, i) => {
+        j.tabEl = null;
+        addTab(i);
+        if (j.resultData) upgradeTab(i);
+    });
+    if (activeJobIndex === jobIndex) {
+        activeJobIndex = jobs.length > 0 ? 0 : -1;
+        if (activeJobIndex >= 0) showJob(0);
+        else { tabContent.innerHTML = ''; document.getElementById('piano-dock').innerHTML = ''; }
+    } else if (activeJobIndex > jobIndex) {
+        activeJobIndex--;
+    }
+    saveSessions();
+}
+
+async function clearAllSessions() {
+    jobs = [];
+    activeJobIndex = -1;
+    stopPolling();
+    pollQueue = [];
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_KEY);
+    favorites = [];
+    localStorage.removeItem(FAVORITES_KEY);
+    await dbClear();
+    tabsEl.innerHTML = '';
+    tabsEl.classList.remove('visible');
+    tabContent.innerHTML = '';
+    tabContent.classList.remove('visible');
+    document.getElementById('piano-dock').innerHTML = '';
+    renderFavorites();
+    updateClearBtn();
+}
+
+// --- Favorites Management ---
+let favorites = [];
+
+function loadFavorites() {
+    try {
+        favorites = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]');
+    } catch { favorites = []; }
+    renderFavorites();
+}
+
+function saveFavoritesToStorage() {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
+}
+
+async function addFavorite(job, match) {
+    if (!job.resultData || !job.resultData.syx_url) {
+        appendLog('Cannot favorite: no .syx bank available');
+        return;
+    }
+
+    const fav = {
+        id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        name: job.fileName.replace(/\.[^.]+$/, '') + ' #' + match.rank,
+        syx_url: job.resultData.syx_url,
+        slot: match.rank - 1,
+        algorithm: match.algorithm,
+        feedback: match.feedback,
+        distance: match.distance,
+        wav_url: match.wav_url,
+        source_job: job.fileName,
+        created: Date.now()
+    };
+
+    favorites.push(fav);
+    saveFavoritesToStorage();
+    renderFavorites();
+    appendLog(`Favorited: ${fav.name} (algo ${match.algorithm} fb ${match.feedback})`);
+}
+
+function removeFavorite(favId) {
+    favorites = favorites.filter(f => f.id !== favId);
+    saveFavoritesToStorage();
+    renderFavorites();
+    // Clear from edit slots if present
+    if (editSlot?.id === favId) editSlot = null;
+    if (editSlotB?.id === favId) editSlotB = null;
+    currentMutation = null;
+    renderEditPanel();
+}
+
+// --- Edit Panel (Morph / Params / Random) ---
+let editSlot = null;       // The patch currently loaded for editing
+let editMode = 'morph';    // 'morph' | 'params' | 'random'
+let editSlotB = null;      // Second slot for morph mode only
+let currentMutation = null; // Last mutation/tweak result (unsaved)
+
+function openEdit(fav) {
+    // In morph mode, if slot A is already filled, fill slot B instead of replacing
+    if (editMode === 'morph' && editSlot && fav) {
+        // Don't replace slot A with the same patch
+        if (editSlot.id !== fav.id) {
+            editSlotB = fav;
+        }
+    } else {
+        editSlot = fav;
+        editSlotB = null;
+    }
+    currentMutation = null;
+    const panel = document.getElementById('edit-panel');
+    panel.classList.add('visible');
+    renderEditPanel();
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function setEditMode(mode) {
+    editMode = mode;
+    currentMutation = null;
+    document.querySelectorAll('.edit-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    renderEditPanel();
+}
+
+function renderEditPanel() {
+    const slotArea = document.getElementById('edit-slot-area');
+    const sliderRow = document.getElementById('edit-slider-row');
+    const paramsArea = document.getElementById('edit-params-area');
+    const goBtn = document.getElementById('edit-go');
+    const status = document.getElementById('edit-status');
+
+    if (!editSlot) {
+        slotArea.innerHTML = '';
+        sliderRow.style.display = 'none';
+        paramsArea.style.display = 'none';
+        goBtn.disabled = true;
+        goBtn.textContent = 'Morph';
+        status.textContent = 'Click 🔧 on any patch to edit it';
+        return;
+    }
+
+    if (editMode === 'morph') {
+        renderMorphMode(slotArea, sliderRow, paramsArea, goBtn, status);
+    } else if (editMode === 'params') {
+        renderParamsMode(slotArea, sliderRow, paramsArea, goBtn, status);
+    } else if (editMode === 'random') {
+        renderRandomMode(slotArea, sliderRow, paramsArea, goBtn, status);
+    }
+}
+
+function renderEditSlot(container, fav, slotIdx, showRemove) {
+    container.innerHTML = '';
+    if (!fav) {
+        container.innerHTML = '<span class="edit-slot-empty">Click 🔧 on any patch</span>';
+        container.classList.remove('filled');
+        return;
+    }
+    container.classList.add('filled');
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'edit-slot-name';
+    nameEl.textContent = fav.name;
+    container.appendChild(nameEl);
+
+    const infoEl = document.createElement('div');
+    infoEl.className = 'edit-slot-info';
+    infoEl.textContent = `A${fav.algorithm} FB${fav.feedback}`;
+    container.appendChild(infoEl);
+
+    if (showRemove) {
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'edit-slot-remove';
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Remove';
+        removeBtn.addEventListener('click', () => {
+            if (slotIdx === 0) { editSlot = null; } else { editSlotB = null; }
+            renderEditPanel();
+        });
+        container.appendChild(removeBtn);
+    }
+}
+
+// --- Morph Mode ---
+function renderMorphMode(slotArea, sliderRow, paramsArea, goBtn, status) {
+    sliderRow.style.display = '';
+    paramsArea.style.display = 'none';
+
+    // Configure slider for morph
+    const slider = document.getElementById('edit-slider');
+    const sliderVal = document.getElementById('edit-slider-val');
+    const sliderLabel = document.getElementById('edit-slider-label');
+    slider.min = '-1'; slider.max = '1'; slider.step = '0.01';
+    if (!slider.dataset.morphInit) { slider.value = '0.5'; slider.dataset.morphInit = '1'; }
+    sliderVal.textContent = parseFloat(slider.value).toFixed(2);
+    sliderLabel.innerHTML = 'Distance: <span id="edit-slider-val">' + parseFloat(slider.value).toFixed(2) + '</span>';
+
+    // Dual slot layout
+    slotArea.innerHTML = '';
+    const slotsDiv = document.createElement('div');
+    slotsDiv.className = 'edit-slots';
+
+    const slotA = document.createElement('div');
+    slotA.className = 'edit-slot';
+    slotA.id = 'edit-slot-a';
+    const labelA = document.createElement('div');
+    labelA.className = 'edit-slot-label';
+    labelA.textContent = 'A';
+    const contentA = document.createElement('div');
+    contentA.className = 'edit-slot-content';
+    slotA.appendChild(labelA);
+    slotA.appendChild(contentA);
+    renderEditSlot(contentA, editSlot, 0, true);
+
+    const swapBtn = document.createElement('button');
+    swapBtn.className = 'edit-swap-btn';
+    swapBtn.textContent = '⇄';
+    swapBtn.title = 'Swap A ↔ B';
+    swapBtn.addEventListener('click', () => {
+        if (!editSlot || !editSlotB) return;
+        [editSlot, editSlotB] = [editSlotB, editSlot];
+        renderEditPanel();
+    });
+
+    const slotB = document.createElement('div');
+    slotB.className = 'edit-slot';
+    slotB.id = 'edit-slot-b';
+    const labelB = document.createElement('div');
+    labelB.className = 'edit-slot-label';
+    labelB.textContent = 'B';
+    const contentB = document.createElement('div');
+    contentB.className = 'edit-slot-content';
+    slotB.appendChild(labelB);
+    slotB.appendChild(contentB);
+    renderEditSlot(contentB, editSlotB, 1, true);
+
+    slotsDiv.appendChild(slotA);
+    slotsDiv.appendChild(swapBtn);
+    slotsDiv.appendChild(slotB);
+    slotArea.appendChild(slotsDiv);
+
+    goBtn.disabled = !(editSlot && editSlotB);
+    goBtn.textContent = 'Morph';
+
+    if (editSlot && editSlotB) {
+        const r = parseFloat(slider.value);
+        status.textContent = `Ready: ${editSlot.name} ${ratioLabel(r)} ${editSlotB.name}`;
+    } else if (editSlot) {
+        status.textContent = `${editSlot.name} — add a target (B)`;
+    } else {
+        status.textContent = '';
+    }
+}
+
+// --- Params Mode ---
+function renderParamsMode(slotArea, sliderRow, paramsArea, goBtn, status) {
+    sliderRow.style.display = 'none';
+    paramsArea.style.display = '';
+
+    // Single slot
+    slotArea.innerHTML = '';
+    const slotsDiv = document.createElement('div');
+    slotsDiv.className = 'edit-slots';
+    const slotA = document.createElement('div');
+    slotA.className = 'edit-slot';
+    const labelA = document.createElement('div');
+    labelA.className = 'edit-slot-label';
+    labelA.textContent = 'A';
+    const contentA = document.createElement('div');
+    contentA.className = 'edit-slot-content';
+    slotA.appendChild(labelA);
+    slotA.appendChild(contentA);
+    renderEditSlot(contentA, editSlot, 0, true);
+    slotsDiv.appendChild(slotA);
+    slotArea.appendChild(slotsDiv);
+
+    // Build param sliders from editSlot (or currentMutation)
+    if (!currentMutation) {
+        // Initialize mutation from slot
+        currentMutation = JSON.parse(JSON.stringify(editSlot));
+        // If the slot has voice_data, decode it to get actual param values
+        if (editSlot.voice_data && !editSlot.ops) {
+            try {
+                const bytes = atob(editSlot.voice_data);
+                const arr = new Uint8Array(bytes.length);
+                for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+                currentMutation.ops = [];
+                for (let i = 0; i < 6; i++) {
+                    const base = i * 17;
+                    currentMutation.ops.push({
+                        outputLevel: arr[base + 14],
+                        freqCoarse: (arr[base + 15] >> 1) & 0x1F,
+                    });
+                }
+                currentMutation.feedback = arr[111] & 0x07;
+                currentMutation.algorithm = arr[110];
+            } catch {
+                currentMutation.ops = Array.from({length: 6}, () => ({
+                    outputLevel: 0, freqCoarse: 1
+                }));
+                currentMutation.feedback = editSlot.feedback || 0;
+            }
+        }
+        if (!currentMutation.ops) {
+            currentMutation.ops = Array.from({length: 6}, () => ({
+                outputLevel: 0, freqCoarse: 1
+            }));
+        }
+    }
+
+    paramsArea.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'edit-params-grid';
+
+    // Per-operator sliders: OutputLevel + FreqCoarse
+    for (let i = 0; i < 6; i++) {
+        const op = currentMutation.ops[i] || { outputLevel: 0, freqCoarse: 1 };
+
+        // OutputLevel
+        const rowOL = document.createElement('div');
+        rowOL.className = 'edit-param-row';
+        const lblOL = document.createElement('span');
+        lblOL.className = 'edit-param-label';
+        lblOL.innerHTML = `Op${6-i} <small>Level</small>`;
+        rowOL.appendChild(lblOL);
+        const slOL = document.createElement('input');
+        slOL.type = 'range'; slOL.min = '0'; slOL.max = '99'; slOL.value = String(op.outputLevel);
+        slOL.className = 'edit-param-slider';
+        const valOL = document.createElement('span');
+        valOL.className = 'edit-param-val';
+        valOL.textContent = op.outputLevel;
+        slOL.addEventListener('input', () => {
+            currentMutation.ops[i].outputLevel = parseInt(slOL.value);
+            valOL.textContent = slOL.value;
+        });
+        rowOL.appendChild(slOL);
+        rowOL.appendChild(valOL);
+        grid.appendChild(rowOL);
+
+        // FreqCoarse
+        const rowFC = document.createElement('div');
+        rowFC.className = 'edit-param-row';
+        const lblFC = document.createElement('span');
+        lblFC.className = 'edit-param-label';
+        lblFC.innerHTML = ` <small>Freq</small>`;
+        rowFC.appendChild(lblFC);
+        const slFC = document.createElement('input');
+        slFC.type = 'range'; slFC.min = '0'; slFC.max = '31'; slFC.value = String(op.freqCoarse);
+        slFC.className = 'edit-param-slider';
+        const valFC = document.createElement('span');
+        valFC.className = 'edit-param-val';
+        valFC.textContent = op.freqCoarse;
+        slFC.addEventListener('input', () => {
+            currentMutation.ops[i].freqCoarse = parseInt(slFC.value);
+            valFC.textContent = slFC.value;
+        });
+        rowFC.appendChild(slFC);
+        rowFC.appendChild(valFC);
+        grid.appendChild(rowFC);
+
+        if (i < 5) {
+            const sep = document.createElement('hr');
+            sep.className = 'edit-param-sep';
+            grid.appendChild(sep);
+        }
+    }
+
+    // Feedback
+    const fbRow = document.createElement('div');
+    fbRow.className = 'edit-feedback-row';
+    const fbLbl = document.createElement('span');
+    fbLbl.className = 'edit-feedback-label';
+    fbLbl.textContent = 'Feedback';
+    fbRow.appendChild(fbLbl);
+    const fbSl = document.createElement('input');
+    fbSl.type = 'range'; fbSl.min = '0'; fbSl.max = '7';
+    fbSl.value = String(currentMutation.feedback || 0);
+    fbSl.className = 'edit-param-slider';
+    const fbVal = document.createElement('span');
+    fbVal.className = 'edit-param-val';
+    fbVal.textContent = currentMutation.feedback || 0;
+    fbSl.addEventListener('input', () => {
+        currentMutation.feedback = parseInt(fbSl.value);
+        fbVal.textContent = fbSl.value;
+    });
+    fbRow.appendChild(fbSl);
+    fbRow.appendChild(fbVal);
+    grid.appendChild(fbRow);
+
+    paramsArea.appendChild(grid);
+
+    // Play preview button
+    const playBtn = document.createElement('button');
+    playBtn.textContent = '▶ Play';
+    playBtn.className = 'edit-play-btn';
+    playBtn.type = 'button';
+    playBtn.addEventListener('click', previewParamsEdit);
+    paramsArea.appendChild(playBtn);
+
+    goBtn.disabled = false;
+    goBtn.textContent = 'Save as new';
+    status.textContent = `Editing ${editSlot.name} — tweak sliders, then save`;
+}
+
+// --- Random Mode ---
+function renderRandomMode(slotArea, sliderRow, paramsArea, goBtn, status) {
+    sliderRow.style.display = '';
+    paramsArea.style.display = 'none';
+
+    // Configure slider for mutation intensity
+    const slider = document.getElementById('edit-slider');
+    const sliderVal = document.getElementById('edit-slider-val');
+    const sliderLabel = document.getElementById('edit-slider-label');
+    slider.min = '0'; slider.max = '100'; slider.step = '1';
+    if (!slider.dataset.randomInit) { slider.value = '30'; slider.dataset.randomInit = '1'; }
+    sliderVal.textContent = slider.value;
+    sliderLabel.innerHTML = 'Mutation: <span id="edit-slider-val">' + slider.value + '</span>%';
+
+    // Single slot
+    slotArea.innerHTML = '';
+    const slotsDiv = document.createElement('div');
+    slotsDiv.className = 'edit-slots';
+    const slotA = document.createElement('div');
+    slotA.className = 'edit-slot';
+    const labelA = document.createElement('div');
+    labelA.className = 'edit-slot-label';
+    labelA.textContent = 'A';
+    const contentA = document.createElement('div');
+    contentA.className = 'edit-slot-content';
+    slotA.appendChild(labelA);
+    slotA.appendChild(contentA);
+    renderEditSlot(contentA, editSlot, 0, true);
+    slotsDiv.appendChild(slotA);
+    slotArea.appendChild(slotsDiv);
+
+    goBtn.disabled = false;
+    goBtn.textContent = currentMutation ? 'Save as new' : 'Mutate';
+    status.textContent = currentMutation
+        ? `Mutation ready — save or mutate again`
+        : `${editSlot.name} — set intensity, then mutate`;
+}
+
+function ratioLabel(r) {
+    if (r < 0) return `← ${Math.abs(r).toFixed(2)}`;
+    if (r === 0) return '↔ 0';
+    return `→ ${r.toFixed(2)}`;
+}
+
+function morphName(nameA, nameB) {
+    let a = '?';
+    for (const ch of nameA) {
+        if (/[A-Za-z0-9]/.test(ch)) { a = ch.toUpperCase(); break; }
+    }
+    let b = '?';
+    for (const ch of nameB) {
+        if (/[A-Za-z0-9]/.test(ch)) { b = ch.toUpperCase(); break; }
+    }
+    return a + '_' + b;
+}
+
+async function runEditAction() {
+    if (editMode === 'morph') {
+        await runMorphEdit();
+    } else if (editMode === 'params') {
+        await saveParamsEdit();
+    } else if (editMode === 'random') {
+        if (currentMutation) {
+            await saveMutation();
+        } else {
+            await runRandomMutate();
+        }
+    }
+}
+
+async function runMorphEdit() {
+    if (!editSlot || !editSlotB) return;
+
+    const goBtn = document.getElementById('edit-go');
+    const status = document.getElementById('edit-status');
+    const ratio = parseFloat(document.getElementById('edit-slider').value);
+
+    goBtn.disabled = true;
+    status.textContent = 'Fetching patches...';
+
+    try {
+        const fetchVoice = async (fav) => {
+            if (fav.voice_data) return { voice_data: fav.voice_data };
+            const resp = await fetch(baseUrl + '/api/voice', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ syx_url: fav.syx_url, slot: fav.slot })
+            });
+            return resp.json();
+        };
+
+        const [srcData, tgtData] = await Promise.all([fetchVoice(editSlot), fetchVoice(editSlotB)]);
+        if (srcData.error || tgtData.error) {
+            status.textContent = 'Error: ' + (srcData.error || tgtData.error);
+            goBtn.disabled = false;
+            return;
+        }
+
+        status.textContent = 'Morphing...';
+        const resp = await fetch(baseUrl + '/api/morph', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_data: srcData.voice_data, target_data: tgtData.voice_data, note: 60, ratio })
+        });
+        const data = await resp.json();
+        if (data.error) {
+            status.textContent = 'Error: ' + data.error;
+            goBtn.disabled = false;
+            return;
+        }
+
+        status.textContent = `Done — distance: ${data.source_dist.toFixed(4)} → ${data.morph_dist.toFixed(4)} (${ratioLabel(data.ratio)})`;
+        if (data.wav_url) new Audio(baseUrl + data.wav_url).play();
+
+        const morphFav = {
+            id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+            name: morphName(editSlot.name, editSlotB.name),
+            syx_url: data.syx_url, slot: 0,
+            algorithm: editSlot.algorithm, feedback: editSlot.feedback,
+            distance: data.morph_dist, wav_url: data.wav_url,
+            source_job: 'morph', created: Date.now()
+        };
+        favorites.push(morphFav);
+        saveFavoritesToStorage();
+        renderFavorites();
+        appendLog(`Morph: ${editSlot.name} ${ratioLabel(ratio)} ${editSlotB.name}`);
+
+        editSlot = morphFav;
+        editSlotB = null;
+        renderEditPanel();
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        goBtn.disabled = false;
+    }
+}
+
+async function buildModifiedVoiceData() {
+    if (!currentMutation) return null;
+    let voiceData;
+    if (editSlot.voice_data) {
+        voiceData = editSlot.voice_data;
+    } else if (editSlot.syx_url) {
+        const resp = await fetch(baseUrl + '/api/voice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ syx_url: editSlot.syx_url, slot: editSlot.slot })
+        });
+        const d = await resp.json();
+        voiceData = d.voice_data;
+    }
+    if (!voiceData || !currentMutation.ops) return voiceData;
+
+    const bytes = atob(voiceData);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+
+    for (let i = 0; i < 6; i++) {
+        const op = currentMutation.ops[i];
+        if (!op) continue;
+        const base = i * 17;
+        arr[base + 14] = op.outputLevel;
+        arr[base + 15] = ((op.freqCoarse & 0x1F) << 1) | (arr[base + 15] & 1);
+    }
+    arr[111] = (arr[111] & 0xF8) | (currentMutation.feedback & 0x07);
+
+    let newB64 = '';
+    for (let i = 0; i < arr.length; i++) newB64 += String.fromCharCode(arr[i]);
+    return btoa(newB64);
+}
+
+async function previewParamsEdit() {
+    if (!currentMutation) return;
+    const status = document.getElementById('edit-status');
+    try {
+        status.textContent = 'Rendering preview...';
+        const voiceData = await buildModifiedVoiceData();
+        if (!voiceData) { status.textContent = 'Error: no voice data'; return; }
+        const resp = await fetch(baseUrl + '/api/play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ voice_data: voiceData, note: 60 })
+        });
+        const d = await resp.json();
+        if (d.wav_url) {
+            new Audio(baseUrl + d.wav_url).play();
+            status.textContent = 'Playing preview...';
+        } else {
+            status.textContent = 'Error: no WAV returned';
+        }
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+async function saveParamsEdit() {
+    if (!currentMutation) return;
+    const status = document.getElementById('edit-status');
+
+    try {
+        const voiceData = await buildModifiedVoiceData();
+        if (!voiceData) { status.textContent = 'Error: no voice data'; return; }
+
+        // Create favorite with modified params
+        const newFav = {
+            id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+            name: editSlot.name + ' tweaked',
+            syx_url: null, voice_data: voiceData,
+            slot: 0,
+            algorithm: editSlot.algorithm,
+            feedback: currentMutation.feedback || editSlot.feedback,
+            distance: 0, wav_url: null,
+            source_job: 'params', created: Date.now(),
+            ops: JSON.parse(JSON.stringify(currentMutation.ops)),
+        };
+
+        // Render the new patch for preview
+        status.textContent = 'Rendering...';
+        const resp = await fetch(baseUrl + '/api/play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ voice_data: voiceData, note: 60 })
+        });
+        const playData = await resp.json();
+        if (playData.wav_url) {
+            newFav.wav_url = playData.wav_url;
+            new Audio(baseUrl + playData.wav_url).play();
+        }
+
+        favorites.push(newFav);
+        saveFavoritesToStorage();
+        renderFavorites();
+        status.textContent = `Saved: ${newFav.name}`;
+        appendLog(`Params saved: ${newFav.name}`);
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+async function runRandomMutate() {
+    if (!editSlot) return;
+    const status = document.getElementById('edit-status');
+    const intensity = parseInt(document.getElementById('edit-slider').value) / 100;
+
+    status.textContent = 'Mutating...';
+
+    try {
+        // Get original voice_data
+        let voiceData;
+        if (editSlot.voice_data) {
+            voiceData = editSlot.voice_data;
+        } else if (editSlot.syx_url) {
+            const resp = await fetch(baseUrl + '/api/voice', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ syx_url: editSlot.syx_url, slot: editSlot.slot })
+            });
+            const d = await resp.json();
+            voiceData = d.voice_data;
+        }
+
+        if (!voiceData) {
+            status.textContent = 'Error: no voice data';
+            return;
+        }
+
+        // Decode, mutate, re-encode
+        const bytes = atob(voiceData);
+        const arr = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+
+        // Gaussian-ish mutation
+        const gaussRand = () => {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+        };
+
+        const mutatedOps = [];
+        for (let i = 0; i < 6; i++) {
+            const base = i * 17;
+            const origOL = arr[base + 14];
+            const origFC = (arr[base + 15] >> 1) & 0x1F;
+
+            // Mutate OutputLevel: σ = intensity × 15
+            let newOL = Math.round(origOL + gaussRand() * intensity * 15);
+            newOL = Math.max(0, Math.min(99, newOL));
+
+            // Mutate FreqCoarse: σ = intensity × 2
+            let newFC = Math.round(origFC + gaussRand() * intensity * 2);
+            newFC = Math.max(0, Math.min(31, newFC));
+
+            arr[base + 14] = newOL;
+            arr[base + 15] = ((newFC & 0x1F) << 1) | (arr[base + 15] & 1);
+
+            mutatedOps.push({ outputLevel: newOL, freqCoarse: newFC });
+        }
+
+        // Mutate Feedback
+        const origFB = arr[111] & 0x07;
+        let newFB = Math.round(origFB + gaussRand() * intensity * 1.5);
+        newFB = Math.max(0, Math.min(7, newFB));
+        arr[111] = (arr[111] & 0xF8) | newFB;
+
+        // Re-encode
+        let newB64 = '';
+        for (let i = 0; i < arr.length; i++) newB64 += String.fromCharCode(arr[i]);
+        const mutatedB64 = btoa(newB64);
+
+        // Store as current mutation
+        currentMutation = {
+            ...editSlot,
+            voice_data: mutatedB64,
+            feedback: newFB,
+            ops: mutatedOps,
+            name: editSlot.name + ' *',
+        };
+
+        // Render for preview
+        const resp = await fetch(baseUrl + '/api/play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ voice_data: mutatedB64, note: 60 })
+        });
+        const playData = await resp.json();
+        if (playData.wav_url) {
+            currentMutation.wav_url = playData.wav_url;
+            new Audio(baseUrl + playData.wav_url).play();
+        }
+
+        const goBtn = document.getElementById('edit-go');
+        goBtn.textContent = 'Save as new';
+        status.textContent = `Mutation ready — save or mutate again (intensity: ${Math.round(intensity*100)}%)`;
+        appendLog(`Random mutation: intensity ${Math.round(intensity*100)}%`);
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+async function saveMutation() {
+    if (!currentMutation) return;
+    const status = document.getElementById('edit-status');
+
+    try {
+        // Render if not already rendered
+        if (!currentMutation.wav_url && currentMutation.voice_data) {
+            const resp = await fetch(baseUrl + '/api/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ voice_data: currentMutation.voice_data, note: 60 })
+            });
+            const playData = await resp.json();
+            if (playData.wav_url) currentMutation.wav_url = playData.wav_url;
+        }
+
+        const newFav = {
+            id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+            name: currentMutation.name || (editSlot.name + ' mutated'),
+            syx_url: null, voice_data: currentMutation.voice_data,
+            slot: 0,
+            algorithm: currentMutation.algorithm || editSlot.algorithm,
+            feedback: currentMutation.feedback,
+            distance: 0, wav_url: currentMutation.wav_url || null,
+            source_job: 'random', created: Date.now(),
+            ops: currentMutation.ops,
+        };
+
+        favorites.push(newFav);
+        saveFavoritesToStorage();
+        renderFavorites();
+        status.textContent = `Saved: ${newFav.name}`;
+        appendLog(`Mutation saved: ${newFav.name}`);
+
+        // Reset for next mutation from original
+        currentMutation = null;
+        const goBtn = document.getElementById('edit-go');
+        goBtn.textContent = 'Mutate';
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+function renderFavorites() {
+    const panel = document.getElementById('favorites-panel');
+    const body = document.getElementById('fav-body');
+    const countEl = document.getElementById('fav-count');
+
+    countEl.textContent = favorites.length;
+
+    if (favorites.length === 0) {
+        panel.classList.remove('visible');
+        return;
+    }
+
+    panel.classList.add('visible');
+    body.innerHTML = '';
+
+    // Export button
+    const exportRow = document.createElement('div');
+    exportRow.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:0.4rem;';
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'fav-export-btn';
+    exportBtn.textContent = 'Export .syx';
+    exportBtn.title = 'Download all favorites as a .syx bank';
+    exportBtn.addEventListener('click', exportFavorites);
+    exportRow.appendChild(exportBtn);
+    body.appendChild(exportRow);
+
+    favorites.forEach(fav => {
+        const row = createPatchRow({
+            rank: '',
+            name: fav.name,
+            algorithm: fav.algorithm,
+            feedback: fav.feedback,
+            distance: fav.distance || 0,
+            wav_url: fav.wav_url,
+        }, {
+            onSelect: null,
+            onStar: () => removeFavorite(fav.id),
+            onPlay: async () => {
+                try {
+                    const body = { note: 60 };
+                    if (fav.syx_url) {
+                        body.syx_url = fav.syx_url;
+                        body.slot = fav.slot;
+                    } else if (fav.voice_data) {
+                        body.voice_data = fav.voice_data;
+                    } else {
+                        return;
+                    }
+                    const resp = await fetch(baseUrl + '/api/play', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    const data = await resp.json();
+                    if (data.wav_url) {
+                        new Audio(baseUrl + data.wav_url).play();
+                    }
+                } catch (e) {
+                    console.warn('Play fav failed:', e);
+                }
+            },
+            baseUrl,
+            isFav: true,
+        });
+
+        row.classList.add('fav-row');
+
+        // Inline rename on double-click
+        const nameEl = row.querySelector('.patch-name');
+        if (nameEl) {
+            nameEl.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                nameEl.contentEditable = 'true';
+                nameEl.focus();
+                const range = document.createRange();
+                range.selectNodeContents(nameEl);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            });
+            nameEl.addEventListener('blur', () => {
+                nameEl.contentEditable = 'false';
+                const newName = nameEl.textContent.trim();
+                if (newName && newName !== fav.name) {
+                    fav.name = newName;
+                    saveFavoritesToStorage();
+                }
+            });
+            nameEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    nameEl.blur();
+                }
+                if (e.key === 'Escape') {
+                    nameEl.textContent = fav.name;
+                    nameEl.contentEditable = 'false';
+                }
+            });
+        }
+
+        // Add edit + delete buttons
+        const actions = document.createElement('span');
+        actions.className = 'fav-actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'patch-edit-btn';
+        editBtn.textContent = '🔧';
+        editBtn.title = 'Edit patch';
+        editBtn.style.opacity = '1';
+        editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openEdit(fav);
+        });
+        actions.appendChild(editBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'fav-del';
+        delBtn.textContent = '×';
+        delBtn.title = 'Remove';
+        delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeFavorite(fav.id);
+        });
+        actions.appendChild(delBtn);
+
+        row.appendChild(actions);
+        body.appendChild(row);
+    });
+}
+
+// --- Favorites Export ---
+
+async function exportFavorites() {
+    if (favorites.length === 0) return;
+
+    const patches = favorites.map(fav => ({
+        syx_url: fav.syx_url || null,
+        slot: fav.slot,
+        name: fav.name,
+        voice_data: fav.voice_data || null,
+    }));
+
+    try {
+        const resp = await fetch(baseUrl + '/api/export-syx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ patches })
+        });
+        const data = await resp.json();
+        if (data.error) {
+            appendLog('Export error: ' + data.error);
+            return;
+        }
+        // Trigger download
+        const a = document.createElement('a');
+        a.href = baseUrl + data.syx_url;
+        a.download = 'favorites.syx';
+        a.click();
+        appendLog(`Exported ${data.count} patches to favorites.syx`);
+    } catch (e) {
+        console.warn('Export failed:', e);
+        appendLog('Export failed: ' + e.message);
+    }
+}
+
+// --- .syx Upload & Tab Creation ---
+
+function initSyxUpload() {
+    // Create upload button in the favorites header area
+    const favHeader = document.getElementById('fav-header');
+    if (!favHeader) return;
+
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'syx-upload-btn';
+    uploadBtn.textContent = 'Import .syx';
+    uploadBtn.title = 'Import patches from a DX7 .syx bank file';
+    uploadBtn.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.syx';
+        input.addEventListener('change', handleSyxUpload);
+        input.click();
+    });
+    favHeader.appendChild(uploadBtn);
+}
+
+async function handleSyxUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const patches = parseSyxFile(arrayBuffer);
+    if (!patches || patches.length === 0) {
+        appendLog('Failed to parse .syx file');
+        return;
+    }
+
+    const fileName = file.name.replace(/\.[^.]+$/, '');
+    appendLog(`Parsed .syx: ${fileName} (${patches.length} voices)`);
+
+    // Create a new tab for this .syx
+    createSyxTab(fileName, patches);
+}
+
+function createSyxTab(name, patches) {
+    const tabId = 'syx_' + Date.now();
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.dataset.tabId = tabId;
+    tab.textContent = name;
+
+    tab.addEventListener('click', () => switchTab(tabId));
+    tabsEl.appendChild(tab);
+
+    const content = document.createElement('div');
+    content.className = 'tab-content';
+    content.id = 'tab-' + tabId;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'upload-tab-header';
+    const heading = document.createElement('h2');
+    heading.textContent = name;
+    header.appendChild(heading);
+    content.appendChild(header);
+
+    // Grid of patch cards
+    const grid = document.createElement('div');
+    grid.className = 'upload-tab-grid';
+
+    patches.forEach(patch => {
+        const card = createPatchCard(patch, {
+            baseUrl,
+            isFav: false,
+            onFav: (p) => {
+                // Add as favorite with voice_data
+                const fav = {
+                    id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                    name: p.name,
+                    syx_url: null, // no server-side .syx yet
+                    voice_data: voiceRawToBase64(p.raw),
+                    slot: p.slot,
+                    algorithm: p.algorithm,
+                    feedback: p.feedback,
+                    distance: 0,
+                    wav_url: null,
+                    source_job: name + '.syx',
+                    created: Date.now(),
+                };
+                favorites.push(fav);
+                saveFavoritesToStorage();
+                renderFavorites();
+                // Update star in card
+                const starEl = card.querySelector('.patch-star');
+                if (starEl) {
+                    starEl.classList.add('fav-active');
+                    starEl.textContent = '★';
+                }
+            },
+            onAssign: (p) => {
+                appendLog(`Assign to pianoroll: ${p.name} (A${p.algorithm + 1} FB${p.feedback})`);
+            },
+            onEdit: (p) => {
+                openEdit({
+                    id: 'syx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                    name: p.name,
+                    syx_url: null,
+                    voice_data: voiceRawToBase64(p.raw),
+                    slot: p.slot,
+                    algorithm: p.algorithm,
+                    feedback: p.feedback,
+                    distance: 0,
+                    wav_url: null,
+                    source_job: name + '.syx',
+                    created: Date.now(),
+                });
+            },
+        });
+        grid.appendChild(card);
+    });
+
+    content.appendChild(grid);
+    tabContent.appendChild(content);
+
+    switchTab(tabId);
+}
+
+fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    fileName.textContent = file.name;
+    fileLabel.classList.add('selected');
+
+    const objectUrl = URL.createObjectURL(file);
+    const jobId = 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const jobIndex = jobs.length;
+    const job = {
+        id: jobId,
+        file, objectUrl,
+        fileName: file.name,
+        probeData: null, resultData: null,
+        statusUrl: null, tabEl: null,
+        selectedMatch: null, pollCount: 0
+    };
+    jobs.push(job);
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        await dbPut(jobId, arrayBuffer);
+    } catch (e) {
+        console.warn('Failed to store WAV in IndexedDB:', e);
+    }
+
+    addTab(jobIndex);
+    showJob(jobIndex);
+    saveSessions();
+
+    appendLog(`Probing: ${file.name}`);
+    const wrapper = document.getElementById('progress-wrapper');
+    if (wrapper) wrapper.style.display = 'block';
+    const fill = document.getElementById('progress-fill');
+    if (fill) fill.style.width = '10%';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(baseUrl + '/api/probe', {
+            method: 'POST',
+            body: formData
+        });
+
+        const text = await response.text();
+
+        if (!response.ok) {
+            appendLog(`[${response.status}] ${text}`);
+            return;
+        }
+
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            appendLog(`[${response.status}] ${text}`);
+            return;
+        }
+
+        appendLog(`[${response.status}] ${JSON.stringify(data, null, 2)}`);
+        job.probeData = data;
+        saveSessions();
+        upgradeTab(jobIndex);
+        if (activeJobIndex === jobIndex) renderProbe(jobIndex);
+    } catch (err) {
+        appendLog(`Error: ${err.message}`);
+    }
+});
+
+function startPolling() {
+    stopPolling();
+    pollInterval = setInterval(() => {
+        if (pollQueue.length > 0) checkStatus(pollQueue[0]);
+    }, 3000);
+    checkStatus(pollQueue[0]);
+}
+
+function stopPolling() {
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+    }
+}
+
+function advanceQueue() {
+    pollQueue.shift();
+    if (pollQueue.length > 0) {
+        startPolling();
+    }
+}
+
+async function checkStatus(jobIndex) {
+    const job = jobs[jobIndex];
+    if (!job || !job.statusUrl) return;
+    try {
+        const response = await fetch(baseUrl + job.statusUrl);
+        const text = await response.text();
+
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            appendLog(`[status] ${text}`);
+            return;
+        }
+
+        const tabLabel = job.tabEl ? job.tabEl.querySelector('.tab-label') : null;
+
+        if (data.status === 'queued') {
+            job.pollCount = (job.pollCount || 0) + 1;
+            appendLog(`[${job.fileName}] Queued, waiting on ${data.queue_position}`);
+            if (tabLabel) tabLabel.textContent = job.fileName + ' (queued)';
+            const wrapper = document.getElementById('progress-wrapper');
+            if (wrapper) wrapper.style.display = 'block';
+            const fill = document.getElementById('progress-fill');
+            if (fill) fill.style.width = '0%';
+        } else if (data.status === 'processing') {
+            job.pollCount = (job.pollCount || 0) + 1;
+            appendLog(`[${job.fileName}] Processing: ${data.progress_percent}% — ${data.phase || ''}`);
+            if (tabLabel) tabLabel.textContent = job.fileName + ' [' + job.pollCount + ']';
+            const wrapper = document.getElementById('progress-wrapper');
+            if (wrapper) wrapper.style.display = 'block';
+            const fill = document.getElementById('progress-fill');
+            if (fill) fill.style.width = data.progress_percent + '%';
+        } else if (data.status === 'completed') {
+            appendLog(`[${job.fileName}] Completed`);
+            const wrapper = document.getElementById('progress-wrapper');
+            if (wrapper) wrapper.style.display = 'none';
+            if (tabLabel) tabLabel.textContent = job.fileName;
+            job.resultData = data;
+            job.pollCount = 0;
+            saveSessions();
+            upgradeTab(jobIndex);
+            if (activeJobIndex === jobIndex) renderResults(jobIndex);
+            advanceQueue();
+        } else {
+            appendLog(`[${job.fileName}] ${JSON.stringify(data, null, 2)}`);
+            const wrapper = document.getElementById('progress-wrapper');
+            if (wrapper) wrapper.style.display = 'none';
+            if (tabLabel) tabLabel.textContent = job.fileName;
+            advanceQueue();
+        }
+    } catch (err) {
+        appendLog(`[status error] ${err.message}`);
+    }
+}
+
+function addTab(index) {
+    const job = jobs[index];
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.dataset.index = index;
+
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner';
+
+    const label = document.createElement('span');
+    label.className = 'tab-label';
+    label.textContent = job.fileName;
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'tab-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Remove';
+    closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteSession(index);
+    });
+
+    tab.appendChild(spinner);
+    tab.appendChild(label);
+    tab.appendChild(closeBtn);
+    tab.addEventListener('click', () => showJob(index));
+    tabsEl.appendChild(tab);
+    tabsEl.classList.add('visible');
+    job.tabEl = tab;
+}
+
+function upgradeTab(index) {
+    const job = jobs[index];
+    const tab = job.tabEl;
+    if (!tab) return;
+
+    tab.innerHTML = '';
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'tab-play';
+    playBtn.textContent = '▶';
+    playBtn.title = 'Play original';
+    const audio = new Audio(job.objectUrl);
+    playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (audio.paused) {
+            audio.play();
+            playBtn.textContent = '⏸';
+        } else {
+            audio.pause();
+            audio.currentTime = 0;
+            playBtn.textContent = '▶';
+        }
+    });
+    audio.addEventListener('ended', () => {playBtn.textContent = '▶';});
+
+    const label = document.createElement('span');
+    label.className = 'tab-label';
+    label.textContent = job.fileName;
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'tab-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Remove';
+    closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteSession(index);
+    });
+
+    tab.appendChild(playBtn);
+    tab.appendChild(label);
+    tab.appendChild(closeBtn);
+    tab.addEventListener('click', () => showJob(index));
+}
+
+function switchTab(tabId) {
+    activeJobIndex = null;
+    document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tabId === tabId);
+    });
+    // Hide main job content
+    tabContent.classList.remove('visible');
+    // Hide all .syx tab contents, then show the selected one
+    document.querySelectorAll('.tab-content').forEach(tc => {
+        if (tc.id && tc.id.startsWith('tab-syx_')) {
+            tc.classList.toggle('visible', tc.id === 'tab-' + tabId);
+        }
+    });
+    document.getElementById('piano-dock').innerHTML = '';
+}
+
+function showJob(index) {
+    activeJobIndex = index;
+    document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('active', Number(t.dataset.index) === index);
+    });
+    // Hide all .syx tab contents
+    document.querySelectorAll('.tab-content').forEach(tc => {
+        if (tc.id && tc.id.startsWith('tab-syx_')) {
+            tc.classList.remove('visible');
+        }
+    });
+    tabContent.classList.add('visible');
+    const job = jobs[index];
+    if (job.resultData) {
+        renderResults(index);
+    } else if (job.probeData) {
+        renderProbe(index);
+    } else {
+        tabContent.innerHTML = '<div class="result-info"><span>Probing...</span></div>';
+        tabContent.classList.add('visible');
+    }
+}
+
+function renderProbe(index) {
+    if (forkOsc) { forkOsc.stop(); forkOsc = null; forkGain = null; }
+    const job = jobs[index];
+    const data = job.probeData;
+    const locked = !!job.statusUrl;
+    tabContent.innerHTML = '';
+    document.getElementById('piano-dock').innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'config-header' + (locked ? ' collapsed' : '');
+    header.innerHTML = `<span>Configuration</span><span class="config-arrow">▼</span>`;
+    tabContent.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'config-body' + (locked ? ' collapsed' : '');
+
+    const info = document.createElement('div');
+    info.className = 'probe-info';
+    const badges = [
+        {label: 'Freq', value: data.f0_hz ? data.f0_hz.toFixed(1) + ' Hz' : null},
+        {label: 'Conf', value: data.f0_confidence ? data.f0_confidence.toFixed(2) : null},
+        {label: 'Centroid', value: data.spectral_centroid_hz ? data.spectral_centroid_hz.toFixed(0) + ' Hz' : null},
+        data.seen_before ? {label: 'SEEN BEFORE', value: '', cls: 'seen'} : null,
+        data.best_match ? {label: 'Best', value: `algo ${data.best_match.algorithm} fb ${data.best_match.feedback} (${data.best_match.distance.toFixed(3)})`, cls: 'match'} : null,
+    ].filter(Boolean);
+
+    badges.forEach(b => {
+        const span = document.createElement('span');
+        span.className = 'badge' + (b.cls ? ' ' + b.cls : '');
+        span.innerHTML = b.value ? `<strong>${b.label}:</strong> ${b.value}` : `<strong>${b.label}</strong>`;
+        info.appendChild(span);
+    });
+    body.appendChild(info);
+
+    const form = document.createElement('form');
+    form.className = 'probe-form';
+    form.onsubmit = () => false;
+
+    const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+    function parseRootNote(rootNote) {
+        if (!rootNote) return { note: 0, octave: 4 };
+        const s = String(rootNote).trim();
+        if (/^\d+$/.test(s)) {
+            const midi = parseInt(s, 10);
+            return { note: midi % 12, octave: Math.floor(midi / 12) - 1 };
+        }
+        const m = s.match(/^([A-G]#?)(\d)$/);
+        if (m) {
+            const idx = NOTE_NAMES.indexOf(m[1]);
+            if (idx >= 0) return { note: idx, octave: parseInt(m[2], 10) };
+        }
+        return { note: 0, octave: 4 };
+    }
+
+    const parsed = parseRootNote(data.root_note);
+
+    const noteRow = document.createElement('div');
+    noteRow.className = 'note-row';
+
+    const noteField = document.createElement('div');
+    noteField.className = 'probe-field';
+    noteField.innerHTML = `<label for="pf-note-${index}">Note</label>`;
+    const noteSelect = document.createElement('select');
+    noteSelect.id = `pf-note-${index}`;
+    noteSelect.name = 'note_name';
+    NOTE_NAMES.forEach((n, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = n;
+        if (i === parsed.note) opt.selected = true;
+        noteSelect.appendChild(opt);
+    });
+    if (locked) noteSelect.disabled = true;
+    noteField.appendChild(noteSelect);
+    noteRow.appendChild(noteField);
+
+    const octField = document.createElement('div');
+    octField.className = 'probe-field';
+    octField.innerHTML = `<label for="pf-oct-${index}">Octave</label>`;
+    const octSelect = document.createElement('select');
+    octSelect.id = `pf-oct-${index}`;
+    for (let o = 0; o <= 8; o++) {
+        const opt = document.createElement('option');
+        opt.value = o;
+        opt.textContent = o;
+        if (o === parsed.octave) opt.selected = true;
+        octSelect.appendChild(opt);
+    }
+    if (locked) octSelect.disabled = true;
+    octField.appendChild(octSelect);
+    noteRow.appendChild(octField);
+
+    const hiddenNote = document.createElement('input');
+    hiddenNote.type = 'hidden';
+    hiddenNote.name = 'note';
+    hiddenNote.value = data.root_note || 'C4';
+    noteRow.appendChild(hiddenNote);
+
+    const forkBtn = document.createElement('button');
+    forkBtn.type = 'button';
+    forkBtn.className = 'tuning-fork-btn';
+    forkBtn.title = 'Tuning fork — click to play/stop';
+    forkBtn.innerHTML = '<b>Y</b>';
+    if (locked) forkBtn.disabled = true;
+    noteRow.appendChild(forkBtn);
+
+    function syncHiddenNote() {
+        hiddenNote.value = NOTE_NAMES[noteSelect.value] + octSelect.value;
+    }
+    noteSelect.addEventListener('change', () => {
+        syncHiddenNote();
+        if (forkOsc) forkOsc.frequency.value = noteToFreq(parseInt(noteSelect.value), parseInt(octSelect.value));
+    });
+    octSelect.addEventListener('change', () => {
+        syncHiddenNote();
+        if (forkOsc) forkOsc.frequency.value = noteToFreq(parseInt(noteSelect.value), parseInt(octSelect.value));
+    });
+
+    forkBtn.addEventListener('click', () => toggleFork(forkBtn, noteSelect, octSelect));
+
+    form.appendChild(noteRow);
+
+    probeFields.forEach(key => {
+        const field = document.createElement('div');
+        field.className = 'probe-field';
+        const numVal = data[key];
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.id = `pf-${key}-${index}`;
+        input.name = key;
+        input.step = key === 'sustain_level' || key === 'harmonicity' ? '0.001' : '0.01';
+        input.min = '0';
+        if (key === 'sustain_level' || key === 'brightness' || key === 'harmonicity') input.max = '1';
+        input.value = numVal !== undefined ? roundForInput(numVal) : '';
+        if (locked) input.disabled = true;
+        field.innerHTML = `<label for="pf-${key}-${index}">${key.replace(/_/g, ' ')}</label>`;
+        field.appendChild(input);
+        form.appendChild(field);
+    });
+
+    if (!locked) {
+        const actions = document.createElement('div');
+        actions.className = 'probe-actions';
+
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'btn-reset';
+        resetBtn.textContent = 'Reset';
+        resetBtn.addEventListener('click', () => renderProbe(index));
+
+        const matchBtn = document.createElement('button');
+        matchBtn.type = 'button';
+        matchBtn.className = 'btn-match';
+        matchBtn.textContent = 'Start Matching';
+        matchBtn.addEventListener('click', () => startMatch(index));
+
+        actions.appendChild(resetBtn);
+        actions.appendChild(matchBtn);
+        form.appendChild(actions);
+    }
+
+    body.appendChild(form);
+    tabContent.appendChild(body);
+
+    requestAnimationFrame(() => {
+        if (!body.classList.contains('collapsed')) {
+            body.style.maxHeight = body.scrollHeight + 'px';
+        }
+    });
+
+    header.addEventListener('click', () => {
+        const collapsed = body.classList.toggle('collapsed');
+        header.classList.toggle('collapsed', collapsed);
+        if (!collapsed) {
+            body.style.maxHeight = body.scrollHeight + 'px';
+        }
+    });
+
+    tabContent.classList.add('visible');
+}
+
+function roundForInput(val) {
+    if (Number.isInteger(val)) return val;
+    return parseFloat(val.toFixed(6));
+}
+
+function decodeWavSamples(arrayBuffer) {
+    try {
+        const view = new DataView(arrayBuffer);
+        // RIFF header
+        if (view.getUint32(0, false) !== 0x52494646) return null; // "RIFF"
+        // fmt chunk
+        const channels = view.getUint16(22, true);
+        const sampleRate = view.getUint32(24, true);
+        const bitsPerSample = view.getUint16(34, true);
+        // Find data chunk
+        let offset = 36;
+        while (offset < view.byteLength - 8) {
+            const chunkId = view.getUint32(offset, false);
+            const chunkSize = view.getUint32(offset + 4, true);
+            if (chunkId === 0x64617461) { // "data"
+                const dataStart = offset + 8;
+                const numSamples = Math.floor(chunkSize / (bitsPerSample / 8));
+                const samples = new Float32Array(numSamples);
+                for (let i = 0; i < numSamples; i++) {
+                    const s = view.getInt16(dataStart + i * 2, true);
+                    samples[i] = s / 32768.0;
+                }
+                // Mix to mono if stereo
+                if (channels === 2) {
+                    const mono = new Float32Array(numSamples / 2);
+                    for (let i = 0; i < mono.length; i++) {
+                        mono[i] = (samples[i * 2] + samples[i * 2 + 1]) / 2;
+                    }
+                    return mono;
+                }
+                return samples;
+            }
+            offset += 8 + chunkSize;
+        }
+    } catch (e) {
+        console.warn('WAV decode failed:', e);
+    }
+    return null;
+}
+
+async function startMatch(index) {
+    const job = jobs[index];
+    if (!job || !job.probeData) return;
+
+    appendLog(`Matching: ${job.file.name}`);
+
+    try {
+        const formData = new FormData();
+        formData.append('file', job.file);
+
+        const noteInput = tabContent.querySelector(`[name="note"]`);
+        if (noteInput && noteInput.value !== '') {
+            formData.append('note', noteInput.value);
+        }
+
+        probeFields.forEach(key => {
+            const input = tabContent.querySelector(`[name="${key}"]`);
+            if (input && input.value !== '') {
+                formData.append(key, input.value);
+            }
+        });
+
+        const response = await fetch(baseUrl + '/api/match', {
+            method: 'POST',
+            body: formData
+        });
+
+        const text = await response.text();
+
+        if (!response.ok) {
+            appendLog(`[${response.status}] ${text}`);
+            return;
+        }
+
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            appendLog(`[${response.status}] ${text}`);
+            return;
+        }
+
+        appendLog(`[${response.status}] ${JSON.stringify(data, null, 2)}`);
+
+        if (data.status_url) {
+            job.statusUrl = data.status_url;
+            saveSessions(); // Persist statusUrl so polling resumes on reload
+            appendLog(`Status URL: ${data.status_url}`);
+            renderProbe(index);
+            pollQueue.push(index);
+            if (pollQueue.length === 1) startPolling();
+        }
+    } catch (err) {
+        appendLog(`Error: ${err.message}`);
+    }
+}
+
+let audioCtx;
+
+function noteToFreq(note, octave) {
+    return 440 * Math.pow(2, (note + (octave - 4) * 12 - 9) / 12);
+}
+
+let forkOsc = null;
+let forkGain = null;
+function toggleFork(btn, noteSel, octSel) {
+    if (forkOsc) {
+        forkOsc.stop();
+        forkOsc = null;
+        forkGain = null;
+        btn.classList.remove('active');
+        return;
+    }
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const freq = noteToFreq(parseInt(noteSel.value), parseInt(octSel.value));
+    forkOsc = audioCtx.createOscillator();
+    forkGain = audioCtx.createGain();
+    forkOsc.type = 'sine';
+    forkOsc.frequency.value = freq;
+    forkGain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    forkOsc.connect(forkGain);
+    forkGain.connect(audioCtx.destination);
+    forkOsc.start();
+    btn.classList.add('active');
+}
+
+async function playNote(midi, job) {
+    let selected = job ? job.selectedMatch : null;
+
+    if (selected && job.resultData && job.resultData.syx_url) {
+        try {
+            const resp = await fetch(baseUrl + '/api/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    syx_url: job.resultData.syx_url,
+                    slot: selected.rank - 1,
+                    note: midi
+                })
+            });
+            const data = await resp.json();
+            if (data.wav_url) {
+                const audio = new Audio(baseUrl + data.wav_url);
+                audio.play();
+                return;
+            }
+        } catch (err) {
+            console.warn('API play failed, falling back to sine:', err);
+        }
+    }
+
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const freq = 440 * Math.pow(2, (midi - 69) / 12);
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.6);
+}
+
+function renderResults(index) {
+    const job = jobs[index];
+    const data = job.resultData;
+
+    if (!tabContent.querySelector('.config-body')) {
+        renderProbe(index);
+    }
+
+    // Collapse config when showing results — spectrogram + patch list are the focus
+    const configBody = tabContent.querySelector('.config-body');
+    const configHeader = tabContent.querySelector('.config-header');
+    if (configBody && !configBody.classList.contains('collapsed')) {
+        configBody.classList.add('collapsed');
+        if (configHeader) configHeader.classList.add('collapsed');
+    }
+
+    let resultsArea = tabContent.querySelector('.results-area');
+    if (!resultsArea) {
+        resultsArea = document.createElement('div');
+        resultsArea.className = 'results-area';
+        tabContent.appendChild(resultsArea);
+    }
+    resultsArea.innerHTML = '';
+
+    // Render generation — stale async callbacks bail out
+    job._renderGen = (job._renderGen || 0) + 1;
+    const myGen = job._renderGen;
+
+    // Spectrogram — show target waveform with play button
+    if (job.file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (job._renderGen !== myGen) return; // stale render, bail
+            const samples = decodeWavSamples(reader.result);
+            if (samples && samples.length > 0) {
+                const specEl = createSpectrogram(samples, 44100, () => {
+                    if (job.objectUrl) new Audio(job.objectUrl).play();
+                });
+                resultsArea.insertBefore(specEl, resultsArea.firstChild);
+            }
+        };
+        reader.readAsArrayBuffer(job.file);
+    }
+
+    const info = document.createElement('div');
+    info.className = 'result-info';
+    info.innerHTML = `
+        <span><strong>${data.root_note}</strong></span>
+        <span>MIDI ${data.midi_note}</span>
+        <span>${data.f0_hz.toFixed(1)} Hz</span>
+        <span>Best: ${data.best_distance.toFixed(4)}</span>
+    `;
+    resultsArea.appendChild(info);
+
+    job.selectedMatch = job.selectedMatch || null;
+
+    const onStarFn = (m) => {
+        const favName = job.fileName.replace(/\.[^.]+$/, '') + ' #' + m.rank;
+        const existing = favorites.find(f => f.name === favName);
+        if (existing) {
+            removeFavorite(existing.id);
+            return false;
+        } else {
+            addFavorite(job, m);
+            return true;
+        }
+    };
+
+    const onSelectFn = (m) => {
+        job.selectedMatch = m;
+        highlightPatchRow(primaryList, m);
+        highlightPatchRow(timbralList, m);
+        highlightPatchRow(fullList, m);
+    };
+
+    const onPlayFn = (m) => {
+        if (m.wav_url) {
+            new Audio(baseUrl + m.wav_url).play();
+        }
+    };
+
+    const onEditFn = (m) => {
+        openEdit({
+            id: 'morph_' + Date.now(),
+            name: m.name || (`${job.fileName.replace(/\.[^.]+$/, '')} #${m.rank}`),
+            syx_url: job.resultData?.syx_url || null,
+            slot: m.rank - 1,
+            algorithm: m.algorithm,
+            feedback: m.feedback,
+            distance: m.distance,
+            wav_url: m.wav_url,
+            voice_data: m.voice_data || null,
+        });
+    };
+
+    const favIds = favorites.map(f => f.syx_url + ':' + f.slot);
+
+    const primaryList = createPatchList(data.matches, {
+        onSelect: onSelectFn,
+        onStar: onStarFn,
+        onPlay: onPlayFn,
+        onEdit: onEditFn,
+        baseUrl,
+        selectedMatch: job.selectedMatch,
+        favIds,
+    });
+    resultsArea.appendChild(primaryList);
+
+    const syxLink = document.createElement('a');
+    syxLink.className = 'syx-link';
+    syxLink.href = data.syx_url;
+    syxLink.target = '_blank';
+    syxLink.rel = 'noopener';
+    syxLink.textContent = 'Download bank.syx';
+    resultsArea.appendChild(syxLink);
+
+    let timbralList = null;
+    if (data.timbral_matches && data.timbral_matches.length > 0) {
+        timbralList = createPatchList(data.timbral_matches, {
+            onSelect: onSelectFn,
+            onStar: onStarFn,
+            onPlay: onPlayFn,
+            onEdit: onEditFn,
+            baseUrl,
+            selectedMatch: job.selectedMatch,
+            favIds,
+        });
+        const details = document.createElement('details');
+        details.className = 'collapsible-section';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Timbral Top 5 — Best static timbre match, filtered by spectral similarity';
+        details.appendChild(summary);
+        details.appendChild(timbralList);
+        resultsArea.appendChild(details);
+    }
+
+    let fullList = null;
+    if (data.full_matches && data.full_matches.length > 0) {
+        fullList = createPatchList(data.full_matches, {
+            onSelect: onSelectFn,
+            onStar: onStarFn,
+            onPlay: onPlayFn,
+            onEdit: onEditFn,
+            baseUrl,
+            selectedMatch: job.selectedMatch,
+            favIds,
+        });
+        const details = document.createElement('details');
+        details.className = 'collapsible-section';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Full Top 5 — Best temporal match, DiffOptimizer-refined envelopes';
+        details.appendChild(summary);
+        details.appendChild(fullList);
+        resultsArea.appendChild(details);
+    }
+
+    // Auto-select first row if nothing selected yet
+    if (!job.selectedMatch && data.matches && data.matches.length > 0) {
+        job.selectedMatch = data.matches[0];
+    }
+    // Highlight the selected row
+    if (job.selectedMatch) {
+        highlightPatchRow(primaryList, job.selectedMatch);
+        highlightPatchRow(timbralList, job.selectedMatch);
+        highlightPatchRow(fullList, job.selectedMatch);
+    }
+
+    // Piano — anchored above footer in piano-dock
+    const pianoDock = document.getElementById('piano-dock');
+    pianoDock.innerHTML = '';
+    pianoDock.appendChild(createPiano(data.midi_note, job, playNote));
+
+    tabContent.classList.add('visible');
+}
+
+function appendLog(message) {
+    const timestamp = new Date().toLocaleTimeString();
+    log.value += `[${timestamp}] ${message}\n`;
+    log.scrollTop = log.scrollHeight;
+    const label = document.getElementById('progress-label');
+    if (label) {
+        const short = message.replace(/^\[.*?\]\s*/, '').substring(0, 80);
+        label.textContent = short;
+    }
+}
+
+// Clear history button
+document.getElementById('clear-btn').addEventListener('click', async () => {
+    if (!confirm('Clear all session history?')) return;
+    await clearAllSessions();
+});
+
+// Favorites header toggle
+document.getElementById('fav-header').addEventListener('click', () => {
+    const body = document.getElementById('fav-body');
+    const header = document.getElementById('fav-header');
+    const collapsed = body.classList.toggle('collapsed');
+    header.classList.toggle('collapsed', collapsed);
+    if (!collapsed) {
+        body.style.maxHeight = body.scrollHeight + 'px';
+    }
+});
+
+// Edit panel events
+document.getElementById('edit-go').addEventListener('click', runEditAction);
+document.getElementById('edit-clear').addEventListener('click', () => {
+    editSlot = null;
+    editSlotB = null;
+    currentMutation = null;
+    renderEditPanel();
+});
+document.getElementById('edit-close').addEventListener('click', () => {
+    document.getElementById('edit-panel').classList.remove('visible');
+});
+
+// Mode tab buttons
+document.querySelectorAll('.edit-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => setEditMode(btn.dataset.mode));
+});
+
+// Shared slider
+const editSlider = document.getElementById('edit-slider');
+editSlider.addEventListener('input', () => {
+    const valEl = document.getElementById('edit-slider-val');
+    if (valEl) valEl.textContent = editMode === 'random' ? editSlider.value : parseFloat(editSlider.value).toFixed(2);
+
+    // Update status for morph mode
+    if (editMode === 'morph' && editSlot && editSlotB) {
+        const status = document.getElementById('edit-status');
+        status.textContent = `Ready: ${editSlot.name} ${ratioLabel(parseFloat(editSlider.value))} ${editSlotB.name}`;
+    }
+});
+
+// Restore sessions on page load
+restoreSessions();
+loadFavorites();
+initSyxUpload();
