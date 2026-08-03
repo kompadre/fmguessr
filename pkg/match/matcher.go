@@ -279,8 +279,8 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 
-			// NN predicts probe params → converts to Candidate via heuristic chain
-			predicted, probeResult := probePredictor.PredictToProbeCandidate(timbreSpec, int(cfg.MIDINote))
+			// NN predicts params — uses DX7 head if available, else probe+heuristic chain
+			predicted, probeResult := probePredictor.PredictToDirectCandidate(timbreSpec, int(cfg.MIDINote))
 
 			// Attach RawBase from nearest timbre codebook entry
 			if timbreCB != nil {

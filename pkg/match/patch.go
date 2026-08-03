@@ -36,6 +36,10 @@ type OpParams struct {
 
 const NumCandidateParams = 50
 
+// DX7LabelDims is the number of normalized DX7 parameters in training labels.
+// Layout: Algorithm(1) + 6 ops × 8 params(48) + Feedback(1) + PitchEnv(3) = 53
+const DX7LabelDims = 53
+
 // Candidate represents a set of DX7 parameters to evaluate.
 type Candidate struct {
 	Algorithm uint8 // 0-31
@@ -43,6 +47,7 @@ type Candidate struct {
 	Feedback  uint8  // 0-7
 	RawBase   []byte // Optional 128-byte base template (e.g. from preset codebook)
 	Fitness   float64 // Cached spectral distance (math.MaxFloat64 = unevaluated)
+	Name      string  // Voice name (max 10 chars, used in .syx export)
 
 	// Pitch Envelope Generator (Pitch EG)
 	PitchRate1  uint8 // 0-99 (default 99)
@@ -427,9 +432,12 @@ func SysexBulkDumpMultiple(candidates []*Candidate) []byte {
 			break
 		}
 		voiceData := c.Encode()
-		// Set voice name e.g. "MATCH 01   "
-		nameStr := fmt.Sprintf("MATCH %-2d  ", i+1)
-		copy(voiceData[118:128], []byte(nameStr[:10]))
+		// Use candidate name if set, otherwise default
+		name := c.Name
+		if name == "" {
+			name = fmt.Sprintf("MATCH %-2d  ", i+1)
+		}
+		copy(voiceData[118:128], []byte(name[:10]))
 		copy(bank[i*128:], voiceData)
 	}
 
@@ -453,6 +461,75 @@ func SysexBulkDumpMultiple(candidates []*Candidate) []byte {
 	syx = append(syx, 0xF7)       // Sysex end
 
 	return syx
+}
+
+// SanitizeVoiceName converts a human-readable name into a valid DX7 voice name:
+// uppercase, alphanumeric ASCII only, truncated to 10 characters.
+func SanitizeVoiceName(raw string) string {
+	var buf [10]byte
+	n := 0
+	for _, r := range raw {
+		if n >= 10 {
+			break
+		}
+		if r >= 'a' && r <= 'z' {
+			buf[n] = byte(r - 32) // uppercase
+			n++
+		} else if r >= 'A' && r <= 'Z' {
+			buf[n] = byte(r)
+			n++
+		} else if r >= '0' && r <= '9' {
+			buf[n] = byte(r)
+			n++
+		}
+	}
+	// Pad with spaces
+	for n < 10 {
+		buf[n] = ' '
+		n++
+	}
+	return string(buf[:10])
+}
+
+// DeduplicateVoiceNames ensures all names in the slice are unique by appending
+// a serial number (01-99) to duplicates. Names are already assumed sanitized.
+func DeduplicateVoiceNames(names []string) []string {
+	seen := make(map[string]int, len(names))
+	result := make([]string, len(names))
+	for i, name := range names {
+		key := name
+		if count, exists := seen[key]; exists {
+			seen[key] = count + 1
+			// Truncate base to 7 chars, append " XX" serial
+			base := name[:7]
+			result[i] = fmt.Sprintf("%s %02d", base, count+1)
+		} else {
+			seen[key] = 1
+			result[i] = name
+		}
+	}
+	return result
+}
+
+// MorphName generates a morph patch name from two parent names.
+// Uses first letters of each parent separated by underscore (e.g. "S_P").
+// Falls back to numbered names if initials collide.
+func MorphName(nameA, nameB string) string {
+	a := "?"
+	b := "?"
+	for _, r := range nameA {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			a = string(r)
+			break
+		}
+	}
+	for _, r := range nameB {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b = string(r)
+			break
+		}
+	}
+	return a + "_" + b
 }
 
 // Pure Waveform Shape Base Templates
@@ -553,6 +630,76 @@ func DefaultWaveformSeeds() []*Candidate {
 		TriangleBase(),
 		DecodeVoicePatch(epiano),
 	}
+}
+
+// InitVoice returns a clean "init" patch with all operators silent, LFO off,
+// pitch envelope flat, and no keyboard scaling. Used as the starting point for
+// constructive beam search so there are no hidden biases from existing presets.
+func InitVoice() *Candidate {
+	base := make([]byte, 128)
+
+	// Fill all 6 operator blocks (17 bytes each) with silent defaults
+	for op := 0; op < 6; op++ {
+		off := op * 17
+		base[off+0] = 99  // R1: instant attack
+		base[off+1] = 99  // R2: instant decay
+		base[off+2] = 99  // R3 = R2
+		base[off+3] = 0   // R4: instant release
+		base[off+4] = 99  // L1: max attack level
+		base[off+5] = 0   // L2: zero (Level3 == 0 → percussive)
+		base[off+6] = 0   // L3: zero sustain → silent
+		base[off+7] = 0   // L4: zero after release
+		base[off+14] = 0  // OutputLevel: silent
+		base[off+15] = 2  // FreqCoarse=1, Mode=0 (ratio)
+		base[off+16] = 0  // FreqFine: zero
+	}
+
+	// LFO: all zeros (off)
+	// Pitch EG: flat at 50 (bytes 102-109)
+	base[102] = 99 // PR1
+	base[103] = 0  // PR2
+	base[104] = 0  // PR3
+	base[105] = 0  // PR4
+	base[106] = 50 // PL1: neutral
+	base[107] = 50 // PL2: neutral
+	base[108] = 50 // PL3: neutral
+	base[109] = 50 // PL4: neutral
+
+	// Algorithm = 31 (Algo 32), Feedback = 0
+	base[110] = 31
+	base[111] = 0x08 // feedback=0, osc_sync=1
+
+	// Keyboard scaling: flat (no scaling)
+	for i := 102; i < 110; i++ {
+		// Already set above
+	}
+
+	c := &Candidate{
+		Algorithm:   31, // Algo 32
+		Fitness:     math.MaxFloat64,
+		RawBase:     base,
+		PitchRate1:  99,
+		PitchLevel1: 50,
+		PitchLevel2: 50,
+	}
+	for i := 0; i < 6; i++ {
+		c.Ops[i] = OpParams{OutputLevel: 0, Level3: 0, Rate1: 99, Rate2: 99, Rate4: 0}
+	}
+	for i := 0; i < NumCandidateParams; i++ {
+		c.Direction[i] = 1
+		c.Velocity[i] = 1.0
+	}
+	return c
+}
+
+// MuteOperator silences an operator by zeroing its output level and setting
+// its envelope to instant attack → instant decay → zero sustain.
+func MuteOperator(c *Candidate, opIdx int) {
+	c.Ops[opIdx].OutputLevel = 0
+	c.Ops[opIdx].Level3 = 0
+	c.Ops[opIdx].Rate1 = 99
+	c.Ops[opIdx].Rate2 = 99
+	c.Ops[opIdx].Rate4 = 0
 }
 
 // CalibrateCarrierLevels boosts carrier operator OutputLevel settings so that the candidate's

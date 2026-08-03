@@ -18,10 +18,22 @@ func main() {
 	codebookPath := flag.String("codebook", "dx7_codebook.bin", "Path to codebook binary")
 	outDir := flag.String("outdir", "rendered", "Output directory for WAV files")
 	noteNum := flag.Int("note", 48, "MIDI note to render (default: 48 = C3)")
+	noteMin := flag.Int("note-min", 0, "Minimum MIDI note for multi-note rendering (0=single note mode)")
+	noteMax := flag.Int("note-max", 0, "Maximum MIDI note for multi-note rendering (0=single note mode)")
 	variants := flag.Int("variants", 50, "Variants per patch")
 	flag.Parse()
 
 	os.MkdirAll(*outDir, 0755)
+
+	// Build note list
+	var notes []int
+	if *noteMin > 0 && *noteMax > 0 && *noteMax >= *noteMin {
+		for n := *noteMin; n <= *noteMax; n++ {
+			notes = append(notes, n)
+		}
+	} else {
+		notes = []int{*noteNum}
+	}
 
 	// Load codebook (supports both standard DXCB and timbre DXCT formats)
 	cb, err := match.LoadCodebookAny(*codebookPath)
@@ -31,31 +43,42 @@ func main() {
 	}
 
 	fmt.Printf("Loaded %d patches from %s\n", len(cb.Entries), *codebookPath)
-	fmt.Printf("Rendering %d variants per patch at MIDI %d (parallel)...\n", *variants, *noteNum)
+	fmt.Printf("Rendering %d variants per patch at MIDI %v (parallel)...\n", *variants, notes)
 
-	// Build work items: base patch + perturbations
+	// Build work items: base patch + perturbations × notes
 	type workItem struct {
+		flatIdx int
 		patchIdx int
 		variant  int
+		note     int
 		cand     *match.Candidate
 	}
 
 	var workItems []workItem
 	rng := rand.New(rand.NewSource(42))
+	flatIdx := 0
 
 	for patchIdx, entry := range cb.Entries {
 		// Base patch
-		workItems = append(workItems, workItem{patchIdx, 0, entry.Candidate.Copy()})
+		base := entry.Candidate.Copy()
+		for _, note := range notes {
+			workItems = append(workItems, workItem{flatIdx, patchIdx, 0, note, base.Copy()})
+			flatIdx++
+		}
 
 		// Perturbed variants
 		for v := 1; v < *variants; v++ {
 			perturbed := perturbCandidate(entry.Candidate, rng)
-			workItems = append(workItems, workItem{patchIdx, v, perturbed})
+			for _, note := range notes {
+				workItems = append(workItems, workItem{flatIdx, patchIdx, v, note, perturbed.Copy()})
+				flatIdx++
+			}
 		}
 	}
 
 	totalSamples := len(workItems)
-	fmt.Printf("Total work items: %d\n", totalSamples)
+	fmt.Printf("Total work items: %d (%d patches × %d variants × %d notes)\n",
+		totalSamples, len(cb.Entries), *variants, len(notes))
 
 	// Parallel rendering with worker pool
 	numWorkers := runtime.GOMAXPROCS(0)
@@ -82,21 +105,22 @@ func main() {
 			defer workerSynth.Free()
 
 			for item := range workChan {
-				// Render pure sustain: skip attack, render sustain-only
-				pcm := renderPureSustain(workerSynth, item.cand, *noteNum, *outDir, item.patchIdx, item.variant)
+				// Render with natural envelope (not pure sustain)
+				// so Python can extract probe features (ADSR, brightness, harmonicity)
+				pcm := renderWithEnvelope(workerSynth, item.cand, item.note)
 
-				// Save WAV (each file is unique per patchIdx+variant, no lock needed)
-				wavPath := fmt.Sprintf("%s/p%04d_v%02d.wav", *outDir, item.patchIdx, item.variant)
+				// Save WAV with note in filename
+				wavPath := fmt.Sprintf("%s/p%04d_v%02d_n%03d.wav", *outDir, item.patchIdx, item.variant, item.note)
 				saveWav(wavPath, pcm, match.RenderSampleRate)
 
-				// Store label (thread-safe index assignment)
+				// Store label via pre-computed flat index
 				label := normalizeTimbreParams(item.cand)
-				allLabels[item.patchIdx**variants+item.variant] = label
+				allLabels[item.flatIdx] = label
 
 				mu.Lock()
 				completed++
 				patchProgress := (item.patchIdx + 1)
-				if item.variant == 0 {
+				if item.variant == 0 && item.note == notes[0] {
 					if patchProgress%100 == 0 || patchProgress == len(cb.Entries) {
 						fmt.Printf("  [%d/%d] %s\n", patchProgress, len(cb.Entries), cb.Entries[item.patchIdx].Name)
 					}
@@ -127,7 +151,7 @@ func main() {
 	defer labelsFile.Close()
 
 	binary.Write(labelsFile, binary.LittleEndian, uint32(totalSamples))
-	binary.Write(labelsFile, binary.LittleEndian, uint32(match.NumCandidateParams))
+	binary.Write(labelsFile, binary.LittleEndian, uint32(match.DX7LabelDims))
 	for _, label := range allLabels {
 		binary.Write(labelsFile, binary.LittleEndian, label)
 	}
@@ -135,34 +159,26 @@ func main() {
 	fmt.Printf("Done: %d total samples rendered -> %s\n", totalSamples, labelsPath)
 }
 
-func renderPureSustain(synth *msfa.Synth, c *match.Candidate, noteNum int, outDir string, patchIdx, variant int) []int16 {
-	// Create an envelope-neutral version of the patch
-	// DX7 rates: 0=slowest, 99=fastest
-	// Levels: 0=silence, 99=max
-	// For pure sustain: instant attack, instant decay to sustain, hold indefinitely
-	neutral := c.Copy()
-	for i := 0; i < 6; i++ {
-		neutral.Ops[i].Rate1 = 99  // Instant attack
-		neutral.Ops[i].Rate2 = 99  // Instant decay to sustain
-		neutral.Ops[i].Level3 = 99 // 100% sustain level
-		neutral.Ops[i].Rate4 = 99  // Fast release (unused, no Note Off sent)
-	}
-
-	patch := neutral.Encode()
+func renderWithEnvelope(synth *msfa.Synth, c *match.Candidate, noteNum int) []int16 {
+	// Render with natural envelope so Python can extract probe features (ADSR, brightness, etc.)
+	patch := c.Encode()
 	synth.SetVoice(0, patch)
 
-	// Render 1 second of pure sustained tone
-	attackSkip := 50 * match.RenderSampleRate / 1000 // 50ms attack prime
-	sustainLen := match.RenderSampleRate              // 1 full second
-
-	// Prime the synth with a short attack burst
-	prime := make([]int16, attackSkip)
+	// Note On
 	synth.WriteMidi([]byte{0x90, byte(noteNum), 100})
-	synth.GetSamples(prime)
 
-	// Capture exactly 1 second of stable sustain — NO Note Off
-	pcm := make([]int16, sustainLen)
+	// Render ~2 seconds to capture full envelope including release
+	renderLen := 2 * match.RenderSampleRate
+	pcm := make([]int16, renderLen)
 	synth.GetSamples(pcm)
+
+	// Note Off at 1.5s to capture release tail
+	noteOffSample := 3 * match.RenderSampleRate / 2
+	synth.WriteMidi([]byte{0x80, byte(noteNum), 0})
+
+	// Render remaining release tail
+	remaining := pcm[noteOffSample:]
+	synth.GetSamples(remaining)
 
 	return pcm
 }
@@ -211,7 +227,7 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 }
 
 func normalizeTimbreParams(c *match.Candidate) []float32 {
-	normalized := make([]float32, match.NumCandidateParams)
+	normalized := make([]float32, match.DX7LabelDims)
 
 	normalized[0] = clampFloat(float32(c.Algorithm) / 31.0)
 
@@ -221,13 +237,18 @@ func normalizeTimbreParams(c *match.Candidate) []float32 {
 		normalized[base+1] = clampFloat(float32(c.Ops[opIdx].FreqCoarse) / 31.0)
 		normalized[base+2] = clampFloat(float32(c.Ops[opIdx].FreqFine) / 99.0)
 		normalized[base+3] = clampFloat(float32(c.Ops[opIdx].OutputLevel) / 99.0)
-		normalized[base+4] = 0.0 // Rate1 neutral
-		normalized[base+5] = 0.0 // Rate2 neutral
-		normalized[base+6] = 1.0 // Level3 = 100% sustain
-		normalized[base+7] = 0.0 // Rate4 neutral
+		normalized[base+4] = clampFloat(float32(c.Ops[opIdx].Rate1) / 99.0)
+		normalized[base+5] = clampFloat(float32(c.Ops[opIdx].Rate2) / 99.0)
+		normalized[base+6] = clampFloat(float32(c.Ops[opIdx].Level3) / 99.0)
+		normalized[base+7] = clampFloat(float32(c.Ops[opIdx].Rate4) / 99.0)
 	}
 
 	normalized[49] = clampFloat(float32(c.Feedback) / 7.0)
+
+	// Pitch envelope params (indices 50-52)
+	normalized[50] = clampFloat(float32(c.PitchRate1) / 99.0)
+	normalized[51] = clampFloat(float32(c.PitchLevel1) / 99.0)
+	normalized[52] = clampFloat(float32(c.PitchLevel2) / 99.0)
 
 	return normalized
 }
