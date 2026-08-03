@@ -207,8 +207,6 @@ def main():
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-    parser.add_argument('--patience', type=int, default=20, help='Early stopping patience')
-    parser.add_argument('--dx7-weight', type=float, default=2.0, help='Weight for DX7 head loss (0=disable)')
     parser.add_argument('--device', default='auto', help='Device (auto/cpu/cuda)')
     args = parser.parse_args()
 
@@ -297,9 +295,8 @@ def main():
         print(f"  DX7 head weight: {args.dx7_weight}")
     print(f"  Head LR: {head_lr} (shared: {args.lr})")
 
-    # Training loop
-    best_val_mae = float('inf')
-    patience_counter = 0
+    # Training loop — train all epochs, always save best model
+    best_val_loss = float('inf')
 
     for epoch in range(args.epochs):
         train_loss = train_one_epoch(model, train_loader, probe_criterion, dx7_criterion,
@@ -307,16 +304,12 @@ def main():
         val_metrics = validate(model, val_loader, probe_criterion, dx7_criterion,
                                 args.dx7_weight, device)
 
-        # Use probe MAE for early stopping (primary task)
-        val_mae = val_metrics["probe_mae"]
-        scheduler.step(val_mae)
+        scheduler.step(val_metrics["loss"])
 
-        if val_mae < best_val_mae:
-            best_val_mae = val_mae
-            patience_counter = 0
+        # Always save best model (no early stopping — train all patches)
+        if val_metrics["loss"] < best_val_loss:
+            best_val_loss = val_metrics["loss"]
             torch.save(model.state_dict(), "model_probe_best.pth")
-        else:
-            patience_counter += 1
 
         if (epoch + 1) % 5 == 0 or epoch == 0:
             dx7_str = ""
@@ -325,10 +318,6 @@ def main():
             print(f"  Epoch {epoch+1:3d}/{args.epochs}: "
                   f"train_loss={train_loss:.4f} val_loss={val_metrics['loss']:.4f} "
                   f"probe_mae={val_metrics['probe_mae']:.4f}{dx7_str}")
-
-        if patience_counter >= args.patience:
-            print(f"  Early stopping at epoch {epoch+1}")
-            break
 
     # Load best model and export
     model.load_state_dict(torch.load("model_probe_best.pth"))

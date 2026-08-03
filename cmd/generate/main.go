@@ -208,6 +208,61 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 			newFine = 99
 		}
 		d.Ops[i].FreqFine = uint8(newFine)
+
+		// Perturb FreqCoarse (σ=1.5, ±3)
+		coarseDelta := int(rng.NormFloat64() * 1.5)
+		newCoarse := int(d.Ops[i].FreqCoarse) + coarseDelta
+		if newCoarse < 0 {
+			newCoarse = 0
+		}
+		if newCoarse > 31 {
+			newCoarse = 31
+		}
+		d.Ops[i].FreqCoarse = uint8(newCoarse)
+
+		// Perturb Rate1/Attack (σ=4, ±8)
+		r1Delta := int(rng.NormFloat64() * 4.0)
+		newR1 := int(d.Ops[i].Rate1) + r1Delta
+		if newR1 < 0 {
+			newR1 = 0
+		}
+		if newR1 > 99 {
+			newR1 = 99
+		}
+		d.Ops[i].Rate1 = uint8(newR1)
+
+		// Perturb Rate2/Decay (σ=4, ±8)
+		r2Delta := int(rng.NormFloat64() * 4.0)
+		newR2 := int(d.Ops[i].Rate2) + r2Delta
+		if newR2 < 0 {
+			newR2 = 0
+		}
+		if newR2 > 99 {
+			newR2 = 99
+		}
+		d.Ops[i].Rate2 = uint8(newR2)
+
+		// Perturb Level3/Sustain (σ=6, ±12)
+		l3Delta := int(rng.NormFloat64() * 6.0)
+		newL3 := int(d.Ops[i].Level3) + l3Delta
+		if newL3 < 0 {
+			newL3 = 0
+		}
+		if newL3 > 99 {
+			newL3 = 99
+		}
+		d.Ops[i].Level3 = uint8(newL3)
+
+		// Perturb Rate4/Release (σ=4, ±8)
+		r4Delta := int(rng.NormFloat64() * 4.0)
+		newR4 := int(d.Ops[i].Rate4) + r4Delta
+		if newR4 < 0 {
+			newR4 = 0
+		}
+		if newR4 > 99 {
+			newR4 = 99
+		}
+		d.Ops[i].Rate4 = uint8(newR4)
 	}
 
 	// Perturb Feedback (σ=1.5, 30% chance)
@@ -221,6 +276,39 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 			newFb = 7
 		}
 		d.Feedback = uint8(newFb)
+	}
+
+	// Perturb pitch envelope (σ=3, 40% chance)
+	if rng.Float64() < 0.40 {
+		pr1Delta := int(rng.NormFloat64() * 3.0)
+		newPR1 := int(d.PitchRate1) + pr1Delta
+		if newPR1 < 0 {
+			newPR1 = 0
+		}
+		if newPR1 > 99 {
+			newPR1 = 99
+		}
+		d.PitchRate1 = uint8(newPR1)
+
+		pl1Delta := int(rng.NormFloat64() * 3.0)
+		newPL1 := int(d.PitchLevel1) + pl1Delta
+		if newPL1 < 0 {
+			newPL1 = 0
+		}
+		if newPL1 > 99 {
+			newPL1 = 99
+		}
+		d.PitchLevel1 = uint8(newPL1)
+
+		pl2Delta := int(rng.NormFloat64() * 3.0)
+		newPL2 := int(d.PitchLevel2) + pl2Delta
+		if newPL2 < 0 {
+			newPL2 = 0
+		}
+		if newPL2 > 99 {
+			newPL2 = 99
+		}
+		d.PitchLevel2 = uint8(newPL2)
 	}
 
 	return d
