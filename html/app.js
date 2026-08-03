@@ -1201,7 +1201,8 @@ function createSyxTab(name, patches) {
     });
 
     content.appendChild(grid);
-    tabContent.appendChild(content);
+    const syxContainer = document.getElementById('syx-content');
+    syxContainer.appendChild(content);
 
     switchTab(tabId);
 }
@@ -1209,6 +1210,13 @@ function createSyxTab(name, patches) {
 fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
+
+    // Route .syx files to the dedicated handler
+    if (file.name.toLowerCase().endsWith('.syx')) {
+        handleSyxUpload({ target: { files: [file] } });
+        fileInput.value = '';
+        return;
+    }
 
     fileName.textContent = file.name;
     fileLabel.classList.add('selected');
@@ -1435,13 +1443,13 @@ function switchTab(tabId) {
     document.querySelectorAll('.tab').forEach(t => {
         t.classList.toggle('active', t.dataset.tabId === tabId);
     });
-    // Hide main job content
+    // Hide WAV content, show .syx content
     tabContent.classList.remove('visible');
-    // Hide all .syx tab contents, then show the selected one
-    document.querySelectorAll('.tab-content').forEach(tc => {
-        if (tc.id && tc.id.startsWith('tab-syx_')) {
-            tc.classList.toggle('visible', tc.id === 'tab-' + tabId);
-        }
+    const syxContainer = document.getElementById('syx-content');
+    syxContainer.classList.add('visible');
+    // Show only the selected .syx tab's content
+    document.querySelectorAll('#syx-content > .tab-content').forEach(tc => {
+        tc.classList.toggle('visible', tc.id === 'tab-' + tabId);
     });
     document.getElementById('piano-dock').innerHTML = '';
 }
@@ -1451,11 +1459,11 @@ function showJob(index) {
     document.querySelectorAll('.tab').forEach(t => {
         t.classList.toggle('active', Number(t.dataset.index) === index);
     });
-    // Hide all .syx tab contents
-    document.querySelectorAll('.tab-content').forEach(tc => {
-        if (tc.id && tc.id.startsWith('tab-syx_')) {
-            tc.classList.remove('visible');
-        }
+    // Hide .syx content, show WAV content
+    const syxContainer = document.getElementById('syx-content');
+    syxContainer.classList.remove('visible');
+    document.querySelectorAll('#syx-content > .tab-content').forEach(tc => {
+        tc.classList.remove('visible');
     });
     tabContent.classList.add('visible');
     const job = jobs[index];
@@ -1465,7 +1473,6 @@ function showJob(index) {
         renderProbe(index);
     } else {
         tabContent.innerHTML = '<div class="result-info"><span>Probing...</span></div>';
-        tabContent.classList.add('visible');
     }
 }
 

@@ -1,0 +1,1465 @@
+/* ============================================================
+   1. Reset & body
+   ============================================================ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+    font-family: system-ui, -apple-system, sans-serif;
+    padding: 2rem;
+    gap: 2rem;
+}
+
+/* ============================================================
+   2. Typography & buttons
+   ============================================================ */
+
+h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+button {
+    padding: 0.75rem 1.5rem;
+    background-color: #e94560;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #c73550;
+}
+
+button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+.file-name {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: #aaa;
+}
+
+textarea {
+    width: 100%;
+    max-width: 500px;
+    min-height: 150px;
+    padding: 1rem;
+    background-color: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 0 0 8px 8px;
+    color: #e0e0e0;
+    font-family: monospace;
+    font-size: 0.9rem;
+    resize: vertical;
+}
+
+textarea:focus {
+    outline: none;
+    border-color: #e94560;
+}
+
+/* ============================================================
+   3. File input
+   ============================================================ */
+
+.file-input-wrapper {
+    position: relative;
+}
+
+.file-input-wrapper input[type="file"] {
+    display: none;
+}
+
+.file-input-label {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    background-color: #16213e;
+    border: 2px dashed #0f3460;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s;
+    text-align: center;
+    min-width: 300px;
+}
+
+.file-input-label:hover {
+    border-color: #e94560;
+    background-color: #1a1a3e;
+}
+
+.file-input-label.selected {
+    border-style: solid;
+    border-color: #4caf50;
+    background-color: #1a2e1a;
+}
+
+/* ============================================================
+   4. Progress bar
+   ============================================================ */
+
+#progress-wrapper {
+    width: 100%;
+    max-width: 500px;
+    margin-bottom: 0.5rem;
+}
+
+#progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+#progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #e94560;
+    transition: width 0.3s ease;
+}
+
+#progress-label {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.3rem;
+    text-align: center;
+    min-height: 1rem;
+}
+
+/* ============================================================
+   5. Tabs
+   ============================================================ */
+
+#tabs {
+    display: none;
+    width: 100%;
+    max-width: 500px;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
+#tabs.visible {
+    display: flex;
+}
+
+.tab {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    background-color: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #aaa;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.tab:hover {
+    background-color: #16213e;
+    color: #fff;
+}
+
+.tab.active {
+    background-color: #16213e;
+    border-color: #e94560;
+    color: #fff;
+}
+
+.tab .spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #555;
+    border-top-color: #e94560;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.tab-play {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+    line-height: 1;
+}
+
+.tab-play:hover {
+    color: #e94560;
+}
+
+.tab-close {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 0.7rem;
+    padding: 0 0.2rem;
+    margin-left: 0.3rem;
+    line-height: 1;
+}
+
+.tab-close:hover {
+    color: #e94560;
+}
+
+.tab-status {
+    font-size: 0.7rem;
+    color: #888;
+    margin-left: 0.2rem;
+}
+
+#clear-btn {
+    display: none;
+    padding: 0.3rem 0.75rem;
+    background: none;
+    border: 1px solid #555;
+    border-radius: 6px;
+    color: #888;
+    font-size: 0.75rem;
+    cursor: pointer;
+    margin-left: 0.5rem;
+}
+
+#clear-btn:hover {
+    color: #e94560;
+    border-color: #e94560;
+}
+
+/* ============================================================
+   6. Tab content / config
+   ============================================================ */
+
+#tab-content {
+    display: none;
+    width: 100%;
+    max-width: 500px;
+    background-color: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+#tab-content.visible {
+    display: block;
+}
+
+#syx-content {
+    display: none;
+    width: 100%;
+    max-width: 500px;
+    background-color: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+#syx-content > .tab-content.visible {
+    display: block;
+}
+
+.config-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+    color: #ccc;
+}
+
+.config-header:hover {
+    color: #fff;
+}
+
+.config-arrow {
+    font-size: 0.75rem;
+    transition: transform 0.2s;
+}
+
+.config-header.collapsed .config-arrow {
+    transform: rotate(-90deg);
+}
+
+.config-body {
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+}
+
+.config-body.collapsed {
+    max-height: 0 !important;
+    margin: 0;
+}
+
+/* ============================================================
+   7. Probe form
+   ============================================================ */
+
+.probe-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.probe-info .badge {
+    background-color: #0f0f23;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #aaa;
+}
+
+.probe-info .badge strong {
+    color: #e0e0e0;
+}
+
+.probe-info .badge.seen {
+    color: #e94560;
+    font-weight: 600;
+}
+
+.probe-info .badge.match {
+    color: #4caf50;
+}
+
+.probe-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.probe-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.probe-field label {
+    font-size: 0.75rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.probe-field input,
+.probe-field select {
+    background-color: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0.4rem 0.5rem;
+    color: #e0e0e0;
+    font-size: 0.85rem;
+    font-family: monospace;
+    width: 100%;
+}
+
+.probe-field input:focus,
+.probe-field select:focus {
+    outline: none;
+    border-color: #e94560;
+}
+
+.note-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+}
+
+.note-row .probe-field {
+    flex: 1;
+    min-width: 0;
+}
+
+.tuning-fork-btn {
+    background-color: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0;
+    color: #e0e0e0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    line-height: 1;
+    width: 2rem;
+    height: 2rem;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.tuning-fork-btn:hover {
+    border-color: #e94560;
+    color: #e94560;
+}
+
+.tuning-fork-btn.active {
+    background-color: #e94560;
+    border-color: #e94560;
+    color: #fff;
+}
+
+.probe-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.probe-actions button {
+    flex: 1;
+    font-size: 0.85rem;
+    padding: 0.6rem 1rem;
+}
+
+.btn-match {
+    background-color: #4caf50;
+}
+
+.btn-match:hover {
+    background-color: #3d8b40;
+}
+
+.btn-reset {
+    background-color: #333;
+}
+
+.btn-reset:hover {
+    background-color: #444;
+}
+
+/* ============================================================
+   8. Results / matches table
+   ============================================================ */
+
+.result-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: #ccc;
+}
+
+.result-info span {
+    background-color: #0f0f23;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+}
+
+.result-info strong {
+    color: #4caf50;
+}
+
+/* Patch list — unified layout for results and favorites */
+
+.patch-list {
+    margin-bottom: 1rem;
+}
+
+.patch-list-header .patch-spec {
+    border: none;
+}
+
+.patch-list-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.75rem;
+    color: #666;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #2a2a3e;
+}
+
+.patch-list-body {
+    display: flex;
+    flex-direction: column;
+}
+
+.patch-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid #1e1e30;
+    cursor: pointer;
+    transition: background-color 0.12s;
+    font-size: 0.85rem;
+    color: #ccc;
+}
+
+.patch-row:hover {
+    background-color: #16162a;
+}
+
+.patch-row.selected {
+    color: #ccc;
+}
+
+.patch-spec {
+    position: relative;
+    width: 180px;
+    min-width: 180px;
+    height: 48px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #2a2a3e;
+    flex-shrink: 0;
+}
+
+.patch-canvas {
+    display: block;
+    width: 180px;
+    height: 48px;
+}
+
+.patch-play {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background-color: rgba(15, 15, 35, 0.85);
+    border: 1.5px solid #4caf50;
+    color: #4caf50;
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.patch-row:hover .patch-play {
+    opacity: 1;
+}
+
+.patch-play:hover {
+    background-color: rgba(76, 175, 80, 0.3);
+    border-color: #66bb6a;
+    color: #66bb6a;
+}
+
+.patch-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.patch-star {
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: #555;
+    transition: color 0.15s;
+    width: 1.2em;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.patch-star:hover {
+    color: #f5c542;
+}
+
+.patch-star.fav-active {
+    color: #f5c542;
+}
+
+.patch-col {
+    width: 50px;
+    min-width: 50px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.patch-col.patch-dist {
+    width: 65px;
+    min-width: 65px;
+}
+
+.patch-assign {
+    background: none;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #666;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.15rem 0.4rem;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: color 0.15s, border-color 0.15s;
+    opacity: 0;
+}
+
+.patch-row:hover .patch-assign {
+    opacity: 1;
+}
+
+.patch-assign:hover {
+    color: #4caf50;
+    border-color: #4caf50;
+}
+
+.syx-link {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background-color: #0f3460;
+    border-radius: 6px;
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.syx-link:hover {
+    background-color: #1a5276;
+}
+
+.section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #ffffff;
+    margin-top: 1.25rem;
+    margin-bottom: 0.15rem;
+}
+
+.section-subtitle {
+    font-size: 0.8rem;
+    color: #777;
+    margin-bottom: 0.75rem;
+}
+
+/* Collapsible sections (details/summary) */
+.collapsible-section {
+    margin-bottom: 0.75rem;
+}
+
+.collapsible-section summary {
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #ccc;
+    padding: 0.4rem 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    user-select: none;
+}
+
+.collapsible-section summary::-webkit-details-marker {
+    display: none;
+}
+
+.collapsible-section summary::before {
+    content: '▸';
+    font-size: 0.7rem;
+    color: #888;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+}
+
+.collapsible-section[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.collapsible-section summary:hover {
+    color: #fff;
+}
+
+/* ============================================================
+   9. Keyboard / piano
+   ============================================================ */
+
+.keyboard-wrapper {
+    margin-top: 1rem;
+    text-align: center;
+}
+
+.keyboard-wrapper .keyboard-label {
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 0.4rem;
+}
+
+.keyboard {
+    display: inline-flex;
+    position: relative;
+    height: 140px;
+    user-select: none;
+}
+
+.key {
+    position: relative;
+    cursor: pointer;
+    border-radius: 0 0 4px 4px;
+    transition: background 0.08s;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 6px;
+    font-size: 0.55rem;
+    color: #999;
+}
+
+.key.white {
+    width: 36px;
+    height: 140px;
+    background: #e8e8e8;
+    border: 1px solid #999;
+    z-index: 1;
+}
+
+.key.black {
+    width: 24px;
+    height: 90px;
+    background: #333;
+    border: 1px solid #111;
+    z-index: 2;
+    margin-left: -12px;
+    margin-right: -12px;
+    color: #666;
+}
+
+.key.white:active, .key.white.pressed {
+    background: #ccc;
+}
+
+.key.black:active, .key.black.pressed {
+    background: #555;
+}
+
+.key.matched {
+    border-color: #4caf50;
+    box-shadow: 0 0 6px #4caf50;
+}
+
+.key:hover {
+    filter: brightness(0.95);
+}
+
+/* Piano wrapper — sticky above footer */
+
+#piano-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    background-color: #1a1a2e;
+    border-top: 1px solid #333;
+}
+
+.piano-wrapper {
+    padding: 0.6rem 0;
+}
+
+.piano-wrapper .keyboard {
+    height: auto;
+    justify-content: center;
+}
+
+.piano-wrapper .key.white {
+    width: 36px;
+    height: 140px;
+}
+
+.piano-wrapper .key.black {
+    width: 24px;
+    height: 90px;
+}
+
+/* ============================================================
+   10. Favorites panel
+   ============================================================ */
+
+.favorites-panel {
+    width: 100%;
+    max-width: 500px;
+    display: none;
+}
+
+.favorites-panel.visible {
+    display: block;
+}
+
+.favorites-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    color: #ccc;
+}
+
+.favorites-header:hover {
+    color: #fff;
+}
+
+.favorites-header .config-arrow {
+    font-size: 0.75rem;
+    transition: transform 0.2s;
+}
+
+.favorites-header.collapsed .config-arrow {
+    transform: rotate(-90deg);
+}
+
+.favorites-body {
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+}
+
+.favorites-body.collapsed {
+    max-height: 0 !important;
+    margin: 0;
+}
+
+.favorites-body .patch-row {
+    padding: 0.35rem 0.6rem;
+}
+
+.favorites-body .patch-spec {
+    width: 120px;
+    min-width: 120px;
+    height: 36px;
+}
+
+.favorites-body .patch-canvas {
+    width: 120px;
+    height: 36px;
+}
+
+.favorites-body .patch-play {
+    width: 22px;
+    height: 22px;
+    font-size: 0.6rem;
+}
+
+.favorites-body .patch-row .fav-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.favorites-body .fav-del {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.1rem 0.2rem;
+    line-height: 1;
+}
+
+.favorites-body .fav-del:hover {
+    color: #e94560;
+}
+
+/* ============================================================
+   11. Edit panel
+   ============================================================ */
+
+.edit-panel {
+    width: 100%;
+    max-width: 500px;
+    background-color: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 1rem;
+    display: none;
+}
+
+.edit-panel.visible {
+    display: block;
+}
+
+.edit-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.edit-header h3 {
+    font-size: 0.95rem;
+    color: #fff;
+    margin: 0;
+}
+
+.edit-close-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 0;
+    line-height: 1;
+}
+
+.edit-close-btn:hover {
+    color: #fff;
+}
+
+/* Mode tabs */
+.edit-modes {
+    display: flex;
+    gap: 0;
+    margin-bottom: 0.75rem;
+    border: 1px solid #333;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.edit-mode-btn {
+    flex: 1;
+    padding: 0.4rem 0.6rem;
+    background-color: #0f0f23;
+    border: none;
+    border-radius: 0;
+    color: #888;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.edit-mode-btn:not(:last-child) {
+    border-right: 1px solid #333;
+}
+
+.edit-mode-btn:hover {
+    background-color: #1a1a3e;
+    color: #ccc;
+}
+
+.edit-mode-btn.active {
+    background-color: #e94560;
+    color: #fff;
+}
+
+/* Slots */
+.edit-slots {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.edit-slot {
+    flex: 1;
+    background-color: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 0.5rem;
+    min-height: 3rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.edit-slot.filled {
+    border-color: #4caf50;
+}
+
+.edit-slot-label {
+    font-size: 0.7rem;
+    color: #666;
+    font-weight: 700;
+    width: 1.2rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.edit-slot-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.edit-slot-empty {
+    font-size: 0.75rem;
+    color: #555;
+    font-style: italic;
+}
+
+.edit-slot-name {
+    font-size: 0.8rem;
+    color: #e0e0e0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.edit-slot-info {
+    font-size: 0.7rem;
+    color: #888;
+}
+
+.edit-slot-remove {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.edit-slot-remove:hover {
+    color: #e94560;
+}
+
+.edit-swap-btn {
+    background: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 0.3rem 0.5rem;
+    flex-shrink: 0;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.edit-swap-btn:hover {
+    color: #4caf50;
+    border-color: #4caf50;
+}
+
+/* Slider row */
+.edit-slider-row {
+    margin-bottom: 0.75rem;
+}
+
+.edit-slider-label {
+    font-size: 0.8rem;
+    color: #aaa;
+    display: block;
+    margin-bottom: 0.3rem;
+}
+
+.edit-slider {
+    width: 100%;
+    accent-color: #e94560;
+    cursor: pointer;
+}
+
+.edit-slider-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    color: #555;
+    margin-top: 0.1rem;
+}
+
+/* Param sliders */
+.edit-params-grid {
+    margin-bottom: 0.75rem;
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.edit-param-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.35rem;
+}
+
+.edit-param-label {
+    font-size: 0.7rem;
+    color: #888;
+    width: 4.5rem;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.edit-param-label small {
+    color: #666;
+    font-size: 0.6rem;
+}
+
+.edit-param-slider {
+    flex: 1;
+    height: 4px;
+    accent-color: #e94560;
+    cursor: pointer;
+}
+
+.edit-param-val {
+    font-size: 0.7rem;
+    color: #aaa;
+    width: 2rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.edit-param-sep {
+    border: none;
+    border-top: 1px solid #222;
+    margin: 0.4rem 0;
+}
+
+.edit-feedback-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.35rem;
+}
+
+.edit-feedback-label {
+    font-size: 0.7rem;
+    color: #888;
+    width: 4.5rem;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.edit-play-btn {
+    margin-top: 0.5rem;
+    padding: 0.3rem 0.8rem;
+    background: #16213e;
+    border: 1px solid #4caf50;
+    border-radius: 4px;
+    color: #4caf50;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background-color 0.15s;
+}
+
+.edit-play-btn:hover {
+    background-color: #1a5276;
+}
+
+/* Actions */
+.edit-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.edit-actions button {
+    flex: 1;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+}
+
+.btn-edit-primary {
+    background-color: #e94560;
+}
+
+.btn-edit-primary:hover {
+    background-color: #c73550;
+}
+
+.btn-edit-primary:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+.btn-edit-clear {
+    background-color: #333;
+}
+
+.btn-edit-clear:hover {
+    background-color: #444;
+}
+
+.edit-status {
+    font-size: 0.75rem;
+    color: #aaa;
+    margin-top: 0.5rem;
+    min-height: 1rem;
+}
+
+/* Edit button on patch rows */
+.patch-edit-btn {
+    background: none;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #888;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.15rem 0.4rem;
+    flex-shrink: 0;
+    transition: color 0.15s, border-color 0.15s;
+    opacity: 0;
+    line-height: 1;
+}
+
+.patch-row:hover .patch-edit-btn,
+.fav-row:hover .patch-edit-btn {
+    opacity: 1;
+}
+
+.patch-edit-btn:hover {
+    color: #e94560;
+    border-color: #e94560;
+}
+
+/* ============================================================
+   12. Footer / log
+   ============================================================ */
+
+footer {
+    padding: 1rem;
+    text-align: center;
+    font-size: 0.75rem;
+    color: #555;
+    border-top: 1px solid #333;
+    width: 100%;
+    max-width: 500px;
+}
+
+#log-details {
+    width: 100%;
+    max-width: 500px;
+}
+
+#log-details summary {
+    cursor: pointer;
+    padding: 0.5rem 0.75rem;
+    background-color: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: #aaa;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#log-details summary::-webkit-details-marker {
+    display: none;
+}
+
+#log-details summary::before {
+    content: '\25b6';
+    font-size: 0.65rem;
+    transition: transform 0.2s;
+}
+
+#log-details[open] summary::before {
+    transform: rotate(90deg);
+}
+
+#log-details summary:hover {
+    color: #fff;
+}
+
+/* ============================================================
+   14. Spectrogram
+   ============================================================ */
+
+.spectrogram-container {
+    position: relative;
+    width: 100%;
+    max-width: 460px;
+    margin-bottom: 1rem;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #333;
+}
+
+.spectrogram-canvas {
+    display: block;
+    width: 100%;
+    height: 80px;
+}
+
+.spectrogram-play {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: rgba(15, 15, 35, 0.85);
+    border: 2px solid #4caf50;
+    color: #4caf50;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+    padding: 0;
+    line-height: 1;
+}
+
+.spectrogram-play:hover {
+    background-color: rgba(76, 175, 80, 0.25);
+    border-color: #66bb6a;
+    color: #66bb6a;
+}
+
+/* ============================================================
+   15. Patch Cards (uploaded .syx)
+   ============================================================ */
+
+.patch-card {
+    border: 1px solid #2a2a3e;
+    border-radius: 6px;
+    padding: 0.5rem 0.6rem;
+    margin-bottom: 0.4rem;
+    background-color: #0f0f23;
+    cursor: pointer;
+    transition: background-color 0.12s;
+}
+
+.patch-card:hover {
+    background-color: #16162a;
+}
+
+.patch-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.3rem;
+    font-size: 0.8rem;
+}
+
+.patch-card-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #e0e0e0;
+    font-weight: 500;
+}
+
+.patch-card .patch-spec {
+    width: 220px;
+    height: 56px;
+}
+
+.patch-card .patch-canvas {
+    width: 220px;
+    height: 56px;
+}
+
+.patch-card .patch-spec.loaded {
+    border-color: #333;
+}
+
+.patch-card .patch-play {
+    opacity: 0.7;
+}
+
+.patch-card:hover .patch-play {
+    opacity: 1;
+}
+
+.upload-tab-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #2a2a3e;
+}
+
+.upload-tab-header h2 {
+    margin: 0;
+    font-size: 1rem;
+    color: #e0e0e0;
+    flex: 1;
+}
+
+.upload-tab-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 0.5rem;
+}
+
+/* Favorites export button */
+.fav-export-btn {
+    background: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.fav-export-btn:hover {
+    color: #4caf50;
+    border-color: #4caf50;
+}
+
+/* Upload button in header area */
+.syx-upload-btn {
+    background: none;
+    border: 1px dashed #555;
+    border-radius: 6px;
+    color: #888;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.4rem 0.8rem;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.syx-upload-btn:hover {
+    color: #4caf50;
+    border-color: #4caf50;
+}
+
+/* Editable patch name */
+.patch-name[contenteditable="true"] {
+    outline: 1px solid #4caf50;
+    background-color: #1a1a2e;
+    padding: 0 0.2rem;
+    border-radius: 2px;
+}
