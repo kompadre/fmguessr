@@ -143,6 +143,8 @@ async function deleteSession(jobIndex) {
     await dbDelete(job.id);
     if (job.objectUrl) URL.revokeObjectURL(job.objectUrl);
     jobs.splice(jobIndex, 1);
+    // Clear all tab content — indices will shift, so IDs must be recreated
+    tabContent.innerHTML = '';
     tabsEl.innerHTML = '';
     jobs.forEach((j, i) => {
         j.tabEl = null;
@@ -152,7 +154,7 @@ async function deleteSession(jobIndex) {
     if (activeJobIndex === jobIndex) {
         activeJobIndex = jobs.length > 0 ? 0 : -1;
         if (activeJobIndex >= 0) showJob(0);
-        else { tabContent.innerHTML = ''; document.getElementById('piano-dock').innerHTML = ''; }
+        else { document.getElementById('piano-dock').innerHTML = ''; }
     } else if (activeJobIndex > jobIndex) {
         activeJobIndex--;
     }
@@ -174,9 +176,6 @@ async function clearAllSessions() {
     tabsEl.classList.remove('visible');
     tabContent.innerHTML = '';
     tabContent.classList.remove('visible');
-    const syxContainer = document.getElementById('syx-content');
-    syxContainer.innerHTML = '';
-    syxContainer.classList.remove('visible');
     document.getElementById('piano-dock').innerHTML = '';
     renderFavorites();
     updateClearBtn();
@@ -187,16 +186,16 @@ async function clearAllSessions() {
 let syxTabs = []; // { tabId, name, patches }
 
 function saveSyxTabs() {
-    const syxContainer = document.getElementById('syx-content');
     const data = [];
-    syxContainer.querySelectorAll('.tab-content').forEach(tc => {
-        const tabId = tc.id.replace('tab-', '');
-        const heading = tc.querySelector('h2');
-        const name = heading ? heading.textContent : tabId;
-        // Find patches from the grid's card data
-        const tab = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
-        if (tab) {
-            data.push({ tabId, name });
+    tabContent.querySelectorAll('.tab-content').forEach(tc => {
+        if (tc.id && tc.id.startsWith('tab-syx_')) {
+            const tabId = tc.id.replace('tab-', '');
+            const heading = tc.querySelector('h2');
+            const name = heading ? heading.textContent : tabId;
+            const tab = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
+            if (tab) {
+                data.push({ tabId, name });
+            }
         }
     });
     localStorage.setItem(SYX_KEY, JSON.stringify(data));
@@ -231,8 +230,7 @@ function restoreSyxTabs() {
         msg.textContent = 'Re-import the .syx file to restore patches.';
         content.appendChild(msg);
 
-        const syxContainer = document.getElementById('syx-content');
-        syxContainer.appendChild(content);
+        tabContent.appendChild(content);
     }
 }
 
@@ -1251,8 +1249,7 @@ function createSyxTab(name, patches) {
     });
 
     content.appendChild(grid);
-    const syxContainer = document.getElementById('syx-content');
-    syxContainer.appendChild(content);
+    tabContent.appendChild(content);
 
     // Save to localStorage for persistence across reloads
     saveSyxTabs();
@@ -1446,6 +1443,36 @@ function addTab(index) {
     tabsEl.appendChild(tab);
     tabsEl.classList.add('visible');
     job.tabEl = tab;
+
+    // Create per-job content div inside tabContent
+    const contentId = 'tab-wav-' + index;
+    let content = tabContent.querySelector('#' + contentId);
+    if (!content) {
+        content = document.createElement('div');
+        content.className = 'tab-content';
+        content.id = contentId;
+        tabContent.appendChild(content);
+    }
+}
+
+// Get or create the content div for a tab
+function ensureTabContent(id) {
+    let el = tabContent.querySelector('#' + id);
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'tab-content';
+        el.id = id;
+        tabContent.appendChild(el);
+    }
+    return el;
+}
+
+// Hide all tab content children, show only the matching one
+function showOnlyTabContent(id) {
+    tabContent.querySelectorAll('.tab-content').forEach(tc => {
+        tc.classList.toggle('visible', tc.id === id);
+    });
+    tabContent.classList.add('visible');
 }
 
 function upgradeTab(index) {
@@ -1497,14 +1524,7 @@ function switchTab(tabId) {
     document.querySelectorAll('.tab').forEach(t => {
         t.classList.toggle('active', t.dataset.tabId === tabId);
     });
-    // Hide WAV content, show .syx content
-    tabContent.classList.remove('visible');
-    const syxContainer = document.getElementById('syx-content');
-    syxContainer.classList.add('visible');
-    // Show only the selected .syx tab's content
-    document.querySelectorAll('#syx-content > .tab-content').forEach(tc => {
-        tc.classList.toggle('visible', tc.id === 'tab-' + tabId);
-    });
+    showOnlyTabContent('tab-' + tabId);
     document.getElementById('piano-dock').innerHTML = '';
 }
 
@@ -1513,20 +1533,15 @@ function showJob(index) {
     document.querySelectorAll('.tab').forEach(t => {
         t.classList.toggle('active', Number(t.dataset.index) === index);
     });
-    // Hide .syx content, show WAV content
-    const syxContainer = document.getElementById('syx-content');
-    syxContainer.classList.remove('visible');
-    document.querySelectorAll('#syx-content > .tab-content').forEach(tc => {
-        tc.classList.remove('visible');
-    });
-    tabContent.classList.add('visible');
+    showOnlyTabContent('tab-wav-' + index);
     const job = jobs[index];
     if (job.resultData) {
         renderResults(index);
     } else if (job.probeData) {
         renderProbe(index);
     } else {
-        tabContent.innerHTML = '<div class="result-info"><span>Probing...</span></div>';
+        const el = ensureTabContent('tab-wav-' + index);
+        el.innerHTML = '<div class="result-info"><span>Probing...</span></div>';
     }
 }
 
@@ -1535,13 +1550,14 @@ function renderProbe(index) {
     const job = jobs[index];
     const data = job.probeData;
     const locked = !!job.statusUrl;
-    tabContent.innerHTML = '';
+    const el = ensureTabContent('tab-wav-' + index);
+    el.innerHTML = '';
     document.getElementById('piano-dock').innerHTML = '';
 
     const header = document.createElement('div');
     header.className = 'config-header' + (locked ? ' collapsed' : '');
     header.innerHTML = `<span>Configuration</span><span class="config-arrow">▼</span>`;
-    tabContent.appendChild(header);
+    el.appendChild(header);
 
     const body = document.createElement('div');
     body.className = 'config-body' + (locked ? ' collapsed' : '');
@@ -1693,7 +1709,7 @@ function renderProbe(index) {
     }
 
     body.appendChild(form);
-    tabContent.appendChild(body);
+    el.appendChild(body);
 
     requestAnimationFrame(() => {
         if (!body.classList.contains('collapsed')) {
@@ -1733,10 +1749,15 @@ function decodeWavSamples(arrayBuffer) {
             const chunkSize = view.getUint32(offset + 4, true);
             if (chunkId === 0x64617461) { // "data"
                 const dataStart = offset + 8;
-                const numSamples = Math.floor(chunkSize / (bitsPerSample / 8));
+                const availableBytes = view.byteLength - dataStart;
+                const bytesPerSample = bitsPerSample / 8;
+                const maxSamples = Math.floor(availableBytes / bytesPerSample);
+                const headerSamples = Math.floor(chunkSize / bytesPerSample);
+                const numSamples = Math.min(headerSamples, maxSamples);
+                if (numSamples <= 0) return null;
                 const samples = new Float32Array(numSamples);
                 for (let i = 0; i < numSamples; i++) {
-                    const s = view.getInt16(dataStart + i * 2, true);
+                    const s = view.getInt16(dataStart + i * bytesPerSample, true);
                     samples[i] = s / 32768.0;
                 }
                 // Mix to mono if stereo
@@ -1763,17 +1784,19 @@ async function startMatch(index) {
 
     appendLog(`Matching: ${job.file.name}`);
 
+    const el = ensureTabContent('tab-wav-' + index);
+
     try {
         const formData = new FormData();
         formData.append('file', job.file);
 
-        const noteInput = tabContent.querySelector(`[name="note"]`);
+        const noteInput = el.querySelector(`[name="note"]`);
         if (noteInput && noteInput.value !== '') {
             formData.append('note', noteInput.value);
         }
 
         probeFields.forEach(key => {
-            const input = tabContent.querySelector(`[name="${key}"]`);
+            const input = el.querySelector(`[name="${key}"]`);
             if (input && input.value !== '') {
                 formData.append(key, input.value);
             }
@@ -1885,24 +1908,25 @@ async function playNote(midi, job) {
 function renderResults(index) {
     const job = jobs[index];
     const data = job.resultData;
+    const el = ensureTabContent('tab-wav-' + index);
 
-    if (!tabContent.querySelector('.config-body')) {
+    if (!el.querySelector('.config-body')) {
         renderProbe(index);
     }
 
     // Collapse config when showing results — spectrogram + patch list are the focus
-    const configBody = tabContent.querySelector('.config-body');
-    const configHeader = tabContent.querySelector('.config-header');
+    const configBody = el.querySelector('.config-body');
+    const configHeader = el.querySelector('.config-header');
     if (configBody && !configBody.classList.contains('collapsed')) {
         configBody.classList.add('collapsed');
         if (configHeader) configHeader.classList.add('collapsed');
     }
 
-    let resultsArea = tabContent.querySelector('.results-area');
+    let resultsArea = el.querySelector('.results-area');
     if (!resultsArea) {
         resultsArea = document.createElement('div');
         resultsArea.className = 'results-area';
-        tabContent.appendChild(resultsArea);
+        el.appendChild(resultsArea);
     }
     resultsArea.innerHTML = '';
 

@@ -271,24 +271,6 @@ textarea:focus {
     display: block;
 }
 
-#syx-content {
-    display: none;
-    width: 100%;
-    max-width: 500px;
-    background-color: #16213e;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 1.5rem;
-}
-
-#syx-content.visible {
-    display: block;
-}
-
-#syx-content > .tab-content.visible {
-    display: block;
-}
-
 .config-header {
     display: flex;
     align-items: center;
