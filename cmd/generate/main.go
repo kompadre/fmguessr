@@ -20,10 +20,15 @@ func main() {
 	noteNum := flag.Int("note", 48, "MIDI note to render (default: 48 = C3)")
 	noteMin := flag.Int("note-min", 0, "Minimum MIDI note for multi-note rendering (0=single note mode)")
 	noteMax := flag.Int("note-max", 0, "Maximum MIDI note for multi-note rendering (0=single note mode)")
-	variants := flag.Int("variants", 50, "Variants per patch")
+	variants := flag.Int("variants", 50, "Total samples per patch per note (1=base only, no trimming)")
 	flag.Parse()
 
 	os.MkdirAll(*outDir, 0755)
+
+	if *variants < 1 {
+		fmt.Fprintf(os.Stderr, "Error: --variants must be >= 1\n")
+		os.Exit(1)
+	}
 
 	// Build note list
 	var notes []int
@@ -43,15 +48,22 @@ func main() {
 	}
 
 	fmt.Printf("Loaded %d patches from %s\n", len(cb.Entries), *codebookPath)
-	fmt.Printf("Rendering %d variants per patch at MIDI %v (parallel)...\n", *variants, notes)
+	fmt.Printf("Rendering %d samples per patch at MIDI %v (parallel)...\n", *variants, notes)
 
-	// Build work items: base patch + perturbations × notes
+	// Render duration determines trim range
+	renderLen := 2 * match.RenderSampleRate // 2s from renderWithEnvelope
+	maxTrimSamples := match.RenderSampleRate / 2 // 500ms max per side
+	minRetainedSamples := match.RenderSampleRate  // 1s minimum retained
+
+	// Build work items: base + temporal-trimmed variants
 	type workItem struct {
-		flatIdx int
-		patchIdx int
-		variant  int
-		note     int
-		cand     *match.Candidate
+		flatIdx   int
+		patchIdx  int
+		variant   int
+		note      int
+		cand      *match.Candidate // always the ORIGINAL candidate
+		trimStart int              // samples to trim from start (0 = no trim)
+		trimEnd   int              // samples to trim from end (0 = no trim)
 	}
 
 	var workItems []workItem
@@ -59,25 +71,40 @@ func main() {
 	flatIdx := 0
 
 	for patchIdx, entry := range cb.Entries {
-		// Base patch
-		base := entry.Candidate.Copy()
-		for _, note := range notes {
-			workItems = append(workItems, workItem{flatIdx, patchIdx, 0, note, base.Copy()})
-			flatIdx++
-		}
-
-		// Perturbed variants
-		for v := 1; v < *variants; v++ {
-			perturbed := perturbCandidate(entry.Candidate, rng)
+		orig := entry.Candidate
+		for v := 0; v < *variants; v++ {
+			var trimStart, trimEnd int
+			if v > 0 {
+				// Random temporal trim
+				trimStart = rng.Intn(maxTrimSamples + 1)
+				// Ensure we keep at least minRetainedSamples
+				maxEndTrim := maxTrimSamples
+				remaining := renderLen - trimStart - minRetainedSamples
+				if remaining < maxEndTrim {
+					maxEndTrim = remaining
+				}
+				if maxEndTrim < 0 {
+					maxEndTrim = 0
+				}
+				trimEnd = rng.Intn(maxEndTrim + 1)
+			}
 			for _, note := range notes {
-				workItems = append(workItems, workItem{flatIdx, patchIdx, v, note, perturbed.Copy()})
+				workItems = append(workItems, workItem{
+					flatIdx:  flatIdx,
+					patchIdx: patchIdx,
+					variant:  v,
+					note:     note,
+					cand:     orig,
+					trimStart: trimStart,
+					trimEnd:   trimEnd,
+				})
 				flatIdx++
 			}
 		}
 	}
 
 	totalSamples := len(workItems)
-	fmt.Printf("Total work items: %d (%d patches × %d variants × %d notes)\n",
+	fmt.Printf("Total work items: %d (%d patches × %d samples × %d notes)\n",
 		totalSamples, len(cb.Entries), *variants, len(notes))
 
 	// Parallel rendering with worker pool
@@ -105,15 +132,22 @@ func main() {
 			defer workerSynth.Free()
 
 			for item := range workChan {
-				// Render with natural envelope (not pure sustain)
-				// so Python can extract probe features (ADSR, brightness, harmonicity)
+				// Render original patch (labels always match codebook exactly)
 				pcm := renderWithEnvelope(workerSynth, item.cand, item.note)
 
-				// Save WAV with note in filename
+				// Apply temporal trim (simulates target.wav truncation)
+				if item.trimStart > 0 || item.trimEnd > 0 {
+					end := len(pcm) - item.trimEnd
+					if end > item.trimStart {
+						pcm = pcm[item.trimStart:end]
+					}
+				}
+
+				// Save WAV
 				wavPath := fmt.Sprintf("%s/p%04d_v%02d_n%03d.wav", *outDir, item.patchIdx, item.variant, item.note)
 				saveWav(wavPath, pcm, match.RenderSampleRate)
 
-				// Store label via pre-computed flat index
+				// Store label: always the original codebook patch params
 				label := normalizeTimbreParams(item.cand)
 				allLabels[item.flatIdx] = label
 
@@ -160,11 +194,9 @@ func main() {
 }
 
 func renderWithEnvelope(synth *msfa.Synth, c *match.Candidate, noteNum int) []int16 {
-	// Render with natural envelope so Python can extract probe features (ADSR, brightness, etc.)
 	patch := c.Encode()
 	synth.SetVoice(0, patch)
 
-	// Note On
 	synth.WriteMidi([]byte{0x90, byte(noteNum), 100})
 
 	// Render ~2 seconds to capture full envelope including release
@@ -181,186 +213,6 @@ func renderWithEnvelope(synth *msfa.Synth, c *match.Candidate, noteNum int) []in
 	synth.GetSamples(remaining)
 
 	return pcm
-}
-
-func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
-	d := c.Copy()
-
-	for i := 0; i < 6; i++ {
-		// Perturb OutputLevel (σ=6, ±12) with slight attenuation bias
-		levelDelta := int(rng.NormFloat64() * 6.0)
-		newLevel := int(d.Ops[i].OutputLevel) + levelDelta
-		// 30% chance of slight attenuation (reduce by 5-10%)
-		if rng.Float64() < 0.30 {
-			attenuation := 3 + rng.Intn(4) // 3-6 levels quieter
-			newLevel -= attenuation
-		}
-		if newLevel < 0 {
-			newLevel = 0
-		}
-		if newLevel > 99 {
-			newLevel = 99
-		}
-		d.Ops[i].OutputLevel = uint8(newLevel)
-
-		// Perturb FreqFine (σ=2, ±4)
-		fineDelta := int(rng.NormFloat64() * 2.0)
-		newFine := int(d.Ops[i].FreqFine) + fineDelta
-		if newFine < 0 {
-			newFine = 0
-		}
-		if newFine > 99 {
-			newFine = 99
-		}
-		d.Ops[i].FreqFine = uint8(newFine)
-
-		// Perturb FreqCoarse (σ=1.5, ±3)
-		coarseDelta := int(rng.NormFloat64() * 1.5)
-		newCoarse := int(d.Ops[i].FreqCoarse) + coarseDelta
-		if newCoarse < 0 {
-			newCoarse = 0
-		}
-		if newCoarse > 31 {
-			newCoarse = 31
-		}
-		d.Ops[i].FreqCoarse = uint8(newCoarse)
-
-		// Perturb Rate1/Attack (σ=4, ±8)
-		r1Delta := int(rng.NormFloat64() * 4.0)
-		newR1 := int(d.Ops[i].Rate1) + r1Delta
-		if newR1 < 0 {
-			newR1 = 0
-		}
-		if newR1 > 99 {
-			newR1 = 99
-		}
-		d.Ops[i].Rate1 = uint8(newR1)
-
-		// Perturb Rate2/Decay (σ=4, ±8)
-		r2Delta := int(rng.NormFloat64() * 4.0)
-		newR2 := int(d.Ops[i].Rate2) + r2Delta
-		if newR2 < 0 {
-			newR2 = 0
-		}
-		if newR2 > 99 {
-			newR2 = 99
-		}
-		d.Ops[i].Rate2 = uint8(newR2)
-
-		// Perturb Rate3/Sustain (σ=4, ±8) — move sustain timing
-		r3Delta := int(rng.NormFloat64() * 4.0)
-		newR3 := int(d.Ops[i].Rate3) + r3Delta
-		if newR3 < 0 {
-			newR3 = 0
-		}
-		if newR3 > 99 {
-			newR3 = 99
-		}
-		d.Ops[i].Rate3 = uint8(newR3)
-
-		// Perturb Level3/Sustain (σ=6, ±12)
-		l3Delta := int(rng.NormFloat64() * 6.0)
-		newL3 := int(d.Ops[i].Level3) + l3Delta
-		if newL3 < 0 {
-			newL3 = 0
-		}
-		if newL3 > 99 {
-			newL3 = 99
-		}
-		d.Ops[i].Level3 = uint8(newL3)
-
-		// Perturb Rate4/Release (σ=4, ±8)
-		r4Delta := int(rng.NormFloat64() * 4.0)
-		newR4 := int(d.Ops[i].Rate4) + r4Delta
-		if newR4 < 0 {
-			newR4 = 0
-		}
-		if newR4 > 99 {
-			newR4 = 99
-		}
-		d.Ops[i].Rate4 = uint8(newR4)
-
-		// Perturb Level1/Attack (σ=6, ±12) — move attack endpoint
-		l1Delta := int(rng.NormFloat64() * 6.0)
-		newL1 := int(d.Ops[i].Level1) + l1Delta
-		if newL1 < 0 {
-			newL1 = 0
-		}
-		if newL1 > 99 {
-			newL1 = 99
-		}
-		d.Ops[i].Level1 = uint8(newL1)
-
-		// Perturb Level2/Decay (σ=6, ±12) — move decay endpoint
-		l2Delta := int(rng.NormFloat64() * 6.0)
-		newL2 := int(d.Ops[i].Level2) + l2Delta
-		if newL2 < 0 {
-			newL2 = 0
-		}
-		if newL2 > 99 {
-			newL2 = 99
-		}
-		d.Ops[i].Level2 = uint8(newL2)
-
-		// Perturb Level4/Release (σ=6, ±12) — move release endpoint
-		l4Delta := int(rng.NormFloat64() * 6.0)
-		newL4 := int(d.Ops[i].Level4) + l4Delta
-		if newL4 < 0 {
-			newL4 = 0
-		}
-		if newL4 > 99 {
-			newL4 = 99
-		}
-		d.Ops[i].Level4 = uint8(newL4)
-	}
-
-	// Perturb Feedback (σ=1.5, 30% chance)
-	if rng.Float64() < 0.30 {
-		fbDelta := int(rng.NormFloat64() * 1.5)
-		newFb := int(d.Feedback) + fbDelta
-		if newFb < 0 {
-			newFb = 0
-		}
-		if newFb > 7 {
-			newFb = 7
-		}
-		d.Feedback = uint8(newFb)
-	}
-
-	// Perturb pitch envelope (σ=3, 40% chance)
-	if rng.Float64() < 0.40 {
-		pr1Delta := int(rng.NormFloat64() * 3.0)
-		newPR1 := int(d.PitchRate1) + pr1Delta
-		if newPR1 < 0 {
-			newPR1 = 0
-		}
-		if newPR1 > 99 {
-			newPR1 = 99
-		}
-		d.PitchRate1 = uint8(newPR1)
-
-		pl1Delta := int(rng.NormFloat64() * 3.0)
-		newPL1 := int(d.PitchLevel1) + pl1Delta
-		if newPL1 < 0 {
-			newPL1 = 0
-		}
-		if newPL1 > 99 {
-			newPL1 = 99
-		}
-		d.PitchLevel1 = uint8(newPL1)
-
-		pl2Delta := int(rng.NormFloat64() * 3.0)
-		newPL2 := int(d.PitchLevel2) + pl2Delta
-		if newPL2 < 0 {
-			newPL2 = 0
-		}
-		if newPL2 > 99 {
-			newPL2 = 99
-		}
-		d.PitchLevel2 = uint8(newPL2)
-	}
-
-	return d
 }
 
 func normalizeTimbreParams(c *match.Candidate) []float32 {

@@ -765,8 +765,108 @@ textarea:focus {
     box-shadow: 0 0 6px #4caf50;
 }
 
+.key.pianoroll-active {
+    border-color: #2196f3;
+    box-shadow: 0 0 4px #2196f3;
+}
+
 .key:hover {
     filter: brightness(0.95);
+}
+
+/* Pianoroll */
+
+.pianoroll-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.3rem 0;
+}
+
+.pianoroll-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.3rem;
+}
+
+.pianoroll-btn {
+    background: #16213e;
+    color: #ccc;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.pianoroll-btn:hover {
+    background: #1a2744;
+    color: #fff;
+}
+
+.pianoroll-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.pianoroll-play {
+    background: #1b5e20;
+    border-color: #4caf50;
+    color: #fff;
+}
+
+.pianoroll-play:hover {
+    background: #2e7d32;
+}
+
+.pianoroll-play:disabled {
+    background: #1b5e20;
+}
+
+.pianoroll-stop {
+    background: #b71c1c;
+    border-color: #e94560;
+    color: #fff;
+}
+
+.pianoroll-stop:hover {
+    background: #c62828;
+}
+
+.pianoroll-hint {
+    color: #666;
+    font-size: 0.7rem;
+    margin-left: 0.5rem;
+}
+
+.pianoroll-canvas {
+    border: 1px solid #333;
+    border-radius: 4px;
+    cursor: crosshair;
+}
+
+.pianoroll-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.3rem;
+    font-size: 0.7rem;
+    color: #aaa;
+}
+
+.pianoroll-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.pianoroll-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
 }
 
 /* Piano wrapper — sticky above footer */
@@ -776,14 +876,16 @@ textarea:focus {
     bottom: 0;
     z-index: 20;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
     width: 100%;
     background-color: #1a1a2e;
     border-top: 1px solid #333;
+    padding: 0.4rem 0;
 }
 
 .piano-wrapper {
-    padding: 0.6rem 0;
+    padding: 0.3rem 0;
 }
 
 .piano-wrapper .keyboard {

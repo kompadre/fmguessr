@@ -478,7 +478,11 @@ func SysexBulkDumpMultiple(candidates []*Candidate) []byte {
 		if name == "" {
 			name = fmt.Sprintf("MATCH %-2d  ", i+1)
 		}
-		copy(voiceData[118:128], []byte(name[:10]))
+		n := name
+		if len(n) > 10 {
+			n = n[:10]
+		}
+		copy(voiceData[118:128], []byte(n))
 		copy(bank[i*128:], voiceData)
 	}
 

@@ -475,10 +475,7 @@ func (opt *DiffOptimizer) buildJacobian(base *Candidate, knobs []KnobDef, currNo
 		deltaSteps[i] = delta
 	}
 
-	// Render micro-shifted candidates in parallel
-	fits, _ := evaluateBatchParallel(cands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS)
-	_ = fits
-
+	// Render micro-shifted candidates individually for Jacobian computation
 	for i := 0; i < numKnobs; i++ {
 		pcm := RenderCandidate(cands[i], opt.note, opt.dur)
 		normPcm := NormalizeRMS(pcm)

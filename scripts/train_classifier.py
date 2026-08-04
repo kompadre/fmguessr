@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Train DX7 Patch Classifier and export to ONNX with embedded patch bytes.
+Train DX7 Patch Classifier (CNN on mel spectrogram) and export to ONNX.
 
 Usage:
-    python scripts/train_classifier.py --dataset dataset_cls.bin --codebook dx7_codebook.bin --output patch_classifier.onnx
+    python scripts/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx
 
 Architecture:
-    Input: 784 dims (256 sustain + 512 temporal + 8 energy + 7 flux + 1 MIDI)
-    Shared trunk: 784→512→256→128
-    Heads: MIDI key (128→37) + Patch index (128→N)
+    Input: (1, 128, 128) mel spectrogram — single channel, time × frequency
+    CNN: Conv2d layers with batch norm + max pool → adaptive avg pool → FC heads
+    Heads: MIDI key (37 classes) + Patch index (N classes)
     Output: ONNX with embedded patch bytes as constant tensor
 """
 
@@ -21,46 +21,83 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-FEATURE_DIM = 784
+MEL_SPEC_SIZE = 128
 MIDI_KEY_CLASSES = 37  # 3 octaves (36-72)
 
 
 class PatchClassifierDataset(Dataset):
-    def __init__(self, features, patch_labels, midi_labels):
-        self.features = features
+    def __init__(self, mel_specs, patch_labels, midi_labels):
+        self.mel_specs = mel_specs
         self.patch_labels = patch_labels
         self.midi_labels = midi_labels
 
     def __len__(self):
-        return len(self.features)
+        return len(self.mel_specs)
 
     def __getitem__(self, idx):
+        # Reshape flat 16384 → (1, 128, 128) for CNN input
+        mel = self.mel_specs[idx].reshape(1, MEL_SPEC_SIZE, MEL_SPEC_SIZE)
         return {
-            'input': torch.tensor(self.features[idx], dtype=torch.float32),
+            'input': torch.tensor(mel, dtype=torch.float32),
             'patch': torch.tensor(self.patch_labels[idx], dtype=torch.long),
             'midi': torch.tensor(self.midi_labels[idx], dtype=torch.long),
         }
 
 
-class PatchClassifier(nn.Module):
+class PatchClassifierCNN(nn.Module):
+    """CNN classifier operating on 128×128 mel spectrograms.
+
+    Architecture:
+        Conv2d(1→32, 3) + BN + ReLU + Pool(2)      → 64×64
+        Conv2d(32→64, 3) + BN + ReLU + Pool(2)     → 32×32
+        Conv2d(64→128, 3) + BN + ReLU + Pool(2)    → 16×16
+        Conv2d(128→256, 3) + BN + ReLU + Pool(2)   → 8×8
+        AdaptiveAvgPool(4)                           → 4×4
+        Flatten(256×4×4=4096) → FC(4096→512) + ReLU + Drop(0.3)
+        FC(512→128) + ReLU + Drop(0.2)
+        Heads: FC(128→37) MIDI + FC(128→N) patch
+    """
+
     def __init__(self, num_patches, num_midi_keys=MIDI_KEY_CLASSES):
         super().__init__()
-        self.shared = nn.Sequential(
-            nn.Linear(FEATURE_DIM, 512),
-            nn.ReLU(),
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            nn.AdaptiveAvgPool2d(4),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(256 * 4 * 4, 512),
+            nn.ReLU(inplace=True),
             nn.Dropout(0.3),
-            nn.Linear(512, 256),
-            nn.ReLU(),
+            nn.Linear(512, 128),
+            nn.ReLU(inplace=True),
             nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
         )
         self.midi_head = nn.Linear(128, num_midi_keys)
         self.patch_head = nn.Linear(128, num_patches)
 
     def forward(self, x):
-        feat = self.shared(x)
+        x = self.conv_layers(x)
+        feat = self.classifier(x)
         return {
             'midi': self.midi_head(feat),
             'patch': self.patch_head(feat),
@@ -76,12 +113,16 @@ def load_dataset(path):
         note_min = struct.unpack('I', f.read(4))[0]
         note_max = struct.unpack('I', f.read(4))[0]
 
+        expected_dim = MEL_SPEC_SIZE * MEL_SPEC_SIZE
         print(f"Dataset: {num_samples} samples, {feature_dim} features, {num_patches} patches, notes {note_min}-{note_max}")
+        if feature_dim != expected_dim:
+            print(f"  WARNING: expected {expected_dim} (mel {MEL_SPEC_SIZE}×{MEL_SPEC_SIZE}), got {feature_dim}")
+            sys.exit(1)
 
         # Read patch bytes (128 bytes per patch)
         patch_bytes = np.frombuffer(f.read(num_patches * 128), dtype=np.uint8).reshape(num_patches, 128)
 
-        # Read features
+        # Read features (mel spectrograms, already [0,1] normalized)
         features = np.frombuffer(f.read(num_samples * feature_dim * 4), dtype=np.float32).reshape(num_samples, feature_dim)
 
         # Read patch labels
@@ -166,9 +207,9 @@ def export_to_onnx(model, output_path, patch_bytes, device):
     import onnx
 
     model.eval()
-    dummy_input = torch.randn(1, FEATURE_DIM).to(device)
+    # Input: (batch, 1, 128, 128) mel spectrogram
+    dummy_input = torch.randn(1, 1, MEL_SPEC_SIZE, MEL_SPEC_SIZE).to(device)
 
-    # Forward to get output names
     with torch.no_grad():
         dummy_out = model(dummy_input)
 
@@ -179,11 +220,11 @@ def export_to_onnx(model, output_path, patch_bytes, device):
         export_params=True,
         opset_version=18,
         do_constant_folding=True,
-        input_names=['features'],
+        input_names=['mel_input'],
         output_names=['midi_logits', 'patch_logits'],
         dynamo=False,
         dynamic_axes={
-            'features': {0: 'batch_size'},
+            'mel_input': {0: 'batch_size'},
             'midi_logits': {0: 'batch_size'},
             'patch_logits': {0: 'batch_size'},
         },
@@ -192,7 +233,6 @@ def export_to_onnx(model, output_path, patch_bytes, device):
     # Load and inject patch bytes constant
     onnx_model = onnx.load(output_path + '.tmp')
 
-    # Create patch bytes as uint8 tensor using numpy_helper
     from onnx import numpy_helper
     patch_tensor = numpy_helper.from_array(patch_bytes.astype(np.uint8), name='embedded_patches')
     patch_node = onnx.helper.make_node(
@@ -206,25 +246,22 @@ def export_to_onnx(model, output_path, patch_bytes, device):
     )
 
     onnx_model.graph.node.insert(0, patch_node)
-
-    # Rename outputs to include patch embedding reference
     onnx.helper.make_opsetid("", 18)
-
     onnx.save(onnx_model, output_path)
     os.remove(output_path + '.tmp')
 
-    # Also save patch bytes separately for the Go side
+    # Save patch bytes separately for Go side
     np.save(output_path + '.patches.npy', patch_bytes)
     print(f"Patch bytes saved to {output_path}.patches.npy")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train DX7 patch classifier')
+    parser = argparse.ArgumentParser(description='Train DX7 patch classifier (CNN on mel spectrogram)')
     parser.add_argument('--dataset', required=True, help='Binary dataset from Go classifier tool')
     parser.add_argument('--output', default='patch_classifier.onnx', help='Output ONNX model')
     parser.add_argument('--epochs', type=int, default=200, help='Training epochs')
     parser.add_argument('--batch-size', type=int, default=64, help='Batch size')
-    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--device', default='auto', help='Device (auto/cpu/cuda)')
     parser.add_argument('--skip-train', action='store_true', help='Skip training, load existing best.pth for export only')
     args = parser.parse_args()
@@ -232,12 +269,8 @@ def main():
     # Load dataset
     features, patch_labels, midi_labels, patch_bytes, num_patches, note_min, note_max = load_dataset(args.dataset)
 
-    # Normalize features to [0, 1] per-feature
-    feat_min = features.min(axis=0)
-    feat_max = features.max(axis=0)
-    feat_range = feat_max - feat_min
-    feat_range[feat_range < 1e-8] = 1.0
-    features = (features - feat_min) / feat_range
+    # Mel spectrograms are already normalized to [0, 1] by ComputeMelSpectrogram
+    # No additional normalization needed
 
     # Split train/val
     n_total = len(features)
@@ -262,7 +295,7 @@ def main():
     print(f"Device: {device}")
 
     # Model
-    model = PatchClassifier(num_patches).to(device)
+    model = PatchClassifierCNN(num_patches).to(device)
     patch_criterion = nn.CrossEntropyLoss()
     midi_criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -294,31 +327,23 @@ def main():
     model.load_state_dict(torch.load('classifier_best.pth'))
     export_to_onnx(model, args.output, patch_bytes, device)
 
-    # Save normalization stats as simple binary for Go
-    norm_path = args.output + '.norm.bin'
-    with open(norm_path, 'wb') as f:
-        f.write(struct.pack('I', FEATURE_DIM))  # uint32 dim
-        f.write(feat_min.astype(np.float32).tobytes())  # float32[784]
-        f.write(feat_max.astype(np.float32).tobytes())  # float32[784]
-    print(f"Norm stats saved to {norm_path}")
-
     # Verify
     print("Verifying ONNX model...")
     import onnxruntime as ort
     import time as _time
     ort_session = ort.InferenceSession(args.output)
-    dummy = np.random.randn(1, FEATURE_DIM).astype(np.float32)
-    outputs = ort_session.run(None, {'features': dummy})
+    dummy = np.random.randn(1, 1, MEL_SPEC_SIZE, MEL_SPEC_SIZE).astype(np.float32)
+    outputs = ort_session.run(None, {'mel_input': dummy})
     print(f"  Outputs: {[o.shape for o in outputs]}")
 
     times = []
     for _ in range(10):
         t0 = _time.perf_counter()
-        ort_session.run(None, {'features': dummy})
+        ort_session.run(None, {'mel_input': dummy})
         times.append(_time.perf_counter() - t0)
     print(f"  Inference: ~{sum(times)/len(times)*1000:.1f}ms")
 
-    # Cleanup — only remove temp file when training actually ran
+    # Cleanup
     if not args.skip_train and os.path.exists('classifier_best.pth'):
         os.remove('classifier_best.pth')
     print(f"\nDone! Model: {args.output}")

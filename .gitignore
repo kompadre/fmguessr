@@ -19,6 +19,8 @@
 /*.syx
 /exports/
 /rendered_*/
+/rendered/
+/scripts/.venv
 /*.log
 /lib/
 /onnxruntime-*/

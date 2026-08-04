@@ -27,6 +27,7 @@ func main() {
 	cspoa := flag.Bool("cspoa", false, "enable CSPOA progressive attachment (explorative)")
 	cspoaBudget := flag.Int("cspoa-budget", 5000, "CSPOA render budget")
 	classifier := flag.String("classifier", "", "path to patch classifier ONNX model (optional)")
+	classifierOnly := flag.Bool("classifier-only", false, "skip GA, return best classifier predictions only")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <target.wav>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Find DX7 FM parameters that produce a sound similar to the target WAV.\n\n")
@@ -134,6 +135,7 @@ func main() {
 			MaxRenders: *cspoaBudget,
 		},
 		ClassifierPath: *classifier,
+		ClassifierOnly: *classifierOnly,
 	}
 
 	fmt.Printf("\nStarting GA: %d generations × %d population = %d evaluations max\n",

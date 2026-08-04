@@ -1,7 +1,6 @@
 package match
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -21,8 +20,6 @@ type PatchClassifier struct {
 	numPatches    int
 	noteMin       int
 	noteMax       int
-	featMin       [Feature784Dim]float64 // normalization stats
-	featMax       [Feature784Dim]float64
 }
 
 // PatchPrediction holds the classifier output.
@@ -41,7 +38,8 @@ type PatchMatch struct {
 }
 
 // NewPatchClassifier loads an ONNX model with embedded patch bytes.
-// Looks for the model file and companion .norm.npy file for normalization stats.
+// The model takes a 128×128 mel spectrogram as input.
+// Looks for the model file and companion .patches.npy file for patch bytes.
 func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 	ort.SetSharedLibraryPath("./lib/libonnxruntime.so")
 	if !ort.IsInitialized() {
@@ -56,10 +54,11 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 		return nil, fmt.Errorf("failed to load patch bytes: %w", err)
 	}
 
-	inputNames := []string{"features"}
+	inputNames := []string{"mel_input"}
 	outputNames := []string{"midi_logits", "patch_logits"}
 
-	inputTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, Feature784Dim))
+	// Input shape: (batch=1, channels=1, height=128, width=128) — NCHW
+	inputTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, 1, int64(MelSpecSize), int64(MelSpecSize)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create input tensor: %w", err)
 	}
@@ -94,15 +93,6 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 		patchTensor: patchTensor,
 		patchBytes:  patchBytes,
 		numPatches:  numPatches,
-	}
-
-	// Load normalization stats from companion file
-	if err := pc.loadNormStats(modelPath + ".norm.bin"); err != nil {
-		log.Printf("Warning: could not load normalization stats: %v (using identity)", err)
-		for i := 0; i < Feature784Dim; i++ {
-			pc.featMin[i] = 0
-			pc.featMax[i] = 1
-		}
 	}
 
 	fmt.Printf("[classifier] Loaded patch classifier: %s (%d patches)\n", modelPath, numPatches)
@@ -152,7 +142,6 @@ func LoadPatchBytes(path string) ([]byte, int, error) {
 	}
 
 	// Parse shape from header: "('uint8', False, (N, 128))"
-	// Find the tuple with two numbers
 	hdr := string(headerStr)
 	shapeStart := -1
 	for i := len(hdr) - 1; i >= 0; i-- {
@@ -165,7 +154,6 @@ func LoadPatchBytes(path string) ([]byte, int, error) {
 		return nil, 0, fmt.Errorf("cannot find shape in npy header")
 	}
 	shapeStr := hdr[shapeStart:]
-	// Parse "1056, 128)"
 	n1, n2 := 0, 0
 	fmt.Sscanf(shapeStr, "(%d, %d)", &n1, &n2)
 	if n1 == 0 || n2 != 128 {
@@ -181,58 +169,13 @@ func LoadPatchBytes(path string) ([]byte, int, error) {
 	return data, n1, nil
 }
 
-// loadNormStats reads normalization min/max from a .norm.bin file.
-// Format: uint32 dim, float32[dim] min, float32[dim] max
-func (pc *PatchClassifier) loadNormStats(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Read dimension
-	var dim uint32
-	if err := binary.Read(f, binary.LittleEndian, &dim); err != nil {
-		return fmt.Errorf("read dim: %w", err)
-	}
-	if dim != Feature784Dim {
-		return fmt.Errorf("expected dim %d, got %d", Feature784Dim, dim)
-	}
-
-	// Read min array
-	for i := 0; i < Feature784Dim; i++ {
-		var v float32
-		if err := binary.Read(f, binary.LittleEndian, &v); err != nil {
-			return fmt.Errorf("read min[%d]: %w", i, err)
-		}
-		pc.featMin[i] = float64(v)
-	}
-
-	// Read max array
-	for i := 0; i < Feature784Dim; i++ {
-		var v float32
-		if err := binary.Read(f, binary.LittleEndian, &v); err != nil {
-			return fmt.Errorf("read max[%d]: %w", i, err)
-		}
-		pc.featMax[i] = float64(v)
-	}
-
-	return nil
-}
-
-// Predict classifies a 784-dim feature vector and returns the best patch.
-func (pc *PatchClassifier) Predict(features [Feature784Dim]float64) PatchPrediction {
-	// Normalize features
+// Predict classifies a 128×128 mel spectrogram and returns the best patch.
+// melSpec is a flat [16384]float64 array (row-major 128×128), already normalized to [0,1].
+func (pc *PatchClassifier) Predict(melSpec [MelSpecFeatureDim]float64) PatchPrediction {
+	// Copy mel spectrogram into input tensor (already [0,1], no normalization needed)
 	inputData := pc.inputTensor.GetData()
-	for i := 0; i < Feature784Dim; i++ {
-		v := features[i]
-		min := pc.featMin[i]
-		max := pc.featMax[i]
-		rng := max - min
-		if rng < 1e-8 {
-			rng = 1.0
-		}
-		inputData[i] = float32((v - min) / rng)
+	for i := 0; i < MelSpecFeatureDim; i++ {
+		inputData[i] = float32(melSpec[i])
 	}
 
 	// Run inference
@@ -259,9 +202,9 @@ func (pc *PatchClassifier) Predict(features [Feature784Dim]float64) PatchPredict
 	}
 }
 
-// PredictTopK returns the top-K patch predictions.
-func (pc *PatchClassifier) PredictTopK(features [Feature784Dim]float64, k int) PatchPrediction {
-	pred := pc.Predict(features)
+// PredictTopK returns the top-K patch predictions from a mel spectrogram.
+func (pc *PatchClassifier) PredictTopK(melSpec [MelSpecFeatureDim]float64, k int) PatchPrediction {
+	pred := pc.Predict(melSpec)
 
 	// Get patch logits
 	patchData := pc.patchTensor.GetData()
@@ -281,7 +224,6 @@ func (pc *PatchClassifier) PredictTopK(features [Feature784Dim]float64, k int) P
 	for i := 0; i < n; i++ {
 		topK = append(topK, idxProb{i, float64(probs[i])})
 	}
-	// Partial sort for top-K
 	if k > n {
 		k = n
 	}

@@ -31,7 +31,8 @@ type Config struct {
 	CSPOA CSPOAConfig
 
 	// Patch Classifier: standalone NN that classifies patches from codebook
-	ClassifierPath string // Path to patch classifier ONNX model (optional)
+	ClassifierPath  string // Path to patch classifier ONNX model (optional)
+	ClassifierOnly  bool   // Skip GA, return only classifier predictions
 }
 
 // DefaultConfig returns sensible defaults.
@@ -556,7 +557,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		} else {
 			defer classifier.Close()
 
-			features := ExtractFeatures784(target, RenderSampleRate, int(cfg.MIDINote))
+			features := ExtractMelSpectrogram(target, RenderSampleRate)
 			pred := classifier.PredictTopK(features, 5)
 
 			if cfg.Verbose {
@@ -629,9 +630,76 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
+	// Classifier-only mode: return classifier predictions directly, skip GA
+	if cfg.ClassifierOnly {
+		if len(nnCandidates) == 0 {
+			fmt.Println("Warning: classifier-only mode but no classifier predictions available")
+			return Result{BestDist: math.MaxFloat64}
+		}
+
+		// Render and evaluate all classifier candidates
+		type scoredCand struct {
+			cand *Candidate
+			dist float64
+		}
+		scored := make([]scoredCand, 0, len(nnCandidates))
+		for i, c := range nnCandidates {
+			audio := RenderCandidate(c, cfg.MIDINote, cfg.RenderDur)
+			trimmed := TrimOrPad(audio, len(target))
+			normed := NormalizeRMS(trimmed)
+			dist := SpectralDistance(target, normed)
+			if i < len(classifierFullDists) && classifierFullDists[i] < dist {
+				dist = classifierFullDists[i]
+			}
+			scored = append(scored, scoredCand{c, dist})
+		}
+
+		// Sort by distance
+		for i := 0; i < len(scored); i++ {
+			for j := i + 1; j < len(scored); j++ {
+				if scored[j].dist < scored[i].dist {
+					scored[i], scored[j] = scored[j], scored[i]
+				}
+			}
+		}
+
+		best := scored[0].cand
+		bestDist := scored[0].dist
+
+		// Build top list
+		topN := 32
+		if len(scored) < topN {
+			topN = len(scored)
+		}
+		top := make([]*Candidate, topN)
+		for i := 0; i < topN; i++ {
+			top[i] = scored[i].cand
+		}
+
+		// Build Top 5
+		top5N := 5
+		if len(scored) < top5N {
+			top5N = len(scored)
+		}
+		fullTop5 := make([]*Candidate, top5N)
+		for i := 0; i < top5N; i++ {
+			fullTop5[i] = scored[i].cand
+		}
+
+		reportProgress(cfg, 100, "Completed (Classifier Only)")
+		return Result{
+			Best:     best,
+			BestDist: bestDist,
+			Iters:    len(nnCandidates),
+			Top:      top,
+			FullTop5: fullTop5,
+		}
+	}
+
 	// Classifier pre-refinement: run LiveOptimizer on best classifier seed when no NN model ran
 	var globalLiveOpt *LiveOptimizer
 	if bestClassifierNNIdx >= 0 {
+		fmt.Println("Classifier pre-optimization: running LiveOptimizer on best seed...")
 		if cfg.Verbose {
 			fmt.Println("--- Classifier Pre-optimization (live optimizer & diff optimizer) ---")
 		}
@@ -642,6 +710,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 		globalLiveOpt = NewLiveOptimizer(target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		refined := globalLiveOpt.Run()
+		fmt.Printf("Classifier pre-optimization: %.6f -> %.6f\n", bestClassifierFullDist, globalLiveOpt.bestDist)
 
 		// Differential Jacobian steering on temporal timbre features
 		diffOpt := NewDiffOptimizer(target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
@@ -1242,264 +1311,6 @@ func applyStep(c *Candidate, which int, step int8) {
 	case 7:
 		c.Ops[opIdx].Rate4 = clampU8(c.Ops[opIdx].Rate4, step, 10, 99)
 	}
-}
-
-// runMicroGA runs a small GA fine-tuning pass on a predicted candidate.
-// Only mutates OutputLevel, FreqFine, and Feedback. Algorithm is locked.
-func runMicroGA(seed *Candidate, target []float64, features TargetFeatures, cfg Config) Result {
-	rawTargetRMS := features.TargetRMS
-	if rawTargetRMS <= 0 {
-		rawTargetRMS = CalcRMS(target)
-	}
-	const microPop = 32
-	const microGens = 5
-
-	// Create population: 1 seed + 31 mutated copies
-	rng := rand.New(rand.NewSource(42))
-	pop := make([]*Candidate, microPop)
-	pop[0] = seed.Copy()
-	for i := 1; i < microPop; i++ {
-		pop[i] = microMutate(seed.Copy(), rng)
-	}
-
-	// Evaluate initial population
-	fits, feats := evaluateBatchParallel(pop, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-	totalEvals := len(pop)
-
-	// Track best
-	bestDist := fits[0]
-	bestIdx := 0
-	for i := 1; i < microPop; i++ {
-		if fits[i] < bestDist {
-			bestDist = fits[i]
-			bestIdx = i
-		}
-	}
-	bestEverDist := bestDist
-	bestEver := pop[bestIdx].Copy()
-
-	// Run micro-GA
-	microCfg := GAConfig{
-		Population:        microPop,
-		Generations:       microGens,
-		TournamentK:       3,
-		CrossoverRate:     0.5,
-		MutationRateStart: 0.4,
-		MutationRateEnd:   0.1,
-		Elites:            2,
-	}
-
-	microGA := NewGA(pop, fits, feats, microCfg)
-
-	for gen := 0; gen < microGens; gen++ {
-		nextCandidates := microGA.Evolve(features)
-		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-		totalEvals += len(nextCandidates)
-
-		microGA.SetPopulation(nextCandidates, nextFitnesses, nextFeatures)
-
-		// Track best
-		for i := 0; i < microPop; i++ {
-			if nextFitnesses[i] < bestEverDist {
-				bestEverDist = nextFitnesses[i]
-				bestEver = nextCandidates[i].Copy()
-			}
-		}
-
-		if cfg.Verbose && (gen+1)%2 == 0 {
-			fmt.Printf("  micro-gen %d/%d: best=%.6f\n", gen+1, microGens, bestEverDist)
-		}
-
-		// Early termination
-		if bestEverDist < 0.01 {
-			break
-		}
-	}
-
-	return Result{
-		Best:     bestEver,
-		BestDist: bestEverDist,
-		Iters:    totalEvals,
-	}
-}
-
-// microMutate applies small perturbations to OutputLevel, FreqFine, and Feedback.
-func microMutate(c *Candidate, rng *rand.Rand) *Candidate {
-	d := c.Copy()
-
-	for i := 0; i < 6; i++ {
-		// OutputLevel ±4
-		dl := int(rng.NormFloat64() * 2.0)
-		nl := int(d.Ops[i].OutputLevel) + dl
-		minLevel := 75
-		if IsCarrier(d.Algorithm, i) {
-			minLevel = 85
-		}
-		if nl < minLevel {
-			nl = minLevel
-		}
-		if nl > 99 {
-			nl = 99
-		}
-		d.Ops[i].OutputLevel = uint8(nl)
-
-		// FreqFine ±2
-		df := int(rng.NormFloat64() * 1.0)
-		nf := int(d.Ops[i].FreqFine) + df
-		if nf < 0 {
-			nf = 0
-		}
-		if nf > 99 {
-			nf = 99
-		}
-		d.Ops[i].FreqFine = uint8(nf)
-	}
-
-	// Feedback ±1
-	if rng.Float64() < 0.30 {
-		db := int(rng.NormFloat64() * 0.5)
-		nb := int(d.Feedback) + db
-		if nb < 0 {
-			nb = 0
-		}
-		if nb > 7 {
-			nb = 7
-		}
-		d.Feedback = uint8(nb)
-	}
-
-	return d
-}
-
-// runEnvelopeGA optimizes envelope parameters (rates, levels) while holding timbre fixed.
-// Takes the best timbre candidate from Phase 1 and optimizes envelope shaping.
-func runEnvelopeGA(timbreCand *Candidate, target []float64, features TargetFeatures, cfg Config) Result {
-	rawTargetRMS := features.TargetRMS
-	if rawTargetRMS <= 0 {
-		rawTargetRMS = CalcRMS(target)
-	}
-	const envPop = 32
-	const envGens = 10
-
-	// Create population: clone the timbre candidate with envelope mutations
-	rng := rand.New(rand.NewSource(43))
-	pop := make([]*Candidate, envPop)
-	pop[0] = timbreCand.Copy()
-
-	for i := 1; i < envPop; i++ {
-		pop[i] = envelopeMutate(timbreCand.Copy(), rng)
-	}
-
-	// Evaluate initial population
-	fits, feats := evaluateBatchParallel(pop, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-	totalEvals := len(pop)
-
-	// Track best
-	bestDist := fits[0]
-	bestIdx := 0
-	for i := 1; i < envPop; i++ {
-		if fits[i] < bestDist {
-			bestDist = fits[i]
-			bestIdx = i
-		}
-	}
-	bestEverDist := bestDist
-	bestEver := pop[bestIdx].Copy()
-
-	// Run envelope GA
-	envCfg := GAConfig{
-		Population:        envPop,
-		Generations:       envGens,
-		TournamentK:       3,
-		CrossoverRate:     0.5,
-		MutationRateStart: 0.3,
-		MutationRateEnd:   0.1,
-		Elites:            2,
-	}
-
-	envGA := NewGA(pop, fits, feats, envCfg)
-
-	for gen := 0; gen < envGens; gen++ {
-		nextCandidates := envGA.Evolve(features)
-		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-		totalEvals += len(nextCandidates)
-
-		envGA.SetPopulation(nextCandidates, nextFitnesses, nextFeatures)
-
-		for i := 0; i < envPop; i++ {
-			if nextFitnesses[i] < bestEverDist {
-				bestEverDist = nextFitnesses[i]
-				bestEver = nextCandidates[i].Copy()
-			}
-		}
-
-		if cfg.Verbose && (gen+1)%3 == 0 {
-			fmt.Printf("  envelope-gen %d/%d: best=%.6f\n", gen+1, envGens, bestEverDist)
-		}
-
-		if bestEverDist < 0.01 {
-			break
-		}
-	}
-
-	return Result{
-		Best:     bestEver,
-		BestDist: bestEverDist,
-		Iters:    totalEvals,
-	}
-}
-
-// envelopeMutate perturbs only envelope params (rates, levels) while keeping timbre fixed.
-func envelopeMutate(c *Candidate, rng *rand.Rand) *Candidate {
-	d := c.Copy()
-
-	for i := 0; i < 6; i++ {
-		// Rate1 (attack) ±10
-		dr1 := int(rng.NormFloat64() * 5.0)
-		nr1 := int(d.Ops[i].Rate1) + dr1
-		if nr1 < 0 {
-			nr1 = 0
-		}
-		if nr1 > 99 {
-			nr1 = 99
-		}
-		d.Ops[i].Rate1 = uint8(nr1)
-
-		// Rate2 (decay) ±10
-		dr2 := int(rng.NormFloat64() * 5.0)
-		nr2 := int(d.Ops[i].Rate2) + dr2
-		if nr2 < 0 {
-			nr2 = 0
-		}
-		if nr2 > 99 {
-			nr2 = 99
-		}
-		d.Ops[i].Rate2 = uint8(nr2)
-
-		// Level3 (sustain) ±5
-		dl3 := int(rng.NormFloat64() * 3.0)
-		nl3 := int(d.Ops[i].Level3) + dl3
-		if nl3 < 0 {
-			nl3 = 0
-		}
-		if nl3 > 99 {
-			nl3 = 99
-		}
-		d.Ops[i].Level3 = uint8(nl3)
-
-		// Rate4 (release) ±10
-		dr4 := int(rng.NormFloat64() * 5.0)
-		nr4 := int(d.Ops[i].Rate4) + dr4
-		if nr4 < 0 {
-			nr4 = 0
-		}
-		if nr4 > 99 {
-			nr4 = 99
-		}
-		d.Ops[i].Rate4 = uint8(nr4)
-	}
-
-	return d
 }
 
 // evaluateBatchParallel evaluates candidates concurrently across CPU cores using a multi-threaded worker pool.

@@ -1,5 +1,6 @@
 import { createPatchRow, createPatchList, highlightPatchRow } from './components/patch.js';
 import { createPiano } from './components/piano.js';
+import { createPianoroll } from './components/pianoroll.js';
 import { createSpectrogram } from './components/spectrogram.js';
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
 
@@ -16,6 +17,9 @@ let jobs = [];
 let activeJobIndex = -1;
 let pollQueue = [];
 let activeSyxVoiceData = null; // voice_data of currently selected .syx patch for piano
+let activePianorollPatchId = null; // patch name/id for pianoroll note coloring
+let pianorollNotes = []; // [{midi, start, dur, patchId, color}]
+let pianorollInstance = null; // current pianoroll component instance
 
 const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
 
@@ -198,8 +202,37 @@ async function clearAllSessions() {
     tabContent.innerHTML = '';
     tabContent.classList.remove('visible');
     document.getElementById('piano-dock').innerHTML = '';
+    if (pianorollInstance) pianorollInstance.stopPlayback();
+    pianorollInstance = null;
+    pianorollNotes.length = 0;
     renderFavorites();
     updateClearBtn();
+}
+
+function rebuildPianoDock(midiNote, job) {
+    const pianoDock = document.getElementById('piano-dock');
+    pianoDock.innerHTML = '';
+    if (!activeSyxVoiceData && !job) return;
+
+    const note = midiNote || 60;
+    const playFn = (midi) => playNote(midi, job || null, activeSyxVoiceData);
+
+    // Pianoroll
+    pianorollInstance = createPianoroll({
+        notes: pianorollNotes,
+        playNoteFn: playFn,
+        onNotesChange: () => {
+            // Update piano key highlights
+            const pianoEl = pianoDock.querySelector('.piano-wrapper');
+            if (pianoEl && pianoEl._updateHighlights) pianoEl._updateHighlights();
+        },
+        activePatchId: activePianorollPatchId,
+    });
+    pianoDock.appendChild(pianorollInstance.element);
+
+    // Piano keyboard
+    const piano = createPiano(note, job, playFn, pianorollNotes);
+    pianoDock.appendChild(piano);
 }
 
 // --- .syx Tab Persistence ---
@@ -1386,13 +1419,12 @@ function createSyxTabInner(tabId, name, patches) {
             wav_url: null,
         }, {
             onSelect: () => {
-                // Assign to piano — set active voice_data
+                // Assign to piano — set active voice_data and pianoroll patch
                 if (patch.voice_data) {
                     activeSyxVoiceData = patch.voice_data;
-                    const pianoDock = document.getElementById('piano-dock');
-                    pianoDock.innerHTML = '';
-                    pianoDock.appendChild(createPiano(60, null, (midi) => playNote(midi, null, activeSyxVoiceData)));
-                    pianoDock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    activePianorollPatchId = displayName;
+                    rebuildPianoDock();
+                    document.getElementById('piano-dock').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
             },
             onStar: () => {
@@ -1754,11 +1786,11 @@ function switchTab(tabId) {
         const firstRow = syxContent.querySelector('.patch-row');
         if (firstRow && firstRow.dataset.voiceData) {
             activeSyxVoiceData = firstRow.dataset.voiceData;
+            activePianorollPatchId = firstRow.dataset.patchName || null;
         }
     }
 
-    const piano = createPiano(60, null, (midi) => playNote(midi, null, activeSyxVoiceData));
-    pianoDock.appendChild(piano);
+    rebuildPianoDock();
 
     // Make patch rows set the active voice_data on click
     if (syxContent) {
@@ -2358,9 +2390,7 @@ function renderResults(index) {
     }
 
     // Piano — anchored above footer in piano-dock
-    const pianoDock = document.getElementById('piano-dock');
-    pianoDock.innerHTML = '';
-    pianoDock.appendChild(createPiano(data.midi_note, job, playNote));
+    rebuildPianoDock(data.midi_note, job);
 
     tabContent.classList.add('visible');
 }

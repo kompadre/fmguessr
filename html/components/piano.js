@@ -1,4 +1,4 @@
-export function createPiano(matchedMidi, job, playNoteFn) {
+export function createPiano(matchedMidi, job, playNoteFn, pianorollNotes) {
     const wrapper = document.createElement('div');
     wrapper.className = 'piano-wrapper';
 
@@ -61,6 +61,7 @@ export function createPiano(matchedMidi, job, playNoteFn) {
         { midi: 83, name: 'B5',  white: true },
     ];
 
+    const keyElements = {};
     notes.forEach(n => {
         const key = document.createElement('div');
         key.className = 'key ' + (n.white ? 'white' : 'black');
@@ -78,9 +79,23 @@ export function createPiano(matchedMidi, job, playNoteFn) {
         key.addEventListener('mouseup', () => { pressed = false; key.classList.remove('pressed'); });
         key.addEventListener('mouseleave', () => { if (pressed) key.classList.remove('pressed'); });
 
+        keyElements[n.midi] = key;
         kb.appendChild(key);
     });
 
+    // Highlight keys that have pianoroll notes
+    function updateHighlights() {
+        const midiSet = new Set((pianorollNotes || []).map(n => n.midi));
+        for (const [midi, key] of Object.entries(keyElements)) {
+            const m = parseInt(midi);
+            if (m >= 60 && m <= 77) {
+                key.classList.toggle('pianoroll-active', midiSet.has(m));
+            }
+        }
+    }
+    updateHighlights();
+
     wrapper.appendChild(kb);
+    wrapper._updateHighlights = updateHighlights;
     return wrapper;
 }
