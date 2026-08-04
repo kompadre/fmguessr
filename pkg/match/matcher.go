@@ -29,6 +29,9 @@ type Config struct {
 
 	// CSPOA: Codebook-Seeded Progressive Operator Attachment (explorative)
 	CSPOA CSPOAConfig
+
+	// Patch Classifier: standalone NN that classifies patches from codebook
+	ClassifierPath string // Path to patch classifier ONNX model (optional)
 }
 
 // DefaultConfig returns sensible defaults.
@@ -526,6 +529,55 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 		} else if cfg.Verbose {
 			fmt.Println("[CSPOA] Skipped: no codebook available for delta extraction")
+		}
+	}
+
+	// Step 2.7 — Patch Classifier: NN classifies patches from codebook
+	if cfg.ClassifierPath != "" {
+		if cfg.Verbose {
+			fmt.Println("--- Step 2.7: Patch Classifier ---")
+		}
+		reportProgress(cfg, 42, "Step 2.7: Patch Classifier")
+
+		classifier, clsErr := NewPatchClassifier(cfg.ClassifierPath)
+		if clsErr != nil {
+			fmt.Printf("Warning: could not load classifier: %v\n", clsErr)
+		} else {
+			defer classifier.Close()
+
+			features := ExtractFeatures784(target, RenderSampleRate, int(cfg.MIDINote))
+			pred := classifier.PredictTopK(features, 5)
+
+			if cfg.Verbose {
+				fmt.Printf("Classifier: midi=%d confidence=%.3f top5=[", pred.MidiKey, pred.Confidence)
+				for i, m := range pred.TopK {
+					if i > 0 {
+						fmt.Printf(", ")
+					}
+					fmt.Printf("#%d(%.3f)", m.Index, m.Confidence)
+				}
+				fmt.Println("]")
+			}
+
+			// Convert top predictions to candidates and add as seeds
+			for _, m := range pred.TopK {
+				if m.PatchBytes != nil {
+					cand := DecodeVoicePatch(m.PatchBytes)
+					if cand != nil {
+						dist := evaluateSingleCandidate(cand, target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
+						if nnCandidates == nil {
+							nnCandidates = make([]*Candidate, 0)
+						}
+						nnCandidates = append(nnCandidates, cand)
+						timbreCohort.TryInsert(cand, dist)
+						fullCohort.TryInsert(cand, dist)
+
+						if cfg.Verbose {
+							fmt.Printf("  Classifier seed #%d: algo=%d dist=%.6f\n", m.Index, cand.Algorithm+1, dist)
+						}
+					}
+				}
+			}
 		}
 	}
 
