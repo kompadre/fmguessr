@@ -2,7 +2,6 @@ import { createPatchRow, createPatchList, highlightPatchRow } from './components
 import { createPiano } from './components/piano.js';
 import { createSpectrogram } from './components/spectrogram.js';
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
-import { createPatchCard } from './components/patch-card.js';
 
 const fileInput = document.getElementById('wav-input');
 const fileLabel = document.getElementById('file-label');
@@ -24,6 +23,7 @@ const STORAGE_KEY = 'fmguessr_sessions';
 const ACTIVE_KEY = 'fmguessr_active';
 const SYX_KEY = 'fmguessr_syx_tabs';
 const FAVORITES_KEY = 'fmguessr_favorites';
+const PATCH_NAMES_KEY = 'fmguessr_patch_names';
 const MAX_SESSIONS = 50;
 const DB_NAME = 'fmguessr';
 const DB_VERSION = 1;
@@ -194,7 +194,20 @@ function saveSyxTabs() {
             const name = heading ? heading.textContent : tabId;
             const tab = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
             if (tab) {
-                data.push({ tabId, name });
+                // Collect patch data from the row elements
+                const patches = [];
+                tc.querySelectorAll('.patch-row').forEach(row => {
+                    const algo = parseInt(row.dataset.algo) || 0;
+                    const fb = parseInt(row.dataset.fb) || 0;
+                    const nameEl = row.querySelector('.patch-name');
+                    const patchName = nameEl ? nameEl.textContent : '';
+                    // Retrieve stored voice_data from the row
+                    const voiceData = row.dataset.voiceData || null;
+                    if (voiceData) {
+                        patches.push({ name: patchName, algorithm: algo, feedback: fb, voice_data: voiceData });
+                    }
+                });
+                data.push({ tabId, name, patches });
             }
         }
     });
@@ -207,31 +220,96 @@ function restoreSyxTabs() {
         saved = JSON.parse(localStorage.getItem(SYX_KEY) || '[]');
     } catch { saved = []; }
 
+    const patchNames = loadPatchNames();
+
     for (const s of saved) {
-        const tab = document.createElement('div');
-        tab.className = 'tab';
-        tab.dataset.tabId = s.tabId;
-        tab.textContent = s.name;
-        tab.addEventListener('click', () => switchTab(s.tabId));
-        tabsEl.appendChild(tab);
+        if (s.patches && s.patches.length > 0) {
+            // Fully restore: rebuild the tab from saved patch data
+            const patches = s.patches.map((p, i) => ({
+                slot: i,
+                name: patchNames[p.name] || p.name,
+                algorithm: p.algorithm,
+                feedback: p.feedback,
+                raw: null, // no raw bytes — play will use voice_data from row dataset
+                voice_data: p.voice_data,
+            }));
+            createSyxTabFromData(s.tabId, s.name, patches);
+        } else {
+            // Stub tab — no patch data saved
+            const tab = document.createElement('div');
+            tab.className = 'tab';
+            tab.dataset.tabId = s.tabId;
+            tab.textContent = s.name;
+            tab.addEventListener('click', () => switchTab(s.tabId));
+            tabsEl.appendChild(tab);
 
-        const content = document.createElement('div');
-        content.className = 'tab-content';
-        content.id = 'tab-' + s.tabId;
-        const header = document.createElement('div');
-        header.className = 'upload-tab-header';
-        const heading = document.createElement('h2');
-        heading.textContent = s.name;
-        header.appendChild(heading);
-        content.appendChild(header);
+            const content = document.createElement('div');
+            content.className = 'tab-content';
+            content.id = 'tab-' + s.tabId;
+            const header = document.createElement('div');
+            header.className = 'upload-tab-header';
+            const heading = document.createElement('h2');
+            heading.textContent = s.name;
+            header.appendChild(heading);
+            content.appendChild(header);
 
-        const msg = document.createElement('p');
-        msg.style.cssText = 'color:#888;text-align:center;padding:1rem;';
-        msg.textContent = 'Re-import the .syx file to restore patches.';
-        content.appendChild(msg);
+            const msg = document.createElement('p');
+            msg.style.cssText = 'color:#888;text-align:center;padding:1rem;';
+            msg.textContent = 'Re-import the .syx file to restore patches.';
+            content.appendChild(msg);
 
-        tabContent.appendChild(content);
+            tabContent.appendChild(content);
+        }
     }
+}
+
+// --- Patch Rename Persistence ---
+
+function loadPatchNames() {
+    try {
+        return JSON.parse(localStorage.getItem(PATCH_NAMES_KEY) || '{}');
+    } catch { return {}; }
+}
+
+function savePatchNames(names) {
+    localStorage.setItem(PATCH_NAMES_KEY, JSON.stringify(names));
+}
+
+// Add inline rename handlers to a patch row's .patch-name element.
+// `obj` is the data object whose `.name` property to update on rename.
+// `saveFn` is called after a successful rename to persist.
+function addRenameHandlers(row, obj, saveFn) {
+    const nameEl = row.querySelector('.patch-name');
+    if (!nameEl) return;
+    const originalName = obj.name;
+    nameEl.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        nameEl.contentEditable = 'true';
+        nameEl.focus();
+        const range = document.createRange();
+        range.selectNodeContents(nameEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+    });
+    nameEl.addEventListener('blur', () => {
+        nameEl.contentEditable = 'false';
+        const newName = nameEl.textContent.trim();
+        if (newName && newName !== obj.name) {
+            obj.name = newName;
+            saveFn();
+        }
+    });
+    nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            nameEl.blur();
+        }
+        if (e.key === 'Escape') {
+            nameEl.textContent = obj.name;
+            nameEl.contentEditable = 'false';
+        }
+    });
 }
 
 // --- Favorites Management ---
@@ -1045,37 +1123,7 @@ function renderFavorites() {
         row.classList.add('fav-row');
 
         // Inline rename on double-click
-        const nameEl = row.querySelector('.patch-name');
-        if (nameEl) {
-            nameEl.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                nameEl.contentEditable = 'true';
-                nameEl.focus();
-                const range = document.createRange();
-                range.selectNodeContents(nameEl);
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-            });
-            nameEl.addEventListener('blur', () => {
-                nameEl.contentEditable = 'false';
-                const newName = nameEl.textContent.trim();
-                if (newName && newName !== fav.name) {
-                    fav.name = newName;
-                    saveFavoritesToStorage();
-                }
-            });
-            nameEl.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    nameEl.blur();
-                }
-                if (e.key === 'Escape') {
-                    nameEl.textContent = fav.name;
-                    nameEl.contentEditable = 'false';
-                }
-            });
-        }
+        addRenameHandlers(row, fav, saveFavoritesToStorage);
 
         // Add edit + delete buttons
         const actions = document.createElement('span');
@@ -1173,11 +1221,30 @@ async function handleSyxUpload(e) {
 
 function createSyxTab(name, patches) {
     const tabId = 'syx_' + Date.now();
+    createSyxTabInner(tabId, name, patches);
+    saveSyxTabs();
+    switchTab(tabId);
+}
+
+// Create SYX tab from saved data (used by restoreSyxTabs)
+function createSyxTabFromData(tabId, name, patches) {
+    createSyxTabInner(tabId, name, patches);
+    tabsEl.querySelectorAll(`[data-tab-id="${tabId}"]`).forEach(t => t.remove());
     const tab = document.createElement('div');
     tab.className = 'tab';
     tab.dataset.tabId = tabId;
     tab.textContent = name;
+    tab.addEventListener('click', () => switchTab(tabId));
+    tabsEl.appendChild(tab);
+    tabsEl.classList.add('visible');
+    switchTab(tabId);
+}
 
+function createSyxTabInner(tabId, name, patches) {
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.dataset.tabId = tabId;
+    tab.textContent = name;
     tab.addEventListener('click', () => switchTab(tabId));
     tabsEl.appendChild(tab);
 
@@ -1185,7 +1252,6 @@ function createSyxTab(name, patches) {
     content.className = 'tab-content';
     content.id = 'tab-' + tabId;
 
-    // Header
     const header = document.createElement('div');
     header.className = 'upload-tab-header';
     const heading = document.createElement('h2');
@@ -1193,24 +1259,43 @@ function createSyxTab(name, patches) {
     header.appendChild(heading);
     content.appendChild(header);
 
-    // Grid of patch cards
-    const grid = document.createElement('div');
-    grid.className = 'upload-tab-grid';
+    const list = document.createElement('div');
+    list.className = 'patch-list';
+
+    const listHeader = document.createElement('div');
+    listHeader.className = 'patch-list-header';
+    listHeader.innerHTML = '<span class="patch-spec"></span><span class="patch-name">Name</span><span class="patch-star"></span><span class="patch-col">Algo</span><span class="patch-col">FB</span><span class="patch-col">Dist</span>';
+    list.appendChild(listHeader);
+
+    const body = document.createElement('div');
+    body.className = 'patch-list-body';
+
+    const patchNames = loadPatchNames();
 
     patches.forEach(patch => {
-        const card = createPatchCard(patch, {
-            baseUrl,
-            isFav: false,
-            onFav: (p) => {
-                // Add as favorite with voice_data
+        // Ensure voice_data exists from raw bytes
+        if (!patch.voice_data && patch.raw) {
+            patch.voice_data = voiceRawToBase64(patch.raw);
+        }
+        const displayName = patchNames[patch.name] || patch.name;
+        const row = createPatchRow({
+            rank: '',
+            name: displayName,
+            algorithm: patch.algorithm,
+            feedback: patch.feedback,
+            distance: 0,
+            wav_url: null,
+        }, {
+            onSelect: null,
+            onStar: () => {
                 const fav = {
                     id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-                    name: p.name,
-                    syx_url: null, // no server-side .syx yet
-                    voice_data: voiceRawToBase64(p.raw),
-                    slot: p.slot,
-                    algorithm: p.algorithm,
-                    feedback: p.feedback,
+                    name: displayName,
+                    syx_url: null,
+                    voice_data: patch.voice_data || null,
+                    slot: patch.slot,
+                    algorithm: patch.algorithm,
+                    feedback: patch.feedback,
                     distance: 0,
                     wav_url: null,
                     source_job: name + '.syx',
@@ -1219,42 +1304,55 @@ function createSyxTab(name, patches) {
                 favorites.push(fav);
                 saveFavoritesToStorage();
                 renderFavorites();
-                // Update star in card
-                const starEl = card.querySelector('.patch-star');
+                const starEl = row.querySelector('.patch-star');
                 if (starEl) {
                     starEl.classList.add('fav-active');
                     starEl.textContent = '★';
                 }
             },
-            onAssign: (p) => {
-                appendLog(`Assign to pianoroll: ${p.name} (A${p.algorithm + 1} FB${p.feedback})`);
+            onPlay: async () => {
+                try {
+                    const body = { note: 60 };
+                    if (patch.voice_data) {
+                        body.voice_data = patch.voice_data;
+                    } else {
+                        return;
+                    }
+                    const resp = await fetch(baseUrl + '/api/play', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    const data = await resp.json();
+                    if (data.wav_url) {
+                        new Audio(baseUrl + data.wav_url).play();
+                    }
+                } catch (e) {
+                    console.warn('Play patch failed:', e);
+                }
             },
-            onEdit: (p) => {
-                openEdit({
-                    id: 'syx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-                    name: p.name,
-                    syx_url: null,
-                    voice_data: voiceRawToBase64(p.raw),
-                    slot: p.slot,
-                    algorithm: p.algorithm,
-                    feedback: p.feedback,
-                    distance: 0,
-                    wav_url: null,
-                    source_job: name + '.syx',
-                    created: Date.now(),
-                });
-            },
+            baseUrl,
+            isFav: false,
         });
-        grid.appendChild(card);
+
+        // Store voice_data on row for persistence
+        if (patch.voice_data) {
+            row.dataset.voiceData = patch.voice_data;
+        }
+
+        // Add rename handler
+        addRenameHandlers(row, patch, () => {
+            patchNames[patch.name] = patch.name;
+            savePatchNames(patchNames);
+            saveSyxTabs();
+        });
+
+        body.appendChild(row);
     });
 
-    content.appendChild(grid);
+    list.appendChild(body);
+    content.appendChild(list);
     tabContent.appendChild(content);
-
-    // Save to localStorage for persistence across reloads
-    saveSyxTabs();
-
-    switchTab(tabId);
 }
 
 fileInput.addEventListener('change', async () => {
@@ -2013,6 +2111,26 @@ function renderResults(index) {
         favIds,
     });
     resultsArea.appendChild(primaryList);
+
+    // Add rename support to result rows
+    const resultPatchNames = loadPatchNames();
+    primaryList.querySelectorAll('.patch-row').forEach(row => {
+        const algo = parseInt(row.dataset.algo);
+        const fb = parseInt(row.dataset.fb);
+        const m = data.matches.find(m => m.algorithm === algo && m.feedback === fb);
+        if (m) {
+            const key = `result_${job.fileName}_${m.rank}`;
+            if (resultPatchNames[key]) {
+                const nameEl = row.querySelector('.patch-name');
+                if (nameEl) nameEl.textContent = resultPatchNames[key];
+                m.name = resultPatchNames[key];
+            }
+            addRenameHandlers(row, m, () => {
+                resultPatchNames[key] = m.name;
+                savePatchNames(resultPatchNames);
+            });
+        }
+    });
 
     const syxLink = document.createElement('a');
     syxLink.className = 'syx-link';
