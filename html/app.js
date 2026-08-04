@@ -22,6 +22,7 @@ const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'ga
 // --- Session Persistence (localStorage + IndexedDB) ---
 const STORAGE_KEY = 'fmguessr_sessions';
 const ACTIVE_KEY = 'fmguessr_active';
+const SYX_KEY = 'fmguessr_syx_tabs';
 const FAVORITES_KEY = 'fmguessr_favorites';
 const MAX_SESSIONS = 50;
 const DB_NAME = 'fmguessr';
@@ -165,6 +166,7 @@ async function clearAllSessions() {
     pollQueue = [];
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(ACTIVE_KEY);
+    localStorage.removeItem(SYX_KEY);
     favorites = [];
     localStorage.removeItem(FAVORITES_KEY);
     await dbClear();
@@ -172,9 +174,66 @@ async function clearAllSessions() {
     tabsEl.classList.remove('visible');
     tabContent.innerHTML = '';
     tabContent.classList.remove('visible');
+    const syxContainer = document.getElementById('syx-content');
+    syxContainer.innerHTML = '';
+    syxContainer.classList.remove('visible');
     document.getElementById('piano-dock').innerHTML = '';
     renderFavorites();
     updateClearBtn();
+}
+
+// --- .syx Tab Persistence ---
+
+let syxTabs = []; // { tabId, name, patches }
+
+function saveSyxTabs() {
+    const syxContainer = document.getElementById('syx-content');
+    const data = [];
+    syxContainer.querySelectorAll('.tab-content').forEach(tc => {
+        const tabId = tc.id.replace('tab-', '');
+        const heading = tc.querySelector('h2');
+        const name = heading ? heading.textContent : tabId;
+        // Find patches from the grid's card data
+        const tab = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
+        if (tab) {
+            data.push({ tabId, name });
+        }
+    });
+    localStorage.setItem(SYX_KEY, JSON.stringify(data));
+}
+
+function restoreSyxTabs() {
+    let saved;
+    try {
+        saved = JSON.parse(localStorage.getItem(SYX_KEY) || '[]');
+    } catch { saved = []; }
+
+    for (const s of saved) {
+        const tab = document.createElement('div');
+        tab.className = 'tab';
+        tab.dataset.tabId = s.tabId;
+        tab.textContent = s.name;
+        tab.addEventListener('click', () => switchTab(s.tabId));
+        tabsEl.appendChild(tab);
+
+        const content = document.createElement('div');
+        content.className = 'tab-content';
+        content.id = 'tab-' + s.tabId;
+        const header = document.createElement('div');
+        header.className = 'upload-tab-header';
+        const heading = document.createElement('h2');
+        heading.textContent = s.name;
+        header.appendChild(heading);
+        content.appendChild(header);
+
+        const msg = document.createElement('p');
+        msg.style.cssText = 'color:#888;text-align:center;padding:1rem;';
+        msg.textContent = 'Re-import the .syx file to restore patches.';
+        content.appendChild(msg);
+
+        const syxContainer = document.getElementById('syx-content');
+        syxContainer.appendChild(content);
+    }
 }
 
 // --- Favorites Management ---
@@ -1096,18 +1155,22 @@ async function handleSyxUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
 
-    const arrayBuffer = await file.arrayBuffer();
-    const patches = parseSyxFile(arrayBuffer);
-    if (!patches || patches.length === 0) {
-        appendLog('Failed to parse .syx file');
-        return;
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const patches = parseSyxFile(arrayBuffer);
+        if (!patches || patches.length === 0) {
+            appendLog(`Failed to parse .syx file: ${file.name}`);
+            return;
+        }
+
+        const name = file.name.replace(/\.[^.]+$/, '');
+        appendLog(`Parsed .syx: ${name} (${patches.length} voices)`);
+
+        // Create a new tab for this .syx
+        createSyxTab(name, patches);
+    } catch (err) {
+        appendLog(`Error reading .syx file: ${err.message}`);
     }
-
-    const fileName = file.name.replace(/\.[^.]+$/, '');
-    appendLog(`Parsed .syx: ${fileName} (${patches.length} voices)`);
-
-    // Create a new tab for this .syx
-    createSyxTab(fileName, patches);
 }
 
 function createSyxTab(name, patches) {
@@ -1191,6 +1254,9 @@ function createSyxTab(name, patches) {
     const syxContainer = document.getElementById('syx-content');
     syxContainer.appendChild(content);
 
+    // Save to localStorage for persistence across reloads
+    saveSyxTabs();
+
     switchTab(tabId);
 }
 
@@ -1200,6 +1266,7 @@ fileInput.addEventListener('change', async () => {
 
     // Route .syx files to the dedicated handler
     if (file.name.toLowerCase().endsWith('.syx')) {
+        appendLog(`Routing .syx file: ${file.name} (${file.size} bytes)`);
         handleSyxUpload({ target: { files: [file] } });
         fileInput.value = '';
         return;
@@ -2050,5 +2117,6 @@ editSlider.addEventListener('input', () => {
 
 // Restore sessions on page load
 restoreSessions();
+restoreSyxTabs();
 loadFavorites();
 initSyxUpload();
