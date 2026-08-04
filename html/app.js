@@ -482,13 +482,14 @@ function renderEditPanel() {
     const goBtn = document.getElementById('edit-go');
     const status = document.getElementById('edit-status');
 
-    if (!editSlot) {
+    if (!editSlot && !editSlotB) {
         slotArea.innerHTML = '';
         sliderRow.style.display = 'none';
         paramsArea.style.display = 'none';
         goBtn.disabled = true;
         goBtn.textContent = 'Morph';
         status.textContent = 'Click 🔧 on any patch to edit it';
+        document.getElementById('edit-panel').classList.remove('visible');
         return;
     }
 
