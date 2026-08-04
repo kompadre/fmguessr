@@ -49,6 +49,12 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 		}
 	}
 
+	// Load patch bytes from companion .patches.npy to determine N
+	patchBytes, numPatches, err := loadPatchBytes(modelPath + ".patches.npy")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load patch bytes: %w", err)
+	}
+
 	inputNames := []string{"features"}
 	outputNames := []string{"midi_logits", "patch_logits"}
 
@@ -62,7 +68,7 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 		return nil, fmt.Errorf("failed to create midi output tensor: %w", err)
 	}
 
-	patchTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, 1)) // dynamic size
+	patchTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, int64(numPatches)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create patch output tensor: %w", err)
 	}
@@ -85,6 +91,8 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 		inputTensor: inputTensor,
 		midiTensor:  midiTensor,
 		patchTensor: patchTensor,
+		patchBytes:  patchBytes,
+		numPatches:  numPatches,
 	}
 
 	// Load normalization stats from companion file
@@ -96,8 +104,80 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 		}
 	}
 
-	fmt.Printf("[classifier] Loaded patch classifier: %s\n", modelPath)
+	fmt.Printf("[classifier] Loaded patch classifier: %s (%d patches)\n", modelPath, numPatches)
 	return pc, nil
+}
+
+// loadPatchBytes reads patch bytes from a .npy file saved by the training script.
+// Format: numpy array of shape (N, 128) with dtype uint8.
+func loadPatchBytes(path string) ([]byte, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("cannot open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	// Read npy header: magic(6) + major(1) + minor(1) + header_len(2) + header_str
+	header := make([]byte, 6)
+	if _, err := f.Read(header); err != nil {
+		return nil, 0, fmt.Errorf("read npy magic: %w", err)
+	}
+	if string(header[:6]) != "\x93NUMPY" {
+		return nil, 0, fmt.Errorf("not a valid npy file")
+	}
+
+	// Read version
+	ver := make([]byte, 2)
+	if _, err := f.Read(ver); err != nil {
+		return nil, 0, err
+	}
+
+	// Read header length (2 bytes for v1, 4 bytes for v2+)
+	var headerLen int
+	if ver[0] == 1 {
+		bl := make([]byte, 2)
+		f.Read(bl)
+		headerLen = int(bl[0]) | int(bl[1])<<8
+	} else {
+		bl := make([]byte, 4)
+		f.Read(bl)
+		headerLen = int(bl[0]) | int(bl[1])<<8 | int(bl[2])<<16 | int(bl[3])<<24
+	}
+
+	// Read header string
+	headerStr := make([]byte, headerLen)
+	if _, err := f.Read(headerStr); err != nil {
+		return nil, 0, err
+	}
+
+	// Parse shape from header: "('uint8', False, (N, 128))"
+	// Find the tuple with two numbers
+	hdr := string(headerStr)
+	shapeStart := -1
+	for i := len(hdr) - 1; i >= 0; i-- {
+		if hdr[i] == '(' {
+			shapeStart = i
+			break
+		}
+	}
+	if shapeStart < 0 {
+		return nil, 0, fmt.Errorf("cannot find shape in npy header")
+	}
+	shapeStr := hdr[shapeStart:]
+	// Parse "1056, 128)"
+	n1, n2 := 0, 0
+	fmt.Sscanf(shapeStr, "(%d, %d)", &n1, &n2)
+	if n1 == 0 || n2 != 128 {
+		return nil, 0, fmt.Errorf("unexpected shape %d,%d in npy", n1, n2)
+	}
+
+	// Read data
+	data := make([]byte, n1*128)
+	if _, err := f.Read(data); err != nil {
+		return nil, 0, err
+	}
+
+	return data, n1, nil
 }
 
 // loadNormStats reads the normalization min/max from a .npy file saved by the training script.
