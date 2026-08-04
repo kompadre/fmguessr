@@ -12,6 +12,7 @@ import (
 	"github.com/go-audio/wav"
 	"github.com/kompadre/fmguessr/external/miniaudio"
 	"github.com/kompadre/fmguessr/external/msfa"
+	"github.com/kompadre/fmguessr/pkg/match"
 )
 
 const (
@@ -82,6 +83,26 @@ func main() {
 	// Select the requested program slot on channel 0
 	synth.ChangeProgram(0, uint8(slot))
 	fmt.Printf("Loaded: slot %d — %s\n", slot, synth.Programs[slot])
+
+	// Extract and display patch parameters
+	bank := make([]byte, 4096)
+	synth.GetBank(bank)
+	voiceStart := slot * 128
+	if voiceStart+128 <= len(bank) {
+		cand := match.DecodeVoicePatch(bank[voiceStart : voiceStart+128])
+		if cand != nil {
+			fmt.Printf("  Algorithm: %d, Feedback: %d\n", cand.Algorithm+1, cand.Feedback)
+			for i := 0; i < 6; i++ {
+				op := cand.Ops[i]
+				role := "M"
+				if match.IsCarrier(cand.Algorithm, i) {
+					role = "C"
+				}
+				fmt.Printf("  Op%d [%s]: Level=%d Fine=%d Coarse=%d L3=%d R2=%d\n",
+					i+1, role, op.OutputLevel, op.FreqFine, op.FreqCoarse, op.Level3, op.Rate2)
+			}
+		}
+	}
 
 	if *outPath != "" {
 		renderToWav(synth, midiNote, *outPath)

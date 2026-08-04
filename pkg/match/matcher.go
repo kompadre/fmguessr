@@ -573,7 +573,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						fullCohort.TryInsert(cand, dist)
 
 						if cfg.Verbose {
-							fmt.Printf("  Classifier seed #%d: algo=%d dist=%.6f\n", m.Index, cand.Algorithm+1, dist)
+							freqRatio := 1.0
+							if cand.Ops[5].FreqCoarse > 0 {
+								freqRatio = float64(cand.Ops[5].FreqCoarse) * (1.0 + float64(cand.Ops[5].FreqFine)/100.0)
+							}
+							fmt.Printf("  Classifier seed #%d: algo=%d fb=%d freq=%.1f dist=%.6f conf=%.3f\n",
+								m.Index, cand.Algorithm+1, cand.Feedback, freqRatio, dist, m.Confidence)
 						}
 					}
 				}
