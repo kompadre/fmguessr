@@ -46,6 +46,45 @@ func RenderCandidate(c *Candidate, noteNum uint8, duration time.Duration) []floa
 	return total
 }
 
+// RenderCandidateShort renders a candidate for a short duration (e.g. 300ms)
+// for fast peak-window comparison. Same as RenderCandidate but with shorter
+// sustain period and proportionally shorter drain tail.
+func RenderCandidateShort(c *Candidate, noteNum uint8, duration time.Duration) []float64 {
+	synth := msfa.NewSynth(float64(RenderSampleRate))
+	defer synth.Free()
+
+	patch := c.Encode()
+	synth.SetVoice(0, patch)
+
+	synth.WriteMidi([]byte{0x90, noteNum, 100})
+
+	nSamples := int(float64(RenderSampleRate) * duration.Seconds())
+
+	pcm := make([]int16, nSamples)
+	synth.GetSamples(pcm)
+
+	synth.WriteMidi([]byte{0x80, noteNum, 0})
+
+	// Shorter drain tail proportional to sustain (min 64ms)
+	drainMs := duration.Milliseconds() / 4
+	if drainMs < 64 {
+		drainMs = 64
+	}
+	drainSamples := int(float64(RenderSampleRate) * float64(drainMs) / 1000.0)
+	drain := make([]int16, drainSamples)
+	synth.GetSamples(drain)
+
+	total := make([]float64, nSamples+drainSamples)
+	for i := 0; i < nSamples; i++ {
+		total[i] = float64(pcm[i]) / 32768.0
+	}
+	for i := 0; i < drainSamples; i++ {
+		total[nSamples+i] = float64(drain[i]) / 32768.0
+	}
+
+	return total
+}
+
 // RenderCandidatesParallel renders up to 16 candidates simultaneously on
 // separate MSFA channels. Returns per-channel float64 audio (sustain + 250ms
 // release tail), normalized to [-1, 1].

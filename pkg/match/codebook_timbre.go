@@ -17,9 +17,10 @@ import (
 
 // TimbreCodebookEntry represents a pre-computed timbre thumbnail.
 type TimbreCodebookEntry struct {
-	Name         string
-	Candidate    *Candidate
-	TimbreSpec   [TimbreSpecBins]float64
+	Name          string
+	Candidate     *Candidate
+	TimbreSpec    [TimbreSpecBins]float64
+	CompositePeak PeakShape // Precomputed composite peak shape from carrier envelopes
 }
 
 // TimbreCodebook holds a collection of pre-indexed DX7 timbre thumbnails.
@@ -135,6 +136,42 @@ func (tc *TimbreCodebook) SearchKNNTimbreWithDistances(targetSpec [TimbreSpecBin
 	return cands, dists
 }
 
+// SearchKNNTimbrePeak finds codebook entries whose composite peak shape best matches
+// the target peak shape. Returns up to maxResults entries sorted by PeakShapeDistance.
+// This is a zero-render metadata filter — pure float math, ~0.01ms per entry.
+func (tc *TimbreCodebook) SearchKNNTimbrePeak(targetPeak PeakShape, maxResults int) []TimbreCodebookEntry {
+	if len(tc.Entries) == 0 {
+		return nil
+	}
+
+	type entryDist struct {
+		entry TimbreCodebookEntry
+		dist  float64
+	}
+
+	results := make([]entryDist, len(tc.Entries))
+	for i, entry := range tc.Entries {
+		results[i] = entryDist{
+			entry: entry,
+			dist:  PeakShapeDistance(targetPeak, entry.CompositePeak),
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].dist < results[j].dist
+	})
+
+	if maxResults > len(results) {
+		maxResults = len(results)
+	}
+
+	out := make([]TimbreCodebookEntry, maxResults)
+	for i := 0; i < maxResults; i++ {
+		out[i] = results[i].entry
+	}
+	return out
+}
+
 // Save writes the timbre codebook to a binary file.
 func (tc *TimbreCodebook) Save(filePath string) error {
 	f, err := os.Create(filePath)
@@ -143,10 +180,10 @@ func (tc *TimbreCodebook) Save(filePath string) error {
 	}
 	defer f.Close()
 
-	// Header: Magic "DXCT" + Version 1 + uint32 EntryCount
+	// Header: Magic "DXCT" + Version 2 + uint32 EntryCount
 	header := make([]byte, 12)
 	copy(header[0:4], []byte("DXCT"))
-	binary.LittleEndian.PutUint32(header[4:8], 1)
+	binary.LittleEndian.PutUint32(header[4:8], 2)
 	binary.LittleEndian.PutUint32(header[8:12], uint32(len(tc.Entries)))
 	if _, err := f.Write(header); err != nil {
 		return err
@@ -172,6 +209,16 @@ func (tc *TimbreCodebook) Save(filePath string) error {
 			binary.LittleEndian.PutUint64(specBuf[i*8:(i+1)*8], math.Float64bits(val))
 		}
 		if _, err := f.Write(specBuf); err != nil {
+			return err
+		}
+
+		// CompositePeak (4 x float64 = 32 bytes)
+		peakBuf := make([]byte, 32)
+		binary.LittleEndian.PutUint64(peakBuf[0:8], math.Float64bits(entry.CompositePeak.AttackTimeMs))
+		binary.LittleEndian.PutUint64(peakBuf[8:16], math.Float64bits(entry.CompositePeak.TransientWidth))
+		binary.LittleEndian.PutUint64(peakBuf[16:24], math.Float64bits(entry.CompositePeak.DecaySlope))
+		binary.LittleEndian.PutUint64(peakBuf[24:32], math.Float64bits(entry.CompositePeak.CrestFactor))
+		if _, err := f.Write(peakBuf); err != nil {
 			return err
 		}
 	}
@@ -200,9 +247,10 @@ func (tc *TimbreCodebook) BackfillFromCodebook(cb *Codebook, noteNum uint8, dur 
 		audio := RenderCandidate(entry.Candidate, noteNum, dur)
 		timbreSpec := ExtractTimbreWindow(audio, RenderSampleRate)
 		tc.Entries = append(tc.Entries, TimbreCodebookEntry{
-			Name:       entry.Name,
-			Candidate:  entry.Candidate.Copy(),
-			TimbreSpec: timbreSpec,
+			Name:          entry.Name,
+			Candidate:     entry.Candidate.Copy(),
+			TimbreSpec:    timbreSpec,
+			CompositePeak: CompositePeakShape(entry.Candidate.Algorithm, entry.Candidate.Ops),
 		})
 		existing[sig] = true
 		added++
@@ -227,6 +275,7 @@ func LoadTimbreCodebook(filePath string) (*TimbreCodebook, error) {
 		return nil, fmt.Errorf("invalid timbre codebook magic: %s", header[0:4])
 	}
 
+	version := binary.LittleEndian.Uint32(header[4:8])
 	count := binary.LittleEndian.Uint32(header[8:12])
 	tc := &TimbreCodebook{Entries: make([]TimbreCodebookEntry, 0, count)}
 
@@ -254,10 +303,26 @@ func LoadTimbreCodebook(filePath string) (*TimbreCodebook, error) {
 			spec[j] = math.Float64frombits(binary.LittleEndian.Uint64(specBuf[j*8 : (j+1)*8]))
 		}
 
+		var compositePeak PeakShape
+		if version >= 2 {
+			peakBuf := make([]byte, 32)
+			if _, err := io.ReadFull(f, peakBuf); err != nil {
+				return nil, err
+			}
+			compositePeak.AttackTimeMs = math.Float64frombits(binary.LittleEndian.Uint64(peakBuf[0:8]))
+			compositePeak.TransientWidth = math.Float64frombits(binary.LittleEndian.Uint64(peakBuf[8:16]))
+			compositePeak.DecaySlope = math.Float64frombits(binary.LittleEndian.Uint64(peakBuf[16:24]))
+			compositePeak.CrestFactor = math.Float64frombits(binary.LittleEndian.Uint64(peakBuf[24:32]))
+		} else {
+			// Version 1: compute composite peak on load from envelope bytes
+			compositePeak = CompositePeakShape(cand.Algorithm, cand.Ops)
+		}
+
 		tc.Entries = append(tc.Entries, TimbreCodebookEntry{
-			Name:       name,
-			Candidate:  cand,
-			TimbreSpec: spec,
+			Name:          name,
+			Candidate:     cand,
+			TimbreSpec:    spec,
+			CompositePeak: compositePeak,
 		})
 	}
 
@@ -333,11 +398,13 @@ func IndexSysexBankTimbre(syxPath string, noteNum uint8, dur time.Duration) ([]T
 				timbreSpec := ExtractTimbreWindow(samples, RenderSampleRate)
 				rawPatch := bankData[slot*128 : (slot+1)*128]
 				cand := DecodeVoicePatch(rawPatch)
+				compositePeak := CompositePeakShape(cand.Algorithm, cand.Ops)
 
 				entries[slot] = TimbreCodebookEntry{
-					Name:       name,
-					Candidate:  cand,
-					TimbreSpec: timbreSpec,
+					Name:          name,
+					Candidate:     cand,
+					TimbreSpec:    timbreSpec,
+					CompositePeak: compositePeak,
 				}
 			}
 		}()

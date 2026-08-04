@@ -298,6 +298,36 @@ func ExtractTimbreWindow(samples []float64, sampleRate int) [TimbreSpecBins]floa
 	return result
 }
 
+// ExtractTimbreWindowWithPeak extracts the timbre spectrum and returns the peak sample index.
+// This avoids re-computing the peak when both the timbre spec and peak location are needed.
+func ExtractTimbreWindowWithPeak(samples []float64, sampleRate int) ([TimbreSpecBins]float64, int) {
+	spec := ExtractTimbreWindow(samples, sampleRate)
+
+	// Find peak sample using the same 256-sample frame analysis
+	const frameSize = 256
+	nFrames := len(samples) / frameSize
+	if nFrames == 0 {
+		return spec, 0
+	}
+
+	peak := 0.0
+	peakIdx := 0
+	for i := 0; i < nFrames; i++ {
+		sum := 0.0
+		for j := 0; j < frameSize; j++ {
+			s := samples[i*frameSize+j]
+			sum += s * s
+		}
+		rms := math.Sqrt(sum / float64(frameSize))
+		if rms > peak {
+			peak = rms
+			peakIdx = i
+		}
+	}
+
+	return spec, peakIdx * frameSize
+}
+
 // fftMag computes the magnitude spectrum of a signal frame.
 func fftMag(samples []float64) []float64 {
 	n := len(samples)
