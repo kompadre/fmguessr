@@ -204,7 +204,7 @@ function saveSyxTabs() {
                     // Retrieve stored voice_data from the row
                     const voiceData = row.dataset.voiceData || null;
                     if (voiceData) {
-                        patches.push({ name: patchName, algorithm: algo, feedback: fb, voice_data: voiceData });
+                        patches.push({ id: row.dataset.patchId || null, name: patchName, algorithm: algo, feedback: fb, voice_data: voiceData });
                     }
                 });
                 data.push({ tabId, name, patches });
@@ -227,10 +227,11 @@ function restoreSyxTabs() {
             // Fully restore: rebuild the tab from saved patch data
             const patches = s.patches.map((p, i) => ({
                 slot: i,
-                name: patchNames[p.name] || p.name,
+                id: p.id || patchId({ voice_data: p.voice_data }),
+                name: (p.id && patchNames[p.id]) || p.name,
                 algorithm: p.algorithm,
                 feedback: p.feedback,
-                raw: null, // no raw bytes — play will use voice_data from row dataset
+                raw: null,
                 voice_data: p.voice_data,
             }));
             createSyxTabFromData(s.tabId, s.name, patches);
@@ -261,6 +262,30 @@ function restoreSyxTabs() {
             tabContent.appendChild(content);
         }
     }
+}
+
+// --- Patch Identity ---
+
+// DJB2 hash of a string — stable, fast, good distribution
+function hashString(str) {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(i);
+        hash = hash & hash; // Convert to 32-bit int
+    }
+    return (hash >>> 0).toString(36);
+}
+
+// Compute a stable ID for a patch from its raw bytes or voice_data
+function patchId(patch) {
+    if (patch.raw) {
+        return hashString(String.fromCharCode.apply(null, patch.raw));
+    }
+    if (patch.voice_data) {
+        return hashString(patch.voice_data);
+    }
+    // Fallback: algo+fb+name — less stable but still useful
+    return hashString(`${patch.algorithm}_${patch.feedback}_${patch.name || ''}`);
 }
 
 // --- Patch Rename Persistence ---
@@ -332,8 +357,17 @@ async function addFavorite(job, match) {
         return;
     }
 
+    // Deduplicate by patch data hash
+    const pid = patchId({ voice_data: match.voice_data, algorithm: match.algorithm, feedback: match.feedback });
+    const existing = favorites.find(f => f.patch_hash === pid);
+    if (existing) {
+        appendLog(`Already favorited: ${existing.name}`);
+        return;
+    }
+
     const fav = {
         id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        patch_hash: pid,
         name: job.fileName.replace(/\.[^.]+$/, '') + ' #' + match.rank,
         syx_url: job.resultData.syx_url,
         slot: match.rank - 1,
@@ -1277,7 +1311,13 @@ function createSyxTabInner(tabId, name, patches) {
         if (!patch.voice_data && patch.raw) {
             patch.voice_data = voiceRawToBase64(patch.raw);
         }
-        const displayName = patchNames[patch.name] || patch.name;
+        // Ensure stable ID
+        if (!patch.id) {
+            patch.id = patchId(patch);
+        }
+        // Apply persisted rename
+        const savedName = patchNames[patch.id];
+        const displayName = savedName || patch.name;
         const row = createPatchRow({
             rank: '',
             name: displayName,
@@ -1288,8 +1328,16 @@ function createSyxTabInner(tabId, name, patches) {
         }, {
             onSelect: null,
             onStar: () => {
+                // Deduplicate by patch data hash
+                const pid = patch.id || patchId(patch);
+                const existing = favorites.find(f => f.patch_hash === pid);
+                if (existing) {
+                    appendLog(`Already favorited: ${existing.name}`);
+                    return;
+                }
                 const fav = {
                     id: 'fav_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                    patch_hash: pid,
                     name: displayName,
                     syx_url: null,
                     voice_data: patch.voice_data || null,
@@ -1335,14 +1383,15 @@ function createSyxTabInner(tabId, name, patches) {
             isFav: false,
         });
 
-        // Store voice_data on row for persistence
+        // Store voice_data and patchId on row for persistence
         if (patch.voice_data) {
             row.dataset.voiceData = patch.voice_data;
         }
+        row.dataset.patchId = patch.id;
 
         // Add rename handler
         addRenameHandlers(row, patch, () => {
-            patchNames[patch.name] = patch.name;
+            patchNames[patch.id] = patch.name;
             savePatchNames(patchNames);
             saveSyxTabs();
         });
@@ -2119,14 +2168,14 @@ function renderResults(index) {
         const fb = parseInt(row.dataset.fb);
         const m = data.matches.find(m => m.algorithm === algo && m.feedback === fb);
         if (m) {
-            const key = `result_${job.fileName}_${m.rank}`;
-            if (resultPatchNames[key]) {
+            const pid = patchId({ voice_data: m.voice_data, algorithm: m.algorithm, feedback: m.feedback });
+            if (resultPatchNames[pid]) {
                 const nameEl = row.querySelector('.patch-name');
-                if (nameEl) nameEl.textContent = resultPatchNames[key];
-                m.name = resultPatchNames[key];
+                if (nameEl) nameEl.textContent = resultPatchNames[pid];
+                m.name = resultPatchNames[pid];
             }
             addRenameHandlers(row, m, () => {
-                resultPatchNames[key] = m.name;
+                resultPatchNames[pid] = m.name;
                 savePatchNames(resultPatchNames);
             });
         }
