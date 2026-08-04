@@ -13,6 +13,7 @@ Architecture:
 """
 
 import argparse
+import os
 import struct
 import sys
 import numpy as np
@@ -191,13 +192,9 @@ def export_to_onnx(model, output_path, patch_bytes, device):
     # Load and inject patch bytes constant
     onnx_model = onnx.load(output_path + '.tmp')
 
-    # Create patch bytes as uint8 tensor
-    patch_tensor = onnx.helper.make_tensor(
-        'embedded_patches',
-        onnx.TensorProto.UINT8,
-        patch_bytes.shape,
-        patch_bytes.tobytes(),
-    )
+    # Create patch bytes as uint8 tensor using numpy_helper
+    from onnx import numpy_helper
+    patch_tensor = numpy_helper.from_array(patch_bytes.astype(np.uint8), name='embedded_patches')
     patch_node = onnx.helper.make_node(
         'Constant',
         inputs=[],
@@ -229,6 +226,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=64, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--device', default='auto', help='Device (auto/cpu/cuda)')
+    parser.add_argument('--skip-train', action='store_true', help='Skip training, load existing best.pth for export only')
     args = parser.parse_args()
 
     # Load dataset
@@ -273,21 +271,24 @@ def main():
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Training
-    best_val_loss = float('inf')
-    for epoch in range(args.epochs):
-        train_metrics = train_one_epoch(model, train_loader, patch_criterion, midi_criterion, optimizer, device)
-        val_metrics = validate(model, val_loader, patch_criterion, midi_criterion, device)
-        scheduler.step(val_metrics['loss'])
+    if not args.skip_train:
+        best_val_loss = float('inf')
+        for epoch in range(args.epochs):
+            train_metrics = train_one_epoch(model, train_loader, patch_criterion, midi_criterion, optimizer, device)
+            val_metrics = validate(model, val_loader, patch_criterion, midi_criterion, device)
+            scheduler.step(val_metrics['loss'])
 
-        if val_metrics['loss'] < best_val_loss:
-            best_val_loss = val_metrics['loss']
-            torch.save(model.state_dict(), 'classifier_best.pth')
+            if val_metrics['loss'] < best_val_loss:
+                best_val_loss = val_metrics['loss']
+                torch.save(model.state_dict(), 'classifier_best.pth')
 
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:3d}/{args.epochs}: "
-                  f"train_loss={train_metrics['loss']:.4f} patch_acc={train_metrics['patch_acc']:.3f} "
-                  f"val_loss={val_metrics['loss']:.4f} patch_acc={val_metrics['patch_acc']:.3f} "
-                  f"top5={val_metrics['patch_top5']:.3f} midi_acc={val_metrics['midi_acc']:.3f}")
+            if (epoch + 1) % 10 == 0 or epoch == 0:
+                print(f"  Epoch {epoch+1:3d}/{args.epochs}: "
+                      f"train_loss={train_metrics['loss']:.4f} patch_acc={train_metrics['patch_acc']:.3f} "
+                      f"val_loss={val_metrics['loss']:.4f} patch_acc={val_metrics['patch_acc']:.3f} "
+                      f"top5={val_metrics['patch_top5']:.3f} midi_acc={val_metrics['midi_acc']:.3f}")
+    else:
+        print("Skipping training, loading existing classifier_best.pth")
 
     # Load best and export
     model.load_state_dict(torch.load('classifier_best.pth'))
