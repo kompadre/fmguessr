@@ -206,6 +206,32 @@ async function clearAllSessions() {
 
 let syxTabs = []; // { tabId, name, patches }
 
+function deleteSyxTab(tabId) {
+    if (!confirm('Remove this .syx tab?')) return;
+
+    // Remove tab header
+    const tabEl = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
+    if (tabEl) tabEl.remove();
+
+    // Remove tab content
+    const contentEl = tabContent.querySelector('#tab-' + tabId);
+    if (contentEl) contentEl.remove();
+
+    // If this was the active tab, show something else
+    if (activeJobIndex === null) {
+        const firstTab = tabsEl.querySelector('.tab');
+        if (firstTab) {
+            if (firstTab.dataset.tabId) switchTab(firstTab.dataset.tabId);
+            else if (firstTab.dataset.index !== undefined) showJob(parseInt(firstTab.dataset.index));
+        } else {
+            tabContent.classList.remove('visible');
+            document.getElementById('piano-dock').innerHTML = '';
+        }
+    }
+
+    saveSyxTabs();
+}
+
 function saveSyxTabs() {
     const data = [];
     tabContent.querySelectorAll('.tab-content').forEach(tc => {
@@ -1299,7 +1325,22 @@ function createSyxTabInner(tabId, name, patches) {
     const tab = document.createElement('div');
     tab.className = 'tab';
     tab.dataset.tabId = tabId;
-    tab.textContent = name;
+
+    const label = document.createElement('span');
+    label.className = 'tab-label';
+    label.textContent = name;
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'tab-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Remove';
+    closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteSyxTab(tabId);
+    });
+
+    tab.appendChild(label);
+    tab.appendChild(closeBtn);
     tab.addEventListener('click', () => switchTab(tabId));
     tabsEl.appendChild(tab);
 
