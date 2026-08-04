@@ -206,6 +206,7 @@ async function addFavorite(job, match) {
         feedback: match.feedback,
         distance: match.distance,
         wav_url: match.wav_url,
+        voice_data: match.voice_data || null,
         source_job: job.fileName,
         created: Date.now()
     };
@@ -959,11 +960,11 @@ function renderFavorites() {
             onPlay: async () => {
                 try {
                     const body = { note: 60 };
-                    if (fav.syx_url) {
+                    if (fav.voice_data) {
+                        body.voice_data = fav.voice_data;
+                    } else if (fav.syx_url) {
                         body.syx_url = fav.syx_url;
                         body.slot = fav.slot;
-                    } else if (fav.voice_data) {
-                        body.voice_data = fav.voice_data;
                     } else {
                         return;
                     }

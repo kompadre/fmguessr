@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	_ "embed"
 	"flag"
@@ -40,6 +41,7 @@ type MatchResult struct {
 	Feedback  int     `json:"feedback"`
 	Distance  float64 `json:"distance"`
 	WavURL    string  `json:"wav_url"`
+	VoiceData string  `json:"voice_data,omitempty"` // base64-encoded 128-byte patch
 }
 
 type Job struct {
@@ -92,6 +94,19 @@ func NewServer(cfg ServerConfig) *Server {
 	go s.cleanupLoop()
 
 	return s
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // workerLoop processes jobs sequentially one at a time
@@ -196,6 +211,7 @@ func (s *Server) processJob(job *Job) {
 			Feedback:  int(cand.Feedback),
 			Distance:  candDist,
 			WavURL:    fmt.Sprintf("/exports/%s/match_%d.wav", job.ID, rank+1),
+			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
 	}
 
@@ -219,6 +235,7 @@ func (s *Server) processJob(job *Job) {
 			Feedback:  int(cand.Feedback),
 			Distance:  candDist,
 			WavURL:    fmt.Sprintf("/exports/%s/timbral_%d.wav", job.ID, rank+1),
+			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
 	}
 
@@ -242,6 +259,7 @@ func (s *Server) processJob(job *Job) {
 			Feedback:  int(cand.Feedback),
 			Distance:  candDist,
 			WavURL:    fmt.Sprintf("/exports/%s/full_%d.wav", job.ID, rank+1),
+			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
 	}
 
@@ -313,16 +331,6 @@ func (s *Server) cleanupLoop() {
 // HTTP Route Handlers
 
 func (s *Server) handleMatch(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	if r.Method != "POST" {
 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -427,14 +435,6 @@ func (s *Server) handleMatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	jobID := strings.TrimPrefix(r.URL.Path, "/api/status/")
 	if jobID == "" {
 		http.Error(w, `{"error":"Missing job ID"}`, http.StatusBadRequest)
@@ -466,7 +466,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 
 	s.mu.RLock()
@@ -534,15 +533,6 @@ func parseFormOverrides(r *http.Request) match.FeatureOverrides {
 }
 
 func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	if r.Method != "POST" {
 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -586,7 +576,6 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 
 	if r.Method != http.MethodPost {
@@ -595,9 +584,10 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		SyxURL string `json:"syx_url"`
-		Slot   int    `json:"slot"`
-		Note   int    `json:"note"`
+		SyxURL    string `json:"syx_url"`
+		Slot      int    `json:"slot"`
+		Note      int    `json:"note"`
+		VoiceData string `json:"voice_data"` // base64-encoded 128-byte patch (alternative to syx_url+slot)
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8000)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -613,22 +603,32 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve .syx file path from URL
-	syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(req.SyxURL, "/exports/"))
-	syxData, err := os.ReadFile(syxPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
-		return
+	// Extract 128-byte voice patch
+	var patch []byte
+	if req.VoiceData != "" {
+		// Decode base64 voice data directly
+		var decErr error
+		patch, decErr = match.DecodeBase64(req.VoiceData)
+		if decErr != nil || len(patch) != 128 {
+			http.Error(w, `{"error":"invalid voice_data (must be base64-encoded 128 bytes)"}`, http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Read from .syx file
+		syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(req.SyxURL, "/exports/"))
+		syxData, err := os.ReadFile(syxPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
+			return
+		}
+		patchStart := 6 + req.Slot*128
+		patchEnd := patchStart + 128
+		if patchEnd > len(syxData) {
+			http.Error(w, `{"error":".syx file too short for requested slot"}`, http.StatusBadRequest)
+			return
+		}
+		patch = syxData[patchStart:patchEnd]
 	}
-
-	// Extract 128-byte voice patch from bulk dump (offset 6 + slot*128)
-	patchStart := 6 + req.Slot*128
-	patchEnd := patchStart + 128
-	if patchEnd > len(syxData) {
-		http.Error(w, `{"error":".syx file too short for requested slot"}`, http.StatusBadRequest)
-		return
-	}
-	patch := syxData[patchStart:patchEnd]
 
 	// Decode into Candidate and render
 	cand := match.DecodeVoicePatch(patch)
@@ -651,9 +651,252 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExports(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	fs := http.StripPrefix("/exports/", http.FileServer(http.Dir(s.exportDir)))
 	fs.ServeHTTP(w, r)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeFile(w, r, "index.html")
+}
+
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	fs := http.StripPrefix("/html/", http.FileServer(http.Dir("html")))
+	fs.ServeHTTP(w, r)
+}
+
+func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SyxURL string `json:"syx_url"`
+		Slot   int    `json:"slot"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8000)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(req.SyxURL, "/exports/"))
+	syxData, err := os.ReadFile(syxPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
+		return
+	}
+
+	patchStart := 6 + req.Slot*128
+	patchEnd := patchStart + 128
+	if patchEnd > len(syxData) {
+		http.Error(w, `{"error":".syx file too short for requested slot"}`, http.StatusBadRequest)
+		return
+	}
+
+	patch := syxData[patchStart:patchEnd]
+	cand := match.DecodeVoicePatch(patch)
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"algorithm":  cand.Algorithm,
+		"feedback":   cand.Feedback,
+		"voice_data": patch,
+	})
+}
+
+func (s *Server) handleMorph(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SourceData string  `json:"source_data"` // base64-encoded 128-byte voice patch
+		TargetData string  `json:"target_data"` // base64-encoded 128-byte voice patch
+		Note       int     `json:"note"`
+		Ratio      float64 `json:"ratio"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8000)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.SourceData) == 0 || len(req.TargetData) == 0 {
+		http.Error(w, `{"error":"source_data and target_data required"}`, http.StatusBadRequest)
+		return
+	}
+
+	srcBytes, err := match.DecodeBase64(req.SourceData)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"invalid source_data: %v"}`, err), http.StatusBadRequest)
+		return
+	}
+	tgtBytes, err := match.DecodeBase64(req.TargetData)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"invalid target_data: %v"}`, err), http.StatusBadRequest)
+		return
+	}
+
+	if len(srcBytes) != 128 {
+		http.Error(w, fmt.Sprintf(`{"error":"source must be 128 bytes, got %d"}`, len(srcBytes)), http.StatusBadRequest)
+		return
+	}
+	if len(tgtBytes) != 128 {
+		http.Error(w, fmt.Sprintf(`{"error":"target must be 128 bytes, got %d"}`, len(tgtBytes)), http.StatusBadRequest)
+		return
+	}
+
+	source := match.DecodeVoicePatch(srcBytes)
+	target := match.DecodeVoicePatch(tgtBytes)
+
+	note := req.Note
+	if note == 0 {
+		note = 60
+	}
+	ratio := req.Ratio
+	if ratio < -1 || ratio > 1 {
+		ratio = 0.5
+	}
+
+	result := match.Morph(match.MorphConfig{
+		Source:  source,
+		Target:  target,
+		Note:    uint8(note),
+		Dur:     2 * time.Second,
+		Ratio:   ratio,
+		MaxIter: 100,
+		Verbose: false,
+	})
+
+	// Export morphed patch as .syx
+	morphID := fmt.Sprintf("morph_%d", time.Now().UnixNano())
+	morphDir := filepath.Join(s.exportDir, morphID)
+	os.MkdirAll(morphDir, 0755)
+
+	syxPath := filepath.Join(morphDir, "morphed.syx")
+	syxData := result.Morphed.SysexBulkDump()
+	if err := os.WriteFile(syxPath, syxData, 0644); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to write .syx: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Render the morphed patch for preview
+	morphedAudio := match.RenderCandidateWithGate(result.Morphed, uint8(note), 500*time.Millisecond, 2*time.Second)
+	wavPath := filepath.Join(morphDir, "morphed.wav")
+	if err := match.SaveWav(wavPath, morphedAudio, match.RenderSampleRate); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save wav: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"syx_url":      fmt.Sprintf("/exports/%s/morphed.syx", morphID),
+		"wav_url":      fmt.Sprintf("/exports/%s/morphed.wav", morphID),
+		"source_dist":  result.SourceDist,
+		"morph_dist":   result.MorphDist,
+		"ratio":        result.TargetRatio,
+		"alpha":        result.Alpha,
+		"iterations":   result.Iterations,
+	})
+}
+
+func (s *Server) handleExportSyx(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Patches []struct {
+			SyxURL    string `json:"syx_url"`
+			Slot      int    `json:"slot"`
+			Name      string `json:"name"`
+			VoiceData string `json:"voice_data"` // base64-encoded 128-byte patch (alternative to syx_url)
+		} `json:"patches"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 80000)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.Patches) == 0 || len(req.Patches) > 32 {
+		http.Error(w, `{"error":"need 1-32 patches"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Collect candidates from source .syx files or voice_data
+	var candidates []*match.Candidate
+	var names []string
+	for _, p := range req.Patches {
+		var voiceData []byte
+		var err error
+
+		if p.VoiceData != "" {
+			voiceData, err = match.DecodeBase64(p.VoiceData)
+			if err != nil || len(voiceData) != 128 {
+				http.Error(w, fmt.Sprintf(`{"error":"invalid voice_data for patch %q"}`, p.Name), http.StatusBadRequest)
+				return
+			}
+		} else {
+			syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(p.SyxURL, "/exports/"))
+			syxData, err := os.ReadFile(syxPath)
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
+				return
+			}
+			patchStart := 6 + p.Slot*128
+			patchEnd := patchStart + 128
+			if patchEnd > len(syxData) {
+				http.Error(w, `{"error":".syx file too short for requested slot"}`, http.StatusBadRequest)
+				return
+			}
+			voiceData = syxData[patchStart:patchEnd]
+		}
+		cand := match.DecodeVoicePatch(voiceData)
+		candidates = append(candidates, cand)
+
+		name := p.Name
+		if name == "" {
+			name = cand.Name
+		}
+		names = append(names, name)
+	}
+
+	// Sanitize and deduplicate names
+	sanitized := make([]string, len(names))
+	for i, n := range names {
+		sanitized[i] = match.SanitizeVoiceName(n)
+	}
+	sanitized = match.DeduplicateVoiceNames(sanitized)
+	for i, c := range candidates {
+		c.Name = sanitized[i]
+	}
+
+	// Generate combined .syx bank
+	syxData := match.SysexBulkDumpMultiple(candidates)
+
+	// Save to exports
+	exportID := fmt.Sprintf("export_%d", time.Now().UnixMilli())
+	exportDir := filepath.Join(s.exportDir, exportID)
+	_ = os.MkdirAll(exportDir, 0755)
+	syxPath := filepath.Join(exportDir, "favorites.syx")
+	if err := os.WriteFile(syxPath, syxData, 0644); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"write failed: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"syx_url": fmt.Sprintf("/exports/%s/favorites.syx", exportID),
+		"count":   len(candidates),
+	})
 }
 
 func fileExists(p string) bool {
@@ -721,16 +964,21 @@ func main() {
 	mux.HandleFunc("/api/match", server.handleMatch)
 	mux.HandleFunc("/api/probe", server.handleProbe)
 	mux.HandleFunc("/api/play", server.handlePlay)
+	mux.HandleFunc("/api/voice", server.handleVoice)
+	mux.HandleFunc("/api/morph", server.handleMorph)
+	mux.HandleFunc("/api/export-syx", server.handleExportSyx)
 	mux.HandleFunc("/api/status/", server.handleStatus)
 	mux.HandleFunc("/api/health", server.handleHealth)
 	mux.HandleFunc("/exports/", server.handleExports)
+	mux.HandleFunc("/html/", server.handleStatic)
+	mux.HandleFunc("/", server.handleIndex)
 
 	fmt.Printf("fmguessr REST API Server listening on http://localhost:%d\n", cfg.Port)
 	fmt.Printf("  Max Queue: %d, Generations: %d, Population: %d\n", cfg.MaxQueue, cfg.Generations, cfg.Population)
 	fmt.Printf("  Codebook: %s (exists: %v)\n", cfg.CodebookPath, fileExists(cfg.CodebookPath))
 	fmt.Printf("  Exports Dir: %s\n", server.exportDir)
 
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), mux); err != nil {
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), corsMiddleware(mux)); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}

@@ -281,6 +281,10 @@ textarea:focus {
     padding: 1.5rem;
 }
 
+#syx-content.visible {
+    display: block;
+}
+
 #syx-content > .tab-content.visible {
     display: block;
 }
