@@ -40,6 +40,29 @@ const NumCandidateParams = 50
 // Layout: Algorithm(1) + 6 ops × 8 params(48) + Feedback(1) + PitchEnv(3) = 53
 const DX7LabelDims = 53
 
+// candidateToParams53 converts a Candidate to the 53-dim normalized parameter vector
+// matching the training label layout: [Algorithm, Op6.Mode, Coarse, Fine, Level, R1, R2, L3, R4, ..., Feedback, PitchEnv]
+func candidateToParams53(c *Candidate) [DX7LabelDims]float64 {
+	var p [DX7LabelDims]float64
+	p[0] = float64(c.Algorithm) / 31.0
+	for opIdx := 0; opIdx < 6; opIdx++ {
+		base := 1 + opIdx*8
+		p[base+0] = float64(c.Ops[opIdx].Mode)
+		p[base+1] = float64(c.Ops[opIdx].FreqCoarse) / 31.0
+		p[base+2] = float64(c.Ops[opIdx].FreqFine) / 99.0
+		p[base+3] = float64(c.Ops[opIdx].OutputLevel) / 99.0
+		p[base+4] = float64(c.Ops[opIdx].Rate1) / 99.0
+		p[base+5] = float64(c.Ops[opIdx].Rate2) / 99.0
+		p[base+6] = float64(c.Ops[opIdx].Level3) / 99.0
+		p[base+7] = float64(c.Ops[opIdx].Rate4) / 99.0
+	}
+	p[49] = float64(c.Feedback) / 7.0
+	p[50] = float64(c.PitchRate1) / 99.0
+	p[51] = float64(c.PitchLevel1) / 99.0
+	p[52] = float64(c.PitchLevel2) / 99.0
+	return p
+}
+
 // Candidate represents a set of DX7 parameters to evaluate.
 type Candidate struct {
 	Algorithm uint8 // 0-31

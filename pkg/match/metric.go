@@ -172,6 +172,38 @@ func CosineTimbreDistance(target, candidate []float64, sampleRate int) float64 {
 	return 1.0 - cosSim
 }
 
+// ParameterPenalty computes a multiplicative penalty when DX7 patch parameters
+// diverge catastrophically from the target. Returns 1.0 when all params are close,
+// higher values when params diverge beyond a threshold.
+// penalty = 1.0 + sum(max(0, (|Δnorm| - threshold) * scale)²)
+func ParameterPenalty(targetParams, candidateParams [DX7LabelDims]float64) float64 {
+	const threshold = 0.8 // Normalized diff threshold before penalty kicks in
+	const scale = 2.0    // Penalty scaling factor
+
+	penalty := 1.0
+	for i := 0; i < DX7LabelDims; i++ {
+		diff := math.Abs(targetParams[i] - candidateParams[i])
+		if diff > threshold {
+			excess := (diff - threshold) * scale
+			penalty += excess * excess
+		}
+	}
+	return penalty
+}
+
+// CombinedDistance computes a distance that combines cosine spectral similarity
+// with a parameter penalty. The penalty multiplies the distance when any parameter
+// is catastrophically wrong, separating true matches from near-misses.
+// Returns 0.0 for perfect matches, higher for worse matches.
+func CombinedDistance(target, candidate []float64, sampleRate int,
+	targetParams, candidateParams [DX7LabelDims]float64) float64 {
+
+	spectralDist := CosineTimbreDistance(target, candidate, sampleRate)
+	paramPenalty := ParameterPenalty(targetParams, candidateParams)
+
+	return spectralDist * paramPenalty
+}
+
 // TemporalSpectralDistance computes a multi-stage temporal distance comparing
 // target and candidate PCM signals using TemporalTimbreSpec.
 func TemporalSpectralDistance(target, candidate []float64, sampleRate int) float64 {
