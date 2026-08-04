@@ -1088,22 +1088,15 @@ async function exportFavorites() {
 // --- .syx Upload & Tab Creation ---
 
 function initSyxUpload() {
-    // Create upload button in the favorites header area
-    const favHeader = document.getElementById('fav-header');
-    if (!favHeader) return;
-
-    const uploadBtn = document.createElement('button');
-    uploadBtn.className = 'syx-upload-btn';
-    uploadBtn.textContent = 'Import .syx';
-    uploadBtn.title = 'Import patches from a DX7 .syx bank file';
-    uploadBtn.addEventListener('click', () => {
+    const btn = document.getElementById('syx-import-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.syx';
         input.addEventListener('change', handleSyxUpload);
         input.click();
     });
-    favHeader.appendChild(uploadBtn);
 }
 
 async function handleSyxUpload(e) {
