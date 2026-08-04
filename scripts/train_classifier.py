@@ -294,9 +294,8 @@ def main():
     model.load_state_dict(torch.load('classifier_best.pth'))
     export_to_onnx(model, args.output, patch_bytes, device)
 
-    # Save normalization stats for Go inference
     # Save normalization stats as simple binary for Go
-    norm_path = output_path + '.norm.bin'
+    norm_path = args.output + '.norm.bin'
     with open(norm_path, 'wb') as f:
         f.write(struct.pack('I', FEATURE_DIM))  # uint32 dim
         f.write(feat_min.astype(np.float32).tobytes())  # float32[784]
@@ -319,9 +318,10 @@ def main():
         times.append(_time.perf_counter() - t0)
     print(f"  Inference: ~{sum(times)/len(times)*1000:.1f}ms")
 
-    # Cleanup
-    os.remove('classifier_best.pth')
-    print(f"\nTraining complete! Model: {args.output}")
+    # Cleanup — only remove temp file when training actually ran
+    if not args.skip_train and os.path.exists('classifier_best.pth'):
+        os.remove('classifier_best.pth')
+    print(f"\nDone! Model: {args.output}")
 
 
 if __name__ == '__main__':
