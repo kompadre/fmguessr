@@ -15,6 +15,7 @@ let pollInterval = null;
 let jobs = [];
 let activeJobIndex = -1;
 let pollQueue = [];
+let activeSyxVoiceData = null; // voice_data of currently selected .syx patch for piano
 
 const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
 
@@ -1346,7 +1347,16 @@ function createSyxTabInner(tabId, name, patches) {
             distance: 0,
             wav_url: null,
         }, {
-            onSelect: null,
+            onSelect: () => {
+                // Assign to piano — set active voice_data
+                if (patch.voice_data) {
+                    activeSyxVoiceData = patch.voice_data;
+                    const pianoDock = document.getElementById('piano-dock');
+                    pianoDock.innerHTML = '';
+                    pianoDock.appendChild(createPiano(60, null, (midi) => playNote(midi, null, activeSyxVoiceData)));
+                    pianoDock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            },
             onStar: () => {
                 // Deduplicate by patch data hash
                 const pid = patch.id || patchId(patch);
@@ -1688,11 +1698,38 @@ function upgradeTab(index) {
 
 function switchTab(tabId) {
     activeJobIndex = null;
+    activeSyxVoiceData = null;
     document.querySelectorAll('.tab').forEach(t => {
         t.classList.toggle('active', t.dataset.tabId === tabId);
     });
     showOnlyTabContent('tab-' + tabId);
-    document.getElementById('piano-dock').innerHTML = '';
+
+    // Create piano for .syx tabs
+    const pianoDock = document.getElementById('piano-dock');
+    pianoDock.innerHTML = '';
+
+    // Set up piano with first patch's voice_data as default
+    const syxContent = tabContent.querySelector('#tab-' + tabId);
+    if (syxContent) {
+        const firstRow = syxContent.querySelector('.patch-row');
+        if (firstRow && firstRow.dataset.voiceData) {
+            activeSyxVoiceData = firstRow.dataset.voiceData;
+        }
+    }
+
+    const piano = createPiano(60, null, (midi) => playNote(midi, null, activeSyxVoiceData));
+    pianoDock.appendChild(piano);
+
+    // Make patch rows set the active voice_data on click
+    if (syxContent) {
+        syxContent.querySelectorAll('.patch-row').forEach(row => {
+            row.addEventListener('click', () => {
+                if (row.dataset.voiceData) {
+                    activeSyxVoiceData = row.dataset.voiceData;
+                }
+            });
+        });
+    }
 }
 
 function showJob(index) {
@@ -2033,7 +2070,27 @@ function toggleFork(btn, noteSel, octSel) {
     btn.classList.add('active');
 }
 
-async function playNote(midi, job) {
+async function playNote(midi, job, voiceData) {
+    // Direct voice_data playback (for .syx patches and favorites)
+    if (voiceData) {
+        try {
+            const resp = await fetch(baseUrl + '/api/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ voice_data: voiceData, note: midi })
+            });
+            const data = await resp.json();
+            if (data.wav_url) {
+                const audio = new Audio(baseUrl + data.wav_url);
+                audio.play();
+                return;
+            }
+        } catch (err) {
+            console.warn('API play failed, falling back to sine:', err);
+        }
+    }
+
+    // WAV job playback (existing logic)
     let selected = job ? job.selectedMatch : null;
 
     if (selected && job.resultData && job.resultData.syx_url) {
