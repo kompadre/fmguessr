@@ -1,6 +1,7 @@
 package match
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -96,7 +97,7 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 	}
 
 	// Load normalization stats from companion file
-	if err := pc.loadNormStats(modelPath + ".norm.npy"); err != nil {
+	if err := pc.loadNormStats(modelPath + ".norm.bin"); err != nil {
 		log.Printf("Warning: could not load normalization stats: %v (using identity)", err)
 		for i := 0; i < Feature784Dim; i++ {
 			pc.featMin[i] = 0
@@ -180,24 +181,43 @@ func loadPatchBytes(path string) ([]byte, int, error) {
 	return data, n1, nil
 }
 
-// loadNormStats reads the normalization min/max from a .npy file saved by the training script.
+// loadNormStats reads normalization min/max from a .norm.bin file.
+// Format: uint32 dim, float32[dim] min, float32[dim] max
 func (pc *PatchClassifier) loadNormStats(path string) error {
-	// Simple .npy loader for dict format: {'min': array, 'max': array}
-	// The training script saves with np.save which uses npy format
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	// Read npy header and data
-	// For simplicity, read raw float64 arrays
-	// The training script saves: np.save(path, {'min': feat_min, 'max': feat_max})
-	// This is a numpy dict — we parse the arrays manually
+	// Read dimension
+	var dim uint32
+	if err := binary.Read(f, binary.LittleEndian, &dim); err != nil {
+		return fmt.Errorf("read dim: %w", err)
+	}
+	if dim != Feature784Dim {
+		return fmt.Errorf("expected dim %d, got %d", Feature784Dim, dim)
+	}
 
-	// Actually, let's just hardcode identity normalization for now
-	// and fix this when we have a real model
-	return fmt.Errorf("norm stats not yet implemented — using identity")
+	// Read min array
+	for i := 0; i < Feature784Dim; i++ {
+		var v float32
+		if err := binary.Read(f, binary.LittleEndian, &v); err != nil {
+			return fmt.Errorf("read min[%d]: %w", i, err)
+		}
+		pc.featMin[i] = float64(v)
+	}
+
+	// Read max array
+	for i := 0; i < Feature784Dim; i++ {
+		var v float32
+		if err := binary.Read(f, binary.LittleEndian, &v); err != nil {
+			return fmt.Errorf("read max[%d]: %w", i, err)
+		}
+		pc.featMax[i] = float64(v)
+	}
+
+	return nil
 }
 
 // Predict classifies a 784-dim feature vector and returns the best patch.

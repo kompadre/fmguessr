@@ -295,7 +295,13 @@ def main():
     export_to_onnx(model, args.output, patch_bytes, device)
 
     # Save normalization stats for Go inference
-    np.save(args.output + '.norm.npy', {'min': feat_min, 'max': feat_max})
+    # Save normalization stats as simple binary for Go
+    norm_path = output_path + '.norm.bin'
+    with open(norm_path, 'wb') as f:
+        f.write(struct.pack('I', FEATURE_DIM))  # uint32 dim
+        f.write(feat_min.astype(np.float32).tobytes())  # float32[784]
+        f.write(feat_max.astype(np.float32).tobytes())  # float32[784]
+    print(f"Norm stats saved to {norm_path}")
 
     # Verify
     print("Verifying ONNX model...")
