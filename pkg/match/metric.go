@@ -20,6 +20,158 @@ func SpectralDistance(target, candidate []float64) float64 {
 	return spectralDistanceAtScale(target, candidate, 1024, 256)
 }
 
+// PrecomputedTargetSTFT holds a cached target spectrogram for use with SpectralDistanceCached.
+type PrecomputedTargetSTFT struct {
+	Mag      [][]float64 // STFT magnitude frames
+	FrameRMS []float64   // Per-frame RMS energy
+	MaxRMS   float64     // Maximum frame RMS
+}
+
+// ComputeTargetSTFT precomputes the target's STFT magnitude spectrogram and frame energies.
+// Call this once per target and reuse across all candidate evaluations.
+func ComputeTargetSTFT(target []float64) *PrecomputedTargetSTFT {
+	mag := stftMagnitude(target, 1024, 256)
+	rows := len(mag)
+	if rows == 0 {
+		return &PrecomputedTargetSTFT{Mag: mag}
+	}
+	cols := len(mag[0])
+
+	frameRMS := make([]float64, rows)
+	maxRMS := 0.0
+	for i := 0; i < rows; i++ {
+		sum := 0.0
+		for j := 0; j < cols; j++ {
+			v := mag[i][j]
+			sum += v * v
+		}
+		rms := math.Sqrt(sum / float64(cols))
+		frameRMS[i] = rms
+		if rms > maxRMS {
+			maxRMS = rms
+		}
+	}
+
+	return &PrecomputedTargetSTFT{
+		Mag:      mag,
+		FrameRMS: frameRMS,
+		MaxRMS:   maxRMS,
+	}
+}
+
+// SpectralDistanceCached computes spectral distance using a precomputed target STFT.
+// This avoids recomputing the target spectrogram on every call, giving ~50% speedup
+// when evaluating many candidates against the same target.
+func SpectralDistanceCached(cached *PrecomputedTargetSTFT, candidate []float64) float64 {
+	candidateMag := stftMagnitude(candidate, 1024, 256)
+
+	rows := len(cached.Mag)
+	if len(candidateMag) < rows {
+		rows = len(candidateMag)
+	}
+	if rows == 0 {
+		return 0
+	}
+	cols := len(cached.Mag[0])
+	if len(candidateMag[0]) < cols {
+		cols = len(candidateMag[0])
+	}
+	if cols == 0 {
+		return 0
+	}
+
+	var diffNorm, targetNorm float64
+	var logDiffNorm, logTargetNorm float64
+
+	const epsilon = 1e-5
+
+	for i := 0; i < rows; i++ {
+		weight := 1.0
+		if cached.MaxRMS > 1e-10 {
+			weight = cached.FrameRMS[i] / cached.MaxRMS
+			if weight < 0.1 {
+				weight = 0.1
+			}
+		}
+
+		for j := 0; j < cols; j++ {
+			tVal := cached.Mag[i][j]
+			cVal := candidateMag[i][j]
+
+			d := tVal - cVal
+			diffNorm += d * d * weight
+			targetNorm += tVal * tVal * weight
+
+			logT := math.Log(tVal + epsilon)
+			logC := math.Log(cVal + epsilon)
+			ld := logT - logC
+			logDiffNorm += ld * ld * weight
+			logTargetNorm += logT * logT * weight
+		}
+	}
+
+	linearDist := 0.0
+	if targetNorm > 1e-10 {
+		linearDist = math.Sqrt(diffNorm) / math.Sqrt(targetNorm)
+	}
+
+	logDist := 0.0
+	if logTargetNorm > 1e-10 {
+		logDist = math.Sqrt(logDiffNorm) / math.Sqrt(logTargetNorm)
+	}
+
+	return linearDist + 1.0*logDist
+}
+
+// SustainSpectralDistance compares only the sustain portions of target and candidate,
+// eliminating differences from attack transients and release tails.
+// Uses ExtractTimbreWindow to isolate the stable sustain region of each signal,
+// then computes Euclidean distance on the 256-bin spectra.
+// Returns 0.0 for identical sustain spectra, higher for different ones.
+func SustainSpectralDistance(target, candidate []float64, sampleRate int) float64 {
+	targetSpec := ExtractTimbreWindow(target, sampleRate)
+	candidateSpec := ExtractTimbreWindow(candidate, sampleRate)
+
+	// Euclidean distance on 256-bin spectra (already normalized to [0,1])
+	sumSq := 0.0
+	for i := 0; i < TimbreSpecBins; i++ {
+		d := targetSpec[i] - candidateSpec[i]
+		sumSq += d * d
+	}
+	return math.Sqrt(sumSq)
+}
+
+// CosineTimbreDistance compares timbre spectra using cosine distance,
+// which is robust to overall magnitude differences between rendering paths.
+// Returns 0.0 for identical spectral shapes, 2.0 for opposite.
+func CosineTimbreDistance(target, candidate []float64, sampleRate int) float64 {
+	targetSpec := ExtractTimbreWindow(target, sampleRate)
+	candidateSpec := ExtractTimbreWindow(candidate, sampleRate)
+
+	var dotProduct, normA, normB float64
+	for i := 0; i < TimbreSpecBins; i++ {
+		dotProduct += targetSpec[i] * candidateSpec[i]
+		normA += targetSpec[i] * targetSpec[i]
+		normB += candidateSpec[i] * candidateSpec[i]
+	}
+
+	if normA < 1e-10 || normB < 1e-10 {
+		return 2.0 // maximally different
+	}
+
+	cosSim := dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
+	// Clamp to [-1, 1] to avoid floating point issues
+	if cosSim > 1.0 {
+		cosSim = 1.0
+	}
+	if cosSim < -1.0 {
+		cosSim = -1.0
+	}
+
+	// Convert cosine similarity to distance: 0 = identical, 2 = opposite
+	return 1.0 - cosSim
+}
+
 // TemporalSpectralDistance computes a multi-stage temporal distance comparing
 // target and candidate PCM signals using TemporalTimbreSpec.
 func TemporalSpectralDistance(target, candidate []float64, sampleRate int) float64 {

@@ -564,11 +564,21 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				if m.PatchBytes != nil {
 					cand := DecodeVoicePatch(m.PatchBytes)
 					if cand != nil {
-						dist := evaluateSingleCandidate(cand, target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
+						// Compute cosine timbre distance (robust to rendering differences)
+						candAudio := RenderCandidate(cand, cfg.MIDINote, cfg.RenderDur)
+						candTrimmed := TrimOrPad(candAudio, len(target))
+						candNormed := NormalizeRMS(candTrimmed)
+						cosineDist := CosineTimbreDistance(target, candNormed, RenderSampleRate)
+						// Use cosine distance for ranking (more reliable across rendering paths)
+						dist := cosineDist
+						// Also compute full distance for GA seeding (used by distance-based operations)
+						fullDist := evaluateSingleCandidate(cand, target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
+
 						if nnCandidates == nil {
 							nnCandidates = make([]*Candidate, 0)
 						}
 						nnCandidates = append(nnCandidates, cand)
+						// Insert with cosine distance for better ranking
 						timbreCohort.TryInsert(cand, dist)
 						fullCohort.TryInsert(cand, dist)
 
@@ -577,8 +587,8 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 							if cand.Ops[5].FreqCoarse > 0 {
 								freqRatio = float64(cand.Ops[5].FreqCoarse) * (1.0 + float64(cand.Ops[5].FreqFine)/100.0)
 							}
-							fmt.Printf("  Classifier seed #%d: algo=%d fb=%d freq=%.1f dist=%.6f conf=%.3f\n",
-								m.Index, cand.Algorithm+1, cand.Feedback, freqRatio, dist, m.Confidence)
+							fmt.Printf("  Classifier seed #%d: algo=%d fb=%d freq=%.1f cosine=%.6f full=%.6f conf=%.3f\n",
+								m.Index, cand.Algorithm+1, cand.Feedback, freqRatio, cosineDist, fullDist, m.Confidence)
 						}
 					}
 				}
