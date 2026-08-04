@@ -1310,13 +1310,9 @@ function createSyxTab(name, patches) {
 // Create SYX tab from saved data (used by restoreSyxTabs)
 function createSyxTabFromData(tabId, name, patches) {
     createSyxTabInner(tabId, name, patches);
-    tabsEl.querySelectorAll(`[data-tab-id="${tabId}"]`).forEach(t => t.remove());
-    const tab = document.createElement('div');
-    tab.className = 'tab';
-    tab.dataset.tabId = tabId;
-    tab.textContent = name;
-    tab.addEventListener('click', () => switchTab(tabId));
-    tabsEl.appendChild(tab);
+    // Move tab to end of tabs bar
+    const tab = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
+    if (tab) tabsEl.appendChild(tab);
     tabsEl.classList.add('visible');
     switchTab(tabId);
 }
@@ -1637,13 +1633,15 @@ function addTab(index) {
     const tab = document.createElement('div');
     tab.className = 'tab';
     tab.dataset.index = index;
+    tab.dataset.jobId = job.id;
 
     const spinner = document.createElement('div');
     spinner.className = 'spinner';
 
     const label = document.createElement('span');
     label.className = 'tab-label';
-    label.textContent = job.fileName;
+    const shortId = job.id.length > 12 ? job.id.slice(-8) : job.id;
+    label.textContent = job.fileName + ' [' + shortId + ']';
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'tab-close';
