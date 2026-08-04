@@ -362,8 +362,12 @@ func DecodeVoicePatch(patch []byte) *Candidate {
 		c.Ops[op] = OpParams{
 			Rate1:       patch[base+0],
 			Rate2:       patch[base+1],
-			Level3:      patch[base+6],
+			Rate3:       patch[base+2],
 			Rate4:       patch[base+3],
+			Level1:      patch[base+4],
+			Level2:      patch[base+5],
+			Level3:      patch[base+6],
+			Level4:      patch[base+7],
 			OutputLevel: patch[base+14],
 			Mode:        patch[base+15] & 1,
 			FreqCoarse:  (patch[base+15] >> 1) & 0x1F,

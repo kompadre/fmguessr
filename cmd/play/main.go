@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,9 +35,9 @@ var noteNames = map[string]int{
 func main() {
 	outPath := flag.String("o", "", "export to WAV file instead of playing")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <patch.syx> [slot] [note]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Play an instrument from a DX7 .syx file.\n")
-		fmt.Fprintf(os.Stderr, "  slot: patch slot 0-31 (default: 0)\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <patch.syx|patches.npy> [slot] [note]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Play an instrument from a DX7 .syx file or .npy patch bank.\n")
+		fmt.Fprintf(os.Stderr, "  slot: patch slot 0-31 for .syx, or 0-N for .npy (default: 0)\n")
 		fmt.Fprintf(os.Stderr, "  note: C3, D#4, Bb5, etc. (default: C3)\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
@@ -47,13 +48,13 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-	syxPath := flag.Arg(0)
+	patchPath := flag.Arg(0)
 
 	slot := 0
 	if flag.NArg() >= 2 {
 		s, err := strconv.Atoi(flag.Arg(1))
-		if err != nil || s < 0 || s > 31 {
-			fmt.Fprintf(os.Stderr, "Invalid slot %q: must be 0-31\n", flag.Arg(1))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid slot %q: %v\n", flag.Arg(1), err)
 			os.Exit(1)
 		}
 		slot = s
@@ -74,23 +75,33 @@ func main() {
 	synth := msfa.NewSynth(float64(sampleRate))
 	defer synth.Free()
 
-	// Load the .syx file (loads all 32 voices into the bank)
-	if err := synth.LoadPatch(syxPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", syxPath, err)
-		os.Exit(1)
-	}
+	ext := strings.ToLower(filepath.Ext(patchPath))
 
-	// Select the requested program slot on channel 0
-	synth.ChangeProgram(0, uint8(slot))
-	fmt.Printf("Loaded: slot %d — %s\n", slot, synth.Programs[slot])
-
-	// Extract and display patch parameters
-	bank := make([]byte, 4096)
-	synth.GetBank(bank)
-	voiceStart := slot * 128
-	if voiceStart+128 <= len(bank) {
-		cand := match.DecodeVoicePatch(bank[voiceStart : voiceStart+128])
+	switch ext {
+	case ".npy":
+		// Load patches from .npy file (N×128 uint8 array)
+		patchData, numPatches, err := match.LoadPatchBytes(patchPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", patchPath, err)
+			os.Exit(1)
+		}
+		if slot < 0 || slot >= numPatches {
+			fmt.Fprintf(os.Stderr, "Slot %d out of range: .npy has %d patches (0-%d)\n", slot, numPatches, numPatches-1)
+			os.Exit(1)
+		}
+		// Load up to 32 patches into the synth bank (or fewer if npy has less)
+		loadCount := numPatches
+		if loadCount > 32 {
+			loadCount = 32
+		}
+		for i := 0; i < loadCount; i++ {
+			synth.SetVoice(i, patchData[i*128:(i+1)*128])
+		}
+		synth.ChangeProgram(0, uint8(slot))
+		voiceData := patchData[slot*128 : (slot+1)*128]
+		cand := match.DecodeVoicePatch(voiceData)
 		if cand != nil {
+			fmt.Printf("Loaded: patch %d/%d from %s\n", slot, numPatches, patchPath)
 			fmt.Printf("  Algorithm: %d, Feedback: %d\n", cand.Algorithm+1, cand.Feedback)
 			for i := 0; i < 6; i++ {
 				op := cand.Ops[i]
@@ -100,6 +111,39 @@ func main() {
 				}
 				fmt.Printf("  Op%d [%s]: Level=%d Fine=%d Coarse=%d L3=%d R2=%d\n",
 					i+1, role, op.OutputLevel, op.FreqFine, op.FreqCoarse, op.Level3, op.Rate2)
+			}
+		}
+
+	default:
+		// Load .syx file (loads all 32 voices into the bank)
+		if slot < 0 || slot > 31 {
+			fmt.Fprintf(os.Stderr, "Invalid slot %d: must be 0-31 for .syx files\n", slot)
+			os.Exit(1)
+		}
+		if err := synth.LoadPatch(patchPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", patchPath, err)
+			os.Exit(1)
+		}
+		synth.ChangeProgram(0, uint8(slot))
+		fmt.Printf("Loaded: slot %d — %s\n", slot, synth.Programs[slot])
+
+		// Extract and display patch parameters
+		bank := make([]byte, 4096)
+		synth.GetBank(bank)
+		voiceStart := slot * 128
+		if voiceStart+128 <= len(bank) {
+			cand := match.DecodeVoicePatch(bank[voiceStart : voiceStart+128])
+			if cand != nil {
+				fmt.Printf("  Algorithm: %d, Feedback: %d\n", cand.Algorithm+1, cand.Feedback)
+				for i := 0; i < 6; i++ {
+					op := cand.Ops[i]
+					role := "M"
+					if match.IsCarrier(cand.Algorithm, i) {
+						role = "C"
+					}
+					fmt.Printf("  Op%d [%s]: Level=%d Fine=%d Coarse=%d L3=%d R2=%d\n",
+						i+1, role, op.OutputLevel, op.FreqFine, op.FreqCoarse, op.Level3, op.Rate2)
+				}
 			}
 		}
 	}

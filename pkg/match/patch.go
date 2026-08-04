@@ -30,7 +30,11 @@ type OpParams struct {
 	OutputLevel uint8 // 0-99
 	Rate1       uint8 // Attack Rate 0-99
 	Rate2       uint8 // Decay Rate 0-99
+	Rate3       uint8 // Sustain Rate 0-99
+	Level1      uint8 // Attack Level 0-99
+	Level2      uint8 // Decay Level 0-99
 	Level3      uint8 // Sustain Level 0-99
+	Level4      uint8 // Release Level 0-99
 	Rate4       uint8 // Release Rate 0-99
 }
 
@@ -139,6 +143,22 @@ func (c *Candidate) Copy() *Candidate {
 	return d
 }
 
+// CopyEnvelopeFromRawBase syncs envelope start/end fields (Level1, Level2, Rate3, Level4)
+// from RawBase into Ops[]. Call after attaching a RawBase template so Encode() preserves
+// the template's envelope shaping instead of using zero defaults.
+func (c *Candidate) CopyEnvelopeFromRawBase() {
+	if len(c.RawBase) != 128 {
+		return
+	}
+	for op := 0; op < 6; op++ {
+		base := op * 17
+		c.Ops[op].Rate3 = c.RawBase[base+2]
+		c.Ops[op].Level1 = c.RawBase[base+4]
+		c.Ops[op].Level2 = c.RawBase[base+5]
+		c.Ops[op].Level4 = c.RawBase[base+7]
+	}
+}
+
 // Encode packs the candidate into a 128-byte DX7 bulk patch.
 // Non-tuned parameters are filled from RawBase template (or epiano defaults).
 func (c *Candidate) Encode() []byte {
@@ -156,16 +176,14 @@ func (c *Candidate) Encode() []byte {
 		// Bytes 0-3: Envelope Rates (R1, R2, R3, R4)
 		patch[base+0] = opP.Rate1
 		patch[base+1] = opP.Rate2
+		patch[base+2] = opP.Rate3
 		patch[base+3] = opP.Rate4
 
 		// Bytes 4-7: Envelope Levels (L1, L2, L3, L4)
+		patch[base+4] = opP.Level1
+		patch[base+5] = opP.Level2
 		patch[base+6] = opP.Level3
-
-		// For percussive envelopes (Level3 == 0), override L2=0 and R3=R2 even if RawBase is present
-		if opP.Level3 == 0 {
-			patch[base+2] = opP.Rate2 // R3 = R2
-			patch[base+5] = 0         // L2 = 0 for instant percussive decay
-		}
+		patch[base+7] = opP.Level4
 
 		// Fill default envelope stages if no RawBase template was provided
 		if len(c.RawBase) != 128 {
@@ -706,7 +724,7 @@ func InitVoice() *Candidate {
 		PitchLevel2: 50,
 	}
 	for i := 0; i < 6; i++ {
-		c.Ops[i] = OpParams{OutputLevel: 0, Level3: 0, Rate1: 99, Rate2: 99, Rate4: 0}
+		c.Ops[i] = OpParams{OutputLevel: 0, Level3: 0, Rate1: 99, Rate2: 99, Rate3: 99, Level1: 99, Level2: 0, Level4: 0, Rate4: 0}
 	}
 	for i := 0; i < NumCandidateParams; i++ {
 		c.Direction[i] = 1
@@ -720,8 +738,10 @@ func InitVoice() *Candidate {
 func MuteOperator(c *Candidate, opIdx int) {
 	c.Ops[opIdx].OutputLevel = 0
 	c.Ops[opIdx].Level3 = 0
+	c.Ops[opIdx].Level2 = 0
 	c.Ops[opIdx].Rate1 = 99
 	c.Ops[opIdx].Rate2 = 99
+	c.Ops[opIdx].Rate3 = 99
 	c.Ops[opIdx].Rate4 = 0
 }
 

@@ -76,6 +76,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	// Step 1: Codebook Lookup (FIRST step in matching pipeline)
 	var knnMap map[uint8]*Candidate
+	var knnMapDists map[uint8]float64
 	var codebookPool *CodebookPool
 	var bestCodebookCand *Candidate
 	bestCodebookDist := math.MaxFloat64
@@ -139,6 +140,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 				// Build knnMap for GA seeding (union of both codebooks)
 				knnMap = make(map[uint8]*Candidate)
+				knnMapDists = make(map[uint8]float64)
 				bestDistPerAlgo := make(map[uint8]float64)
 				nameMap := make(map[string]string, len(cb.Entries))
 				for _, entry := range cb.Entries {
@@ -160,6 +162,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 					if !exists || dist < bestDist {
 						bestDistPerAlgo[algo] = dist
 						knnMap[algo] = matchCand
+						knnMapDists[algo] = dist
 					}
 				}
 				if cfg.Verbose {
@@ -176,6 +179,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				if len(knnMatches) > 0 {
 					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 					knnMap = make(map[uint8]*Candidate)
+					knnMapDists = make(map[uint8]float64)
 					bestDistPerAlgo := make(map[uint8]float64)
 
 					for i, matchCand := range knnMatches {
@@ -190,6 +194,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						if !exists || dist < bestDist {
 							bestDistPerAlgo[algo] = dist
 							knnMap[algo] = matchCand
+							knnMapDists[algo] = dist
 						}
 					}
 					if cfg.Verbose {
@@ -533,6 +538,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	}
 
 	// Step 2.7 — Patch Classifier: NN classifies patches from codebook
+	// Track best classifier seed for pre-GA LiveOptimizer refinement
+	var classifierFullDists []float64
+	var bestClassifierNNIdx int = -1
+	var bestClassifierFullDist float64 = math.MaxFloat64
+	var classifierAlgoMap map[uint8]int // algorithm → index in nnCandidates
+	var classifierStartNNIdx int        // index in nnCandidates where classifier entries start
 	if cfg.ClassifierPath != "" {
 		if cfg.Verbose {
 			fmt.Println("--- Step 2.7: Patch Classifier ---")
@@ -584,10 +595,23 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 						if nnCandidates == nil {
 							nnCandidates = make([]*Candidate, 0)
+							classifierAlgoMap = make(map[uint8]int)
+							classifierStartNNIdx = 0
+						} else if classifierStartNNIdx == 0 && len(nnCandidates) > 0 {
+							classifierStartNNIdx = len(nnCandidates)
 						}
+						nnIdx := len(nnCandidates)
 						nnCandidates = append(nnCandidates, cand)
+						classifierFullDists = append(classifierFullDists, fullDist)
+						classifierAlgoMap[cand.Algorithm] = nnIdx
 						timbreCohort.TryInsert(cand, combinedDist)
 						fullCohort.TryInsert(cand, combinedDist)
+
+						// Track best classifier seed by full GA distance
+						if fullDist < bestClassifierFullDist {
+							bestClassifierFullDist = fullDist
+							bestClassifierNNIdx = nnIdx
+						}
 
 						if cfg.Verbose {
 							freqRatio := 1.0
@@ -605,9 +629,57 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
-	// If no NN model was run, run pre-GA acceleration profiling on Waveform Base Seeds to seed GA islands
+	// Classifier pre-refinement: run LiveOptimizer on best classifier seed when no NN model ran
 	var globalLiveOpt *LiveOptimizer
-	if nnCandidates == nil {
+	if bestClassifierNNIdx >= 0 {
+		if cfg.Verbose {
+			fmt.Println("--- Classifier Pre-optimization (live optimizer & diff optimizer) ---")
+		}
+		initialPatch := nnCandidates[bestClassifierNNIdx].Copy()
+		if cfg.Verbose {
+			fmt.Printf("Classifier best seed: algo=%d fullDist=%.6f — running LiveOptimizer\n",
+				initialPatch.Algorithm+1, bestClassifierFullDist)
+		}
+		globalLiveOpt = NewLiveOptimizer(target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		refined := globalLiveOpt.Run()
+
+		// Differential Jacobian steering on temporal timbre features
+		diffOpt := NewDiffOptimizer(target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		diffRefined := diffOpt.RunAlternating(2)
+		if diffOpt.bestDist < globalLiveOpt.bestDist {
+			refined = diffRefined
+		}
+
+		// Insert refined candidate into elite cohorts
+		refinedDist := globalLiveOpt.bestDist
+		if diffOpt.bestDist < refinedDist {
+			refinedDist = diffOpt.bestDist
+		}
+		timbreCohort.TryInsert(refined, refinedDist)
+		fullCohort.TryInsert(refined, refinedDist)
+
+		if refinedDist < bestClassifierFullDist {
+			nnCandidates[bestClassifierNNIdx] = refined
+			if cfg.Verbose {
+				fmt.Printf("Classifier pre-optimization: improved from %.6f to %.6f\n", bestClassifierFullDist, refinedDist)
+			}
+			if refinedDist <= 1e-4 {
+				if cfg.Verbose {
+					fmt.Printf("Exact match found during classifier pre-optimization (dist=%.6f). Returning early!\n", refinedDist)
+				}
+				reportProgress(cfg, 100, "Completed (Exact Classifier Match)")
+				return Result{
+					Best:     refined,
+					BestDist: refinedDist,
+					Iters:    32 + 500,
+					Top:      []*Candidate{refined},
+				}
+			}
+		}
+	}
+
+	// If no NN model was run and no classifier refinement, run pre-GA acceleration profiling on Waveform Base Seeds to seed GA islands
+	if nnCandidates == nil && globalLiveOpt == nil {
 		if cfg.Verbose {
 			fmt.Println("--- Pre-GA Acceleration Profiling (Waveform Base Seeds) ---")
 		}
@@ -640,6 +712,36 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				Iters:    500,
 				Top:      []*Candidate{globalLiveOpt.bestPatch},
 			}
+		}
+	}
+
+	// Change 2: Filter knnMap entries above 0.3 when classifier found a better match
+	if classifierAlgoMap != nil && knnMap != nil {
+		for algo, nnIdx := range classifierAlgoMap {
+			clsDistIdx := nnIdx - classifierStartNNIdx
+			if clsDistIdx >= 0 && clsDistIdx < len(classifierFullDists) && classifierFullDists[clsDistIdx] < 0.3 {
+				if dist, ok := knnMapDists[algo]; ok && dist > 0.3 {
+					if cfg.Verbose {
+						fmt.Printf("Classifier override: dropping codebook seed Algo %d (dist=%.6f > 0.3) — classifier seed is better (fullDist=%.6f)\n",
+							algo+1, dist, classifierFullDists[clsDistIdx])
+					}
+					delete(knnMap, algo)
+					delete(knnMapDists, algo)
+				}
+			}
+		}
+	}
+
+	// Change 3: Ensure best classifier seeds come first in nnCandidates for island init priority
+	// Move the refined classifier seed to position 0 so it gets Priority 1 for its algorithm
+	if bestClassifierNNIdx >= 0 && bestClassifierNNIdx < len(nnCandidates) {
+		bestCand := nnCandidates[bestClassifierNNIdx]
+		// Shift candidates to make room at position 0
+		copy(nnCandidates[1:bestClassifierNNIdx+1], nnCandidates[0:bestClassifierNNIdx])
+		nnCandidates[0] = bestCand
+		if cfg.Verbose {
+			fmt.Printf("Moved best classifier seed (algo=%d) to nnCandidates[0] for island priority\n",
+				bestCand.Algorithm+1)
 		}
 	}
 

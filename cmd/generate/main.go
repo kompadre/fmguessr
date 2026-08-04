@@ -187,9 +187,14 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 	d := c.Copy()
 
 	for i := 0; i < 6; i++ {
-		// Perturb OutputLevel (σ=6, ±12)
+		// Perturb OutputLevel (σ=6, ±12) with slight attenuation bias
 		levelDelta := int(rng.NormFloat64() * 6.0)
 		newLevel := int(d.Ops[i].OutputLevel) + levelDelta
+		// 30% chance of slight attenuation (reduce by 5-10%)
+		if rng.Float64() < 0.30 {
+			attenuation := 3 + rng.Intn(4) // 3-6 levels quieter
+			newLevel -= attenuation
+		}
 		if newLevel < 0 {
 			newLevel = 0
 		}
@@ -242,6 +247,17 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 		}
 		d.Ops[i].Rate2 = uint8(newR2)
 
+		// Perturb Rate3/Sustain (σ=4, ±8) — move sustain timing
+		r3Delta := int(rng.NormFloat64() * 4.0)
+		newR3 := int(d.Ops[i].Rate3) + r3Delta
+		if newR3 < 0 {
+			newR3 = 0
+		}
+		if newR3 > 99 {
+			newR3 = 99
+		}
+		d.Ops[i].Rate3 = uint8(newR3)
+
 		// Perturb Level3/Sustain (σ=6, ±12)
 		l3Delta := int(rng.NormFloat64() * 6.0)
 		newL3 := int(d.Ops[i].Level3) + l3Delta
@@ -263,6 +279,39 @@ func perturbCandidate(c *match.Candidate, rng *rand.Rand) *match.Candidate {
 			newR4 = 99
 		}
 		d.Ops[i].Rate4 = uint8(newR4)
+
+		// Perturb Level1/Attack (σ=6, ±12) — move attack endpoint
+		l1Delta := int(rng.NormFloat64() * 6.0)
+		newL1 := int(d.Ops[i].Level1) + l1Delta
+		if newL1 < 0 {
+			newL1 = 0
+		}
+		if newL1 > 99 {
+			newL1 = 99
+		}
+		d.Ops[i].Level1 = uint8(newL1)
+
+		// Perturb Level2/Decay (σ=6, ±12) — move decay endpoint
+		l2Delta := int(rng.NormFloat64() * 6.0)
+		newL2 := int(d.Ops[i].Level2) + l2Delta
+		if newL2 < 0 {
+			newL2 = 0
+		}
+		if newL2 > 99 {
+			newL2 = 99
+		}
+		d.Ops[i].Level2 = uint8(newL2)
+
+		// Perturb Level4/Release (σ=6, ±12) — move release endpoint
+		l4Delta := int(rng.NormFloat64() * 6.0)
+		newL4 := int(d.Ops[i].Level4) + l4Delta
+		if newL4 < 0 {
+			newL4 = 0
+		}
+		if newL4 > 99 {
+			newL4 = 99
+		}
+		d.Ops[i].Level4 = uint8(newL4)
 	}
 
 	// Perturb Feedback (σ=1.5, 30% chance)

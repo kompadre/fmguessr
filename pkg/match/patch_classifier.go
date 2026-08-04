@@ -51,7 +51,7 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 	}
 
 	// Load patch bytes from companion .patches.npy to determine N
-	patchBytes, numPatches, err := loadPatchBytes(modelPath + ".patches.npy")
+	patchBytes, numPatches, err := LoadPatchBytes(modelPath + ".patches.npy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load patch bytes: %w", err)
 	}
@@ -109,9 +109,9 @@ func NewPatchClassifier(modelPath string) (*PatchClassifier, error) {
 	return pc, nil
 }
 
-// loadPatchBytes reads patch bytes from a .npy file saved by the training script.
+// LoadPatchBytes reads patch bytes from a .npy file saved by the training script.
 // Format: numpy array of shape (N, 128) with dtype uint8.
-func loadPatchBytes(path string) ([]byte, int, error) {
+func LoadPatchBytes(path string) ([]byte, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cannot open %s: %w", path, err)

@@ -275,6 +275,7 @@ func AttachNearestRawBase(c *Candidate, codebook *Codebook) *Candidate {
 		c2 := c.Copy()
 		c2.RawBase = make([]byte, 128)
 		copy(c2.RawBase, bestEntry.Candidate.RawBase)
+		c2.CopyEnvelopeFromRawBase()
 		return c2
 	}
 
@@ -313,6 +314,7 @@ func AttachNearestRawBaseTimbre(c *Candidate, tc *TimbreCodebook) *Candidate {
 		c2 := c.Copy()
 		c2.RawBase = make([]byte, 128)
 		copy(c2.RawBase, bestEntry.Candidate.RawBase)
+		c2.CopyEnvelopeFromRawBase()
 		return c2
 	}
 
@@ -648,6 +650,7 @@ func (p *ProbePredictor) dx7ToCandidate(dx7 []float32, midiNote int) *Candidate 
 	if p.modelPath != "" {
 		// Try to find nearest codebook entry by algorithm + frequency
 		cand.RawBase = findNearestTemplate(cand)
+		cand.CopyEnvelopeFromRawBase()
 	}
 
 	return cand
