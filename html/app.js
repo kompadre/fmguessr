@@ -140,21 +140,41 @@ async function restoreSessions() {
 async function deleteSession(jobIndex) {
     const job = jobs[jobIndex];
     if (!job) return;
+
+    if (!confirm(`Remove "${job.fileName}" from history?`)) return;
+
     await dbDelete(job.id);
     if (job.objectUrl) URL.revokeObjectURL(job.objectUrl);
     jobs.splice(jobIndex, 1);
-    // Clear all tab content — indices will shift, so IDs must be recreated
-    tabContent.innerHTML = '';
-    tabsEl.innerHTML = '';
+
+    // Remove only this job's content div and tab header
+    const contentEl = tabContent.querySelector('#tab-wav-' + jobIndex);
+    if (contentEl) contentEl.remove();
+    if (job.tabEl) job.tabEl.remove();
+
+    // Re-index remaining WAV tabs (IDs shift after splice)
+    tabContent.querySelectorAll('[id^="tab-wav-"]').forEach(el => el.remove());
+    tabsEl.querySelectorAll('[data-index]').forEach(el => el.remove());
     jobs.forEach((j, i) => {
         j.tabEl = null;
         addTab(i);
         if (j.resultData) upgradeTab(i);
     });
+
     if (activeJobIndex === jobIndex) {
         activeJobIndex = jobs.length > 0 ? 0 : -1;
-        if (activeJobIndex >= 0) showJob(0);
-        else { document.getElementById('piano-dock').innerHTML = ''; }
+        if (activeJobIndex >= 0) {
+            showJob(0);
+        } else {
+            // No WAV tabs left — show first .syx tab if any
+            const firstSyx = tabsEl.querySelector('[data-tab-id]');
+            if (firstSyx) {
+                switchTab(firstSyx.dataset.tabId);
+            } else {
+                tabContent.classList.remove('visible');
+                document.getElementById('piano-dock').innerHTML = '';
+            }
+        }
     } else if (activeJobIndex > jobIndex) {
         activeJobIndex--;
     }
