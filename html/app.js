@@ -1088,15 +1088,8 @@ async function exportFavorites() {
 // --- .syx Upload & Tab Creation ---
 
 function initSyxUpload() {
-    const btn = document.getElementById('syx-import-btn');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.syx';
-        input.addEventListener('change', handleSyxUpload);
-        input.click();
-    });
+    // .syx files are now handled by the main file input
+    // No separate button needed
 }
 
 async function handleSyxUpload(e) {
