@@ -3,6 +3,7 @@ import { createPianoDock } from './components/piano-dock.js';
 import { createSpectrogram } from './components/spectrogram.js';
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
 import { initDx7Synth, playNoteRealtime, renderOffline, isDx7Ready, batchRenderWaveforms } from './synth/dx7-synth.js';
+import { initNightSky, addContainer } from './components/night-sky.js';
 
 const fileInput = document.getElementById('wav-input');
 const fileLabel = document.getElementById('file-label');
@@ -2494,3 +2495,33 @@ restoreSessions();
 restoreSyxTabs();
 loadFavorites();
 initSyxUpload();
+initNightSky({
+    onPlay: async (match) => {
+        if (match.voice_data) {
+            await ensureDx7Synth();
+            if (isDx7Ready()) {
+                const stop = playNoteRealtime(match.voice_data, 60);
+                if (stop) setTimeout(stop, 3000);
+                return;
+            }
+        }
+    },
+    onSelect: (match) => {
+        if (match.voice_data) {
+            activeSyxVoiceData = match.voice_data;
+            activePianorollPatchId = match.name;
+            rebuildPianoDock();
+        }
+    },
+    onEdit: (match) => {
+        openEdit({
+            id: 'sky_' + Date.now(),
+            name: match.name,
+            algorithm: match.algorithm,
+            feedback: match.feedback,
+            distance: match.distance || 0,
+            voice_data: match.voice_data || null,
+        });
+    },
+    baseUrl,
+});

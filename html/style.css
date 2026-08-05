@@ -275,6 +275,137 @@ textarea:focus {
     display: none;
 }
 
+/* ============================================================
+   Night Sky — free-floating patch canvas
+   ============================================================ */
+
+#night-sky {
+    position: relative;
+    width: 100%;
+    min-height: 300px;
+    display: none;
+}
+
+#night-sky.visible {
+    display: block;
+}
+
+.night-sky-canvas {
+    position: relative;
+    width: 100%;
+    min-height: 300px;
+    border: 1px dashed #2a2a3e;
+    border-radius: 8px;
+    background: radial-gradient(ellipse at center, #0d0d1a 0%, #080812 100%);
+    overflow: auto;
+}
+
+.sky-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.sky-ctr-btn {
+    background: #16213e;
+    color: #999;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.sky-ctr-btn:hover {
+    background: #1a2744;
+    color: #ccc;
+}
+
+.night-sky-canvas.drag-over-sky {
+    border-color: #e94560;
+    background: radial-gradient(ellipse at center, #12121f 0%, #0a0a18 100%);
+}
+
+.patch-float {
+    position: absolute;
+    z-index: 10;
+    cursor: grab;
+    user-select: none;
+    transition: box-shadow 0.15s;
+}
+
+.patch-float:active {
+    cursor: grabbing;
+}
+
+.patch-float.minified .patch-spec,
+.patch-float.minified .patch-col,
+.patch-float.minified .patch-assign,
+.patch-float.minified .patch-edit-btn {
+    display: none;
+}
+
+.patch-float.minified {
+    background: #12121f;
+    border: 1px solid #2a2a3e;
+    border-left: 3px solid #f5c542;
+    border-radius: 6px;
+    padding: 0.3rem 0.5rem;
+    min-width: 80px;
+    max-width: 160px;
+}
+
+.patch-float.minified .patch-star {
+    opacity: 1;
+}
+
+.patch-float.minified .patch-name {
+    color: #f5c542;
+    font-size: 0.75rem;
+    display: block;
+    max-width: 120px;
+}
+
+/* Container on night sky */
+.sky-container {
+    position: absolute;
+    min-width: 200px;
+    min-height: 80px;
+    border: 1px dashed #333;
+    border-radius: 8px;
+    background: rgba(22, 33, 62, 0.3);
+    z-index: 5;
+}
+
+.sky-container.drag-over-container {
+    border-color: #4caf50;
+    background: rgba(76, 175, 80, 0.08);
+}
+
+.sky-container-header {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.7rem;
+    color: #666;
+    cursor: move;
+    border-bottom: 1px dashed #2a2a3e;
+}
+
+.sky-container-body {
+    padding: 0.3rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    min-height: 40px;
+}
+
+.sky-container-body .patch-float {
+    position: relative;
+}
+
 .config-header {
     display: flex;
     align-items: center;

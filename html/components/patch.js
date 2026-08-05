@@ -97,7 +97,7 @@ function drawMiniWaveform(canvas, samples) {
     ctx.stroke();
 }
 
-// Global drag state
+// Global drag state (shared with night-sky.js)
 let _draggedRow = null;
 let _draggedMatch = null;
 
@@ -113,6 +113,8 @@ function makeStarDraggable(star, row, match) {
     row.addEventListener('dragstart', (e) => {
         _draggedRow = row;
         _draggedMatch = match;
+        window._draggedRow = row;
+        window._draggedMatch = match;
         row.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', '');
@@ -123,6 +125,8 @@ function makeStarDraggable(star, row, match) {
         row.draggable = false;
         _draggedRow = null;
         _draggedMatch = null;
+        window._draggedRow = null;
+        window._draggedMatch = null;
         document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
     });
 }
