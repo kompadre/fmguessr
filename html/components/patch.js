@@ -158,21 +158,6 @@ function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSe
     nameEl.title = match.name || ('#' + match.rank);
     row.appendChild(nameEl);
 
-    // Star
-    const star = document.createElement('span');
-    star.className = 'patch-star' + (isFav ? ' fav-active' : '');
-    star.textContent = isFav ? '★' : '☆';
-    star.title = 'Favorite';
-    if (onStar) {
-        star.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isNowFav = onStar(match);
-            star.textContent = isNowFav ? '★' : '☆';
-            star.classList.toggle('fav-active', isNowFav);
-        });
-    }
-    row.appendChild(star);
-
     // Algo
     const algoEl = document.createElement('span');
     algoEl.className = 'patch-col patch-algo';
@@ -203,6 +188,21 @@ function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSe
         if (dock) dock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
     row.appendChild(assignBtn);
+
+    // Star (with other action buttons)
+    const star = document.createElement('button');
+    star.className = 'patch-star' + (isFav ? ' fav-active' : '');
+    star.textContent = isFav ? '★' : '☆';
+    star.title = 'Favorite';
+    if (onStar) {
+        star.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isNowFav = onStar(match);
+            star.textContent = isNowFav ? '★' : '☆';
+            star.classList.toggle('fav-active', isNowFav);
+        });
+    }
+    row.appendChild(star);
 
     // Edit button
     if (onEdit) {
@@ -248,7 +248,7 @@ function createPatchList(matches, { title, subtitle, onSelect, onStar, onPlay, o
 
     const header = document.createElement('div');
     header.className = 'patch-list-header';
-    header.innerHTML = '<span class="patch-spec"></span><span class="patch-name">Name</span><span class="patch-star"></span><span class="patch-col">Algo</span><span class="patch-col">FB</span><span class="patch-col">Dist</span>';
+    header.innerHTML = '<span class="patch-spec"></span><span class="patch-name">Name</span><span class="patch-col">Algo</span><span class="patch-col">FB</span><span class="patch-col">Dist</span>';
     container.appendChild(header);
 
     const body = document.createElement('div');

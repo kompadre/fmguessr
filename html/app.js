@@ -1396,7 +1396,7 @@ function createSyxTabInner(tabId, name, patches) {
 
     const listHeader = document.createElement('div');
     listHeader.className = 'patch-list-header';
-    listHeader.innerHTML = '<span class="patch-spec"></span><span class="patch-name">Name</span><span class="patch-star"></span><span class="patch-col">Algo</span><span class="patch-col">FB</span><span class="patch-col">Dist</span>';
+    listHeader.innerHTML = '<span class="patch-spec"></span><span class="patch-name">Name</span><span class="patch-col">Algo</span><span class="patch-col">FB</span><span class="patch-col">Dist</span>';
     list.appendChild(listHeader);
 
     const body = document.createElement('div');
