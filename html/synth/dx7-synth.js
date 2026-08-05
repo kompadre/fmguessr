@@ -68,16 +68,18 @@ export async function renderOffline(voiceData, midi, durationMs) {
   const offlineCtx = new OfflineAudioContext(1, totalSamples, sr);
   await loadModules(offlineCtx);
 
+  const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
   const node = new AudioWorkletNode(offlineCtx, 'dx7-synth', {
     numberOfInputs: 0,
     numberOfOutputs: 1,
     outputChannelCount: [1],
+    processorOptions: {
+      patch: patch.buffer,
+      note: midi,
+      velocity: 100,
+    },
   });
   node.connect(offlineCtx.destination);
-
-  const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
-  node.port.postMessage({ type: 'patch', data: patch.buffer });
-  node.port.postMessage({ type: 'midi', data: [0x90, midi, 100] });
 
   const audioBuffer = await offlineCtx.startRendering();
   return audioBufferToWavBlob(audioBuffer);

@@ -5,7 +5,7 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
   AudioWorkletGlobalScope._dx7Registered = true;
 
   class DX7Processor extends AudioWorkletProcessor {
-    constructor() {
+    constructor(options) {
       super();
       const WAM = AudioWorkletGlobalScope.WAM.DX7;
       this.WAM = WAM;
@@ -26,6 +26,17 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       WAM.setValue(this.audiobus, 0, 'i32');
       WAM.setValue(this.audiobus + 4, obuf, 'i32');
       this.outBufIdx = obuf / 4;
+
+      // Offline mode: patch and note passed via processorOptions
+      // (postMessage doesn't work because OfflineAudioContext.startRendering
+      //  doesn't yield to the event loop)
+      const opts = options.processorOptions;
+      if (opts && opts.patch) {
+        this.handlePatch(opts.patch);
+        if (opts.note != null) {
+          this.handleMidi(0x90, opts.note, opts.velocity || 100);
+        }
+      }
 
       this.port.onmessage = this.handleMessage.bind(this);
       this.port.start();
