@@ -162,3 +162,82 @@ function samplesToWavBlob(samples, sr) {
 
   return new Blob([buffer], { type: 'audio/wav' });
 }
+
+// --- Batch waveform rendering (main thread, no AudioWorklet) ---
+
+let wasmExports = null;
+let wasmHeapI16 = null;
+let wasmHeapU8 = null;
+let batchOutBuf = 0;
+let batchOutBufSize = 0;
+
+async function ensureWasmExports() {
+  if (wasmExports) return true;
+  try {
+    const base = new URL('./wasm/', import.meta.url).pathname;
+    const resp = await fetch(base + 'msfa.wasm');
+    const binary = await resp.arrayBuffer();
+    const wasiStub = {
+      fd_close: () => 0, fd_fdstat_get: () => 0, fd_seek: () => 0,
+      fd_write: () => 0, poll_oneoff: () => 0, proc_exit: () => {},
+    };
+    const { instance } = await WebAssembly.instantiate(binary, {
+      wasi_snapshot_preview1: wasiStub,
+    });
+    wasmExports = instance.exports;
+    wasmHeapI16 = new Int16Array(wasmExports.memory.buffer);
+    wasmHeapU8 = new Uint8Array(wasmExports.memory.buffer);
+    return true;
+  } catch (err) {
+    console.warn('WASM batch init failed:', err);
+    return false;
+  }
+}
+
+function refreshHeapViews() {
+  if (wasmHeapI16.buffer !== wasmExports.memory.buffer) {
+    wasmHeapI16 = new Int16Array(wasmExports.memory.buffer);
+    wasmHeapU8 = new Uint8Array(wasmExports.memory.buffer);
+  }
+}
+
+export async function batchRenderWaveforms(patches, onResult) {
+  if (!(await ensureWasmExports())) return;
+
+  const sr = 44100;
+  const nSamples = Math.ceil(sr * 0.8); // 800ms render
+  wasmExports.init_engine(sr);
+
+  if (batchOutBufSize < nSamples * 2) {
+    if (batchOutBuf) wasmExports._ZdaPv(batchOutBuf);
+    batchOutBuf = wasmExports._Znam(nSamples * 2);
+    batchOutBufSize = nSamples * 2;
+  }
+
+  for (const { voiceData, canvas } of patches) {
+    try {
+      const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
+      if (patch.length < 128) continue;
+
+      const ptr = wasmExports._Znam(128);
+      refreshHeapViews();
+      wasmHeapU8.set(patch.subarray(0, 128), ptr);
+      wasmExports.load_voice(ptr);
+      wasmExports._ZdaPv(ptr);
+
+      wasmExports.note_on(60, 100);
+      const samplesPtr = wasmExports.render_audio(nSamples);
+
+      refreshHeapViews();
+      const i16base = samplesPtr >> 1;
+      const samples = new Float32Array(nSamples);
+      for (let i = 0; i < nSamples; i++) {
+        samples[i] = wasmHeapI16[i16base + i] * (1.0 / 32768.0);
+      }
+
+      const blob = samplesToWavBlob(samples, sr);
+      onResult(canvas, blob);
+    } catch (_) {}
+  }
+}
+

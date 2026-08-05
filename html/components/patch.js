@@ -283,4 +283,4 @@ function highlightPatchRow(container, match) {
     });
 }
 
-export { createPatchRow, createPatchList, highlightPatchRow };
+export { createPatchRow, createPatchList, highlightPatchRow, decodeWavSamples, drawMiniWaveform };

@@ -1,8 +1,8 @@
-import { createPatchRow, createPatchList, highlightPatchRow } from './components/patch.js';
+import { createPatchRow, createPatchList, highlightPatchRow, decodeWavSamples, drawMiniWaveform } from './components/patch.js';
 import { createPianoDock } from './components/piano-dock.js';
 import { createSpectrogram } from './components/spectrogram.js';
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
-import { initDx7Synth, playNoteRealtime, renderOffline, isDx7Ready } from './synth/dx7-synth.js';
+import { initDx7Synth, playNoteRealtime, renderOffline, isDx7Ready, batchRenderWaveforms } from './synth/dx7-synth.js';
 
 const fileInput = document.getElementById('wav-input');
 const fileLabel = document.getElementById('file-label');
@@ -1510,6 +1510,22 @@ function createSyxTabInner(tabId, name, patches) {
     list.appendChild(body);
     content.appendChild(list);
     tabContent.appendChild(content);
+
+    // Batch-render waveforms for patches with voice_data
+    const patchEls = [];
+    body.querySelectorAll('.patch-row').forEach(row => {
+        const vd = row.dataset.voiceData;
+        const cvs = row.querySelector('.patch-canvas');
+        if (vd && cvs) patchEls.push({ voiceData: vd, canvas: cvs });
+    });
+    if (patchEls.length > 0) {
+        batchRenderWaveforms(patchEls, (canvas, blob) => {
+            blob.arrayBuffer().then(buf => {
+                const samples = decodeWavSamples(buf);
+                if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
+            });
+        });
+    }
 }
 
 fileInput.addEventListener('change', async () => {
@@ -2429,6 +2445,30 @@ function renderResults(index) {
 
     // Piano — anchored above footer in piano-dock
     rebuildPianoDock(data.midi_note, job);
+
+    // Batch-render waveforms for match results
+    const matchEls = [];
+    [primaryList, timbralList, fullList].forEach(list => {
+        if (!list) return;
+        list.querySelectorAll('.patch-row').forEach(row => {
+            const algo = parseInt(row.dataset.algo);
+            const fb = parseInt(row.dataset.fb);
+            const m = (data.matches || []).concat(data.timbral_matches || []).concat(data.full_matches || [])
+                .find(mm => mm.algorithm === algo && mm.feedback === fb);
+            if (m && m.voice_data) {
+                const cvs = row.querySelector('.patch-canvas');
+                if (cvs) matchEls.push({ voiceData: m.voice_data, canvas: cvs });
+            }
+        });
+    });
+    if (matchEls.length > 0) {
+        batchRenderWaveforms(matchEls, (canvas, blob) => {
+            blob.arrayBuffer().then(buf => {
+                const samples = decodeWavSamples(buf);
+                if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
+            });
+        });
+    }
 
     tabContent.classList.add('visible');
 }
