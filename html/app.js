@@ -2523,27 +2523,29 @@ document.getElementById('menu-clear-history').addEventListener('click', async ()
 
 // Help menu
 document.getElementById('menu-help').addEventListener('click', () => {
-    appendLog('Help: Import a .wav to match patches, or import a .syx bank to browse voices. Drag stars to the night sky to organize patches.');
+    document.getElementById('help-modal').style.display = '';
 });
 document.getElementById('menu-about').addEventListener('click', () => {
-    appendLog('WavToFM — DX7 patch matcher and synthesizer. Uses genetic algorithms and neural networks to match audio to FM patches.');
+    document.getElementById('about-modal').style.display = '';
 });
 document.getElementById('menu-credits').addEventListener('click', () => {
     document.getElementById('credits-modal').style.display = '';
 });
 document.getElementById('menu-legal').addEventListener('click', () => {
-    appendLog('Licensed under MIT. Includes webdx7 (MIT) by Jari Kleimola, MSFA (Apache 2.0) by Raph Levien, Dexed (GPL-3.0) by asb2m10.');
+    document.getElementById('legal-modal').style.display = '';
 });
 document.getElementById('menu-donate').addEventListener('click', () => {
-    appendLog('Donate: Thank you for your interest! (donate link TBD)');
+    window.open('https://github.com/sponsors/kompadre', '_blank');
 });
 
-// Credits modal
-document.getElementById('credits-close').addEventListener('click', () => {
-    document.getElementById('credits-modal').style.display = 'none';
-});
-document.getElementById('credits-modal').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
+// Modal close handlers
+['credits', 'about', 'help', 'legal'].forEach(id => {
+    document.getElementById(id + '-close').addEventListener('click', () => {
+        document.getElementById(id + '-modal').style.display = 'none';
+    });
+    document.getElementById(id + '-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
+    });
 });
 
 // Favorites header toggle
