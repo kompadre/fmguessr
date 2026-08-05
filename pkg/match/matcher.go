@@ -655,13 +655,13 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						// Also compute full distance for GA seeding
 						fullDist := evaluateSingleCandidate(cand, target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur, cachedTargetMel)
 
-						if nnCandidates == nil {
-							nnCandidates = make([]*Candidate, 0)
-							classifierAlgoMap = make(map[uint8]int)
-							classifierStartNNIdx = 0
-						} else if classifierStartNNIdx == 0 && len(nnCandidates) > 0 {
-							classifierStartNNIdx = len(nnCandidates)
-						}
+					if nnCandidates == nil {
+						nnCandidates = make([]*Candidate, 0)
+					}
+					if classifierAlgoMap == nil {
+						classifierAlgoMap = make(map[uint8]int)
+						classifierStartNNIdx = len(nnCandidates)
+					}
 						nnIdx := len(nnCandidates)
 						nnCandidates = append(nnCandidates, cand)
 						classifierFullDists = append(classifierFullDists, fullDist)
