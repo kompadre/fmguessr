@@ -1,12 +1,13 @@
 services:
   fmguessr:
-    build: .
+    build:
+      context: ../deploy/app
+      dockerfile: ../Dockerfile
     container_name: fmguessr
     restart: unless-stopped
     environment:
       - GOMAXPROCS=4
     volumes:
-      - ./data:/data
       - exports:/app/exports
     expose:
       - "8080"
@@ -20,7 +21,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./index.html:/srv/index.html:ro
+      - ../deploy/app/index.html:/srv/index.html:ro
       - exports:/exports:ro
       - caddy_data:/data
       - caddy_config:/config

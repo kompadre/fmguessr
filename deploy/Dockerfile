@@ -7,9 +7,11 @@ WORKDIR /app
 
 COPY server .
 COPY lib/libonnxruntime.so ./lib/
-COPY lib/libonnxruntime_providers_shared.so ./lib/
+COPY index.html .
+COPY html/ ./html/
+COPY dx7_codebook.bin dx7_codebook_timbre.bin ./
 
-RUN chmod +x server
+RUN chmod +x server && mkdir -p exports
 
 EXPOSE 8080
 
