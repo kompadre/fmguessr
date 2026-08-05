@@ -6,8 +6,6 @@ import { initDx7Synth, playNoteRealtime, renderOffline, isDx7Ready, batchRenderW
 import { initNightSky, addContainer } from './components/night-sky.js';
 
 const fileInput = document.getElementById('wav-input');
-const fileLabel = document.getElementById('file-label');
-const fileName = document.getElementById('file-name');
 const log = document.getElementById('log');
 const tabsEl = document.getElementById('tabs');
 const tabContent = document.getElementById('tab-content');
@@ -1585,9 +1583,6 @@ fileInput.addEventListener('change', async () => {
         return;
     }
 
-    fileName.textContent = file.name;
-    fileLabel.classList.add('selected');
-
     const objectUrl = URL.createObjectURL(file);
     const jobId = 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
     const jobIndex = jobs.length;
@@ -2488,10 +2483,67 @@ function appendLog(message) {
     }
 }
 
-// Clear history button
-document.getElementById('clear-btn').addEventListener('click', async () => {
+// --- Menu Bar ---
+
+// Menu dropdown toggle
+document.querySelectorAll('.menu-item').forEach(item => {
+    item.querySelector('.menu-label').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wasOpen = item.classList.contains('open');
+        document.querySelectorAll('.menu-item.open').forEach(i => i.classList.remove('open'));
+        if (!wasOpen) item.classList.add('open');
+    });
+});
+document.addEventListener('click', () => {
+    document.querySelectorAll('.menu-item.open').forEach(i => i.classList.remove('open'));
+});
+
+// File menu
+document.getElementById('menu-import-wav').addEventListener('click', () => {
+    fileInput.accept = '.wav';
+    fileInput.click();
+});
+document.getElementById('menu-import-syx').addEventListener('click', () => {
+    fileInput.accept = '.syx';
+    fileInput.click();
+});
+document.getElementById('menu-export-syx').addEventListener('click', () => {
+    exportFavorites();
+});
+
+// History menu
+document.getElementById('menu-show-log').addEventListener('click', () => {
+    const dock = document.getElementById('piano-dock');
+    if (dock && dock._showLog) dock._showLog();
+});
+document.getElementById('menu-clear-history').addEventListener('click', async () => {
     if (!confirm('Clear all session history?')) return;
     await clearAllSessions();
+});
+
+// Help menu
+document.getElementById('menu-help').addEventListener('click', () => {
+    appendLog('Help: Import a .wav to match patches, or import a .syx bank to browse voices. Drag stars to the night sky to organize patches.');
+});
+document.getElementById('menu-about').addEventListener('click', () => {
+    appendLog('WavToFM — DX7 patch matcher and synthesizer. Uses genetic algorithms and neural networks to match audio to FM patches.');
+});
+document.getElementById('menu-credits').addEventListener('click', () => {
+    document.getElementById('credits-modal').style.display = '';
+});
+document.getElementById('menu-legal').addEventListener('click', () => {
+    appendLog('Licensed under MIT. Includes webdx7 (MIT) by Jari Kleimola, MSFA (Apache 2.0) by Raph Levien, Dexed (GPL-3.0) by asb2m10.');
+});
+document.getElementById('menu-donate').addEventListener('click', () => {
+    appendLog('Donate: Thank you for your interest! (donate link TBD)');
+});
+
+// Credits modal
+document.getElementById('credits-close').addEventListener('click', () => {
+    document.getElementById('credits-modal').style.display = 'none';
+});
+document.getElementById('credits-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
 });
 
 // Favorites header toggle

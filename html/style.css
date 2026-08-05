@@ -22,6 +22,184 @@ body {
 }
 
 /* ============================================================
+   Menu Bar
+   ============================================================ */
+
+.menu-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 36px;
+    background: #0d0d1a;
+    border-bottom: 1px solid #222;
+    padding: 0 0.5rem;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.menu-brand {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #e94560;
+    padding: 0 0.75rem;
+    letter-spacing: 0.04em;
+    user-select: none;
+}
+
+.menu-items {
+    display: flex;
+    gap: 0;
+}
+
+.menu-item {
+    position: relative;
+}
+
+.menu-label {
+    display: block;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    color: #aaa;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+    border-radius: 4px;
+}
+
+.menu-label:hover {
+    background: #16213e;
+    color: #fff;
+}
+
+.menu-item.open .menu-label {
+    background: #16213e;
+    color: #fff;
+}
+
+.menu-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 160px;
+    background: #12121f;
+    border: 1px solid #333;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    padding: 0.25rem 0;
+    z-index: 200;
+}
+
+.menu-item.open .menu-dropdown {
+    display: block;
+}
+
+.menu-dropdown button {
+    display: block;
+    width: 100%;
+    padding: 0.4rem 0.8rem;
+    background: none;
+    border: none;
+    color: #ccc;
+    font-size: 0.78rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.menu-dropdown button:hover {
+    background: #1a2744;
+    color: #fff;
+}
+
+.menu-dropdown hr {
+    border: none;
+    border-top: 1px solid #2a2a3e;
+    margin: 0.2rem 0;
+}
+
+.menu-status {
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: #555;
+    padding-right: 0.5rem;
+}
+
+/* ============================================================
+   Modal
+   ============================================================ */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-dialog {
+    background: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    max-width: 450px;
+    width: 90%;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #2a2a3e;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #e0e0e0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 0.25rem;
+    transition: color 0.15s;
+}
+
+.modal-close:hover {
+    color: #e94560;
+}
+
+.modal-body {
+    padding: 1rem;
+    font-size: 0.85rem;
+    color: #bbb;
+    line-height: 1.6;
+}
+
+.modal-body a {
+    color: #4caf50;
+    text-decoration: none;
+}
+
+.modal-body a:hover {
+    text-decoration: underline;
+}
+
+.modal-body p {
+    margin: 0.5rem 0;
+}
+
+/* ============================================================
    2. Typography & buttons
    ============================================================ */
 
@@ -285,10 +463,10 @@ textarea:focus {
 
 #night-sky {
     position: absolute;
-    top: 0;
+    top: 36px;
     left: 0;
     right: 0;
-    height: calc(100vh - 220px);
+    height: calc(100vh - 256px);
     display: none;
     z-index: -1;
 }

@@ -9,15 +9,41 @@
 </head>
 
 <body>
-    <h1>WavToFM</h1>
+    <nav id="menu-bar" class="menu-bar">
+        <div class="menu-brand">WavToFM</div>
+        <div class="menu-items">
+            <div class="menu-item" data-menu="file">
+                <span class="menu-label">File</span>
+                <div class="menu-dropdown">
+                    <button id="menu-import-wav">Import .WAV</button>
+                    <button id="menu-import-syx">Import .SYX</button>
+                    <hr>
+                    <button id="menu-export-syx">Export .SYX</button>
+                </div>
+            </div>
+            <div class="menu-item" data-menu="history">
+                <span class="menu-label">History</span>
+                <div class="menu-dropdown">
+                    <button id="menu-show-log">Show Log</button>
+                    <button id="menu-clear-history">Clear History</button>
+                </div>
+            </div>
+            <div class="menu-item" data-menu="help">
+                <span class="menu-label">Help</span>
+                <div class="menu-dropdown">
+                    <button id="menu-help">Help</button>
+                    <button id="menu-about">About</button>
+                    <button id="menu-credits">Credits</button>
+                    <button id="menu-legal">Legal</button>
+                    <hr>
+                    <button id="menu-donate">Donate</button>
+                </div>
+            </div>
+        </div>
+        <div class="menu-status" id="menu-status"></div>
+    </nav>
 
-    <div class="file-input-wrapper">
-        <input type="file" id="wav-input" accept=".wav,.syx">
-        <label for="wav-input" class="file-input-label" id="file-label">
-            Select a .wav or .syx file
-            <span class="file-name" id="file-name">No file chosen</span>
-        </label>
-    </div>
+    <input type="file" id="wav-input" accept=".wav,.syx" style="display:none;">
 
     <div id="progress-wrapper" style="display:none;">
         <div id="progress-bar">
@@ -81,9 +107,22 @@
         <div class="edit-status" id="edit-status"></div>
     </div>
 
-    <div id="piano-dock"></div>
+    <!-- Credits Modal -->
+    <div id="credits-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Acknowledgements</h3>
+                <button class="modal-close" id="credits-close">×</button>
+            </div>
+            <div class="modal-body">
+                <p><strong>Raph Levien</strong> and MSFA contributors — <a href="https://github.com/google/music-synthesizer-for-android" target="_blank">github.com/google/music-synthesizer-for-android</a></p>
+                <p><strong>asb2m10</strong> and the Dexed team — <a href="https://github.com/asb2m10/dexed" target="_blank">github.com/asb2m10/dexed</a></p>
+                <p><strong>Alexey S. Kompaniets</strong> and hackfraud — <a href="https://github.com/nicholasgasior" target="_blank">github.com/nicholasgasior</a></p>
+            </div>
+        </div>
+    </div>
 
-    <button id="clear-btn">Clear History</button>
+    <div id="piano-dock"></div>
 
     <footer>&copy; Alexey S. Kompaniets 2026</footer>
 
