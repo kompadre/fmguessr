@@ -56,7 +56,7 @@ export function createPianoDock(opts) {
     const disabled = !playNoteFn;
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'piano-dock-inner' + (disabled ? ' piano-dock-disabled' : '');
+    wrapper.className = 'piano-dock-inner';
 
     // Tab bar
     const tabBar = document.createElement('div');
