@@ -52,7 +52,7 @@ const PIANO_NOTES = [
 ];
 
 export function createPianoDock(opts) {
-    const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, initialTab } = opts;
+    const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, activeVoiceData, initialTab } = opts;
     const disabled = !playNoteFn;
 
     const wrapper = document.createElement('div');
@@ -156,6 +156,7 @@ export function createPianoDock(opts) {
             playNoteFn,
             onNotesChange: updateHighlights,
             activePatchId,
+            activeVoiceData,
         });
         pianorollPanel.appendChild(pianorollRef.element);
     } else {

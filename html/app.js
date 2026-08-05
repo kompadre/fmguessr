@@ -211,16 +211,18 @@ async function clearAllSessions() {
 
 function rebuildPianoDock(midiNote, job) {
     const pianoDock = document.getElementById('piano-dock');
+    if (pianorollInstance) pianorollInstance.stopPlayback();
     pianoDock.innerHTML = '';
 
     const hasVoice = !!(activeSyxVoiceData || job);
-    const playFn = hasVoice ? (midi, durationMs) => playNote(midi, job || null, activeSyxVoiceData, durationMs) : null;
+    const playFn = hasVoice ? (midi, durationMs, voiceData) => playNote(midi, job || null, voiceData || activeSyxVoiceData, durationMs) : null;
 
     const dock = createPianoDock({
         matchedMidi: midiNote || 60,
         playNoteFn: playFn,
         pianorollNotes,
         activePatchId: activePianorollPatchId,
+        activeVoiceData: activeSyxVoiceData,
     });
     pianoDock.appendChild(dock);
     pianorollInstance = dock._pianoroll || null;

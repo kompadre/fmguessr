@@ -226,8 +226,7 @@ export function createPianoroll(opts) {
         lastClickCol = col;
 
         if (existing) {
-            // Click on existing note — play it
-            playNoteFn(existing.midi, existing.dur * 250);
+            playNoteFn(existing.midi, existing.dur * 250, existing.voiceData || null);
             return;
         }
 
@@ -267,6 +266,7 @@ export function createPianoroll(opts) {
                 start: minC,
                 dur,
                 patchId: opts.activePatchId || null,
+                voiceData: opts.activeVoiceData || null,
                 color: colorForPatch(opts.activePatchId),
             });
             draw();
@@ -306,7 +306,7 @@ export function createPianoroll(opts) {
 
             for (const n of notes) {
                 if (n.start === playCol) {
-                    playNoteFn(n.midi, n.dur * 250);
+                    playNoteFn(n.midi, n.dur * 250, n.voiceData || null);
                 }
             }
 
