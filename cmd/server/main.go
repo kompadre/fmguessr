@@ -700,10 +700,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		SyxURL    string `json:"syx_url"`
-		Slot      int    `json:"slot"`
-		Note      int    `json:"note"`
-		VoiceData string `json:"voice_data"` // base64-encoded 128-byte patch (alternative to syx_url+slot)
+		SyxURL     string `json:"syx_url"`
+		Slot       int    `json:"slot"`
+		Note       int    `json:"note"`
+		VoiceData  string `json:"voice_data"`     // base64-encoded 128-byte patch (alternative to syx_url+slot)
+		DurationMs int    `json:"duration_ms"`     // optional: note duration in ms (from piano roll)
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8000)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -749,7 +750,15 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// Decode into Candidate and render
 	cand := match.DecodeVoicePatch(patch)
 	gateDur := 500 * time.Millisecond
-	totalDur := 2 * time.Second
+	totalDur := 3 * time.Second
+	if req.DurationMs > 0 {
+		durMs := req.DurationMs
+		if durMs < 300 {
+			durMs = 300
+		}
+		gateDur = time.Duration(float64(durMs)*0.6) * time.Millisecond
+		totalDur = time.Duration(durMs) * time.Millisecond
+	}
 	audio := match.RenderCandidateWithGate(cand, uint8(req.Note), gateDur, totalDur)
 
 	// Save WAV to exports

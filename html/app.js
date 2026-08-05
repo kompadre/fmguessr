@@ -1,8 +1,8 @@
 import { createPatchRow, createPatchList, highlightPatchRow } from './components/patch.js';
-import { createPiano } from './components/piano.js';
-import { createPianoroll } from './components/pianoroll.js';
+import { createPianoDock } from './components/piano-dock.js';
 import { createSpectrogram } from './components/spectrogram.js';
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
+import { initDx7Synth, playNoteRealtime, renderOffline, isDx7Ready } from './synth/dx7-synth.js';
 
 const fileInput = document.getElementById('wav-input');
 const fileLabel = document.getElementById('file-label');
@@ -212,27 +212,18 @@ async function clearAllSessions() {
 function rebuildPianoDock(midiNote, job) {
     const pianoDock = document.getElementById('piano-dock');
     pianoDock.innerHTML = '';
-    if (!activeSyxVoiceData && !job) return;
 
-    const note = midiNote || 60;
-    const playFn = (midi) => playNote(midi, job || null, activeSyxVoiceData);
+    const hasVoice = !!(activeSyxVoiceData || job);
+    const playFn = hasVoice ? (midi, durationMs) => playNote(midi, job || null, activeSyxVoiceData, durationMs) : null;
 
-    // Pianoroll
-    pianorollInstance = createPianoroll({
-        notes: pianorollNotes,
+    const dock = createPianoDock({
+        matchedMidi: midiNote || 60,
         playNoteFn: playFn,
-        onNotesChange: () => {
-            // Update piano key highlights
-            const pianoEl = pianoDock.querySelector('.piano-wrapper');
-            if (pianoEl && pianoEl._updateHighlights) pianoEl._updateHighlights();
-        },
+        pianorollNotes,
         activePatchId: activePianorollPatchId,
     });
-    pianoDock.appendChild(pianorollInstance.element);
-
-    // Piano keyboard
-    const piano = createPiano(note, job, playFn, pianorollNotes);
-    pianoDock.appendChild(piano);
+    pianoDock.appendChild(dock);
+    pianorollInstance = dock._pianoroll || null;
 }
 
 // --- .syx Tab Persistence ---
@@ -1209,27 +1200,39 @@ function renderFavorites() {
             onStar: () => removeFavorite(fav.id),
             onPlay: async () => {
                 try {
-                    const body = { note: 60 };
                     if (fav.voice_data) {
-                        body.voice_data = fav.voice_data;
+                        await ensureDx7Synth();
+                        if (isDx7Ready()) {
+                            playNoteRealtime(fav.voice_data, 60);
+                            const blob = await renderOffline(fav.voice_data, 60, 1000);
+                            return URL.createObjectURL(blob);
+                        }
+                        const resp = await fetch(baseUrl + '/api/play', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ voice_data: fav.voice_data, note: 60 })
+                        });
+                        const data = await resp.json();
+                        if (data.wav_url) {
+                            new Audio(baseUrl + data.wav_url).play();
+                            return baseUrl + data.wav_url;
+                        }
                     } else if (fav.syx_url) {
-                        body.syx_url = fav.syx_url;
-                        body.slot = fav.slot;
-                    } else {
-                        return;
-                    }
-                    const resp = await fetch(baseUrl + '/api/play', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body)
-                    });
-                    const data = await resp.json();
-                    if (data.wav_url) {
-                        new Audio(baseUrl + data.wav_url).play();
+                        const resp = await fetch(baseUrl + '/api/play', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ syx_url: fav.syx_url, slot: fav.slot, note: 60 })
+                        });
+                        const data = await resp.json();
+                        if (data.wav_url) {
+                            new Audio(baseUrl + data.wav_url).play();
+                            return baseUrl + data.wav_url;
+                        }
                     }
                 } catch (e) {
                     console.warn('Play fav failed:', e);
                 }
+                return null;
             },
             baseUrl,
             isFav: true,
@@ -1460,24 +1463,27 @@ function createSyxTabInner(tabId, name, patches) {
             },
             onPlay: async () => {
                 try {
-                    const body = { note: 60 };
-                    if (patch.voice_data) {
-                        body.voice_data = patch.voice_data;
-                    } else {
-                        return;
+                    if (!patch.voice_data) return null;
+                    await ensureDx7Synth();
+                    if (isDx7Ready()) {
+                        playNoteRealtime(patch.voice_data, 60);
+                        const blob = await renderOffline(patch.voice_data, 60, 1000);
+                        return URL.createObjectURL(blob);
                     }
                     const resp = await fetch(baseUrl + '/api/play', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body)
+                        body: JSON.stringify({ voice_data: patch.voice_data, note: 60 })
                     });
                     const data = await resp.json();
                     if (data.wav_url) {
                         new Audio(baseUrl + data.wav_url).play();
+                        return baseUrl + data.wav_url;
                     }
                 } catch (e) {
                     console.warn('Play patch failed:', e);
                 }
+                return null;
             },
             baseUrl,
             isFav: false,
@@ -1776,10 +1782,6 @@ function switchTab(tabId) {
     });
     showOnlyTabContent('tab-' + tabId);
 
-    // Create piano for .syx tabs
-    const pianoDock = document.getElementById('piano-dock');
-    pianoDock.innerHTML = '';
-
     // Set up piano with first patch's voice_data as default
     const syxContent = tabContent.querySelector('#tab-' + tabId);
     if (syxContent) {
@@ -1828,7 +1830,7 @@ function renderProbe(index) {
     const locked = !!job.statusUrl;
     const el = ensureTabContent('tab-wav-' + index);
     el.innerHTML = '';
-    document.getElementById('piano-dock').innerHTML = '';
+    rebuildPianoDock();
 
     const header = document.createElement('div');
     header.className = 'config-header' + (locked ? ' collapsed' : '');
@@ -2115,6 +2117,12 @@ async function startMatch(index) {
 
 let audioCtx;
 
+async function ensureDx7Synth() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    return initDx7Synth(audioCtx);
+}
+
 function noteToFreq(note, octave) {
     return 440 * Math.pow(2, (note + (octave - 4) * 12 - 9) / 12);
 }
@@ -2142,19 +2150,38 @@ function toggleFork(btn, noteSel, octSel) {
     btn.classList.add('active');
 }
 
-async function playNote(midi, job, voiceData) {
-    // Direct voice_data playback (for .syx patches and favorites)
+async function playNote(midi, job, voiceData, durationMs) {
+    const dur = Math.round(durationMs || 0);
+
+    // Resolve voice_data from job if not directly provided
+    if (!voiceData && job) {
+        const selected = job.selectedMatch;
+        if (selected && selected.voice_data) voiceData = selected.voice_data;
+    }
+
     if (voiceData) {
+        // Try client-side DX7 synth first
+        await ensureDx7Synth();
+        if (isDx7Ready()) {
+            const stop = playNoteRealtime(voiceData, midi);
+            if (stop && dur > 0) {
+                setTimeout(stop, dur * 0.6);
+            }
+            return;
+        }
+
+        // Fallback: server /api/play
         try {
+            const body = { voice_data: voiceData, note: midi };
+            if (dur) body.duration_ms = dur;
             const resp = await fetch(baseUrl + '/api/play', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ voice_data: voiceData, note: midi })
+                body: JSON.stringify(body)
             });
             const data = await resp.json();
             if (data.wav_url) {
-                const audio = new Audio(baseUrl + data.wav_url);
-                audio.play();
+                new Audio(baseUrl + data.wav_url).play();
                 return;
             }
         } catch (err) {
@@ -2162,24 +2189,24 @@ async function playNote(midi, job, voiceData) {
         }
     }
 
-    // WAV job playback (existing logic)
+    // WAV job fallback via syx_url (no voice_data available)
     let selected = job ? job.selectedMatch : null;
-
     if (selected && job.resultData && job.resultData.syx_url) {
         try {
+            const body = {
+                syx_url: job.resultData.syx_url,
+                slot: selected.rank - 1,
+                note: midi,
+            };
+            if (dur) body.duration_ms = dur;
             const resp = await fetch(baseUrl + '/api/play', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    syx_url: job.resultData.syx_url,
-                    slot: selected.rank - 1,
-                    note: midi
-                })
+                body: JSON.stringify(body)
             });
             const data = await resp.json();
             if (data.wav_url) {
-                const audio = new Audio(baseUrl + data.wav_url);
-                audio.play();
+                new Audio(baseUrl + data.wav_url).play();
                 return;
             }
         } catch (err) {
@@ -2187,6 +2214,7 @@ async function playNote(midi, job, voiceData) {
         }
     }
 
+    // Final fallback: sine oscillator
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const freq = 440 * Math.pow(2, (midi - 69) / 12);
     const osc = audioCtx.createOscillator();
@@ -2277,7 +2305,14 @@ function renderResults(index) {
         highlightPatchRow(fullList, m);
     };
 
-    const onPlayFn = (m) => {
+    const onPlayFn = async (m) => {
+        if (m.voice_data) {
+            await ensureDx7Synth();
+            if (isDx7Ready()) {
+                playNoteRealtime(m.voice_data, 60);
+                return;
+            }
+        }
         if (m.wav_url) {
             new Audio(baseUrl + m.wav_url).play();
         }

@@ -845,6 +845,14 @@ textarea:focus {
     border: 1px solid #333;
     border-radius: 4px;
     cursor: crosshair;
+    display: block;
+}
+
+.pianoroll-scroll {
+    height: 160px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-radius: 4px;
 }
 
 .pianoroll-legend {
@@ -882,6 +890,84 @@ textarea:focus {
     background-color: #1a1a2e;
     border-top: 1px solid #333;
     padding: 0.4rem 0;
+}
+
+.piano-dock-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+.piano-dock-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.dock-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.3rem;
+}
+
+.dock-tab {
+    background: #16213e;
+    color: #999;
+    border: 1px solid #333;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    padding: 0.2rem 0.8rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.dock-tab:hover {
+    background: #1a2744;
+    color: #ccc;
+}
+
+.dock-tab.active {
+    background: #1a1a2e;
+    color: #e94560;
+    border-color: #e94560;
+}
+
+.dock-panel {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+}
+
+.dock-panel.active {
+    display: flex;
+}
+
+.dock-panel .keyboard {
+    height: auto;
+    justify-content: center;
+}
+
+.dock-panel .key.white {
+    width: 36px;
+    height: 140px;
+}
+
+.dock-panel .key.black {
+    width: 24px;
+    height: 90px;
+}
+
+.dock-panel .keyboard-label {
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 0.4rem;
+}
+
+.pianoroll-placeholder {
+    color: #666;
+    font-size: 0.8rem;
+    padding: 1rem;
 }
 
 .piano-wrapper {

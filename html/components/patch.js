@@ -116,10 +116,24 @@ function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSe
     playBtn.title = 'Play';
     specWrap.appendChild(playBtn);
 
+    let waveformDrawn = !!match.wav_url;
+
     if (onPlay) {
-        playBtn.addEventListener('click', (e) => {
+        playBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            onPlay(match);
+            const result = onPlay(match);
+            if (!waveformDrawn && result && typeof result.then === 'function') {
+                try {
+                    const wavUrl = await result;
+                    if (wavUrl && !waveformDrawn) {
+                        waveformDrawn = true;
+                        const wavResp = await fetch(wavUrl);
+                        const wavBuf = await wavResp.arrayBuffer();
+                        const samples = decodeWavSamples(wavBuf);
+                        if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
+                    }
+                } catch (_) {}
+            }
         });
     }
 

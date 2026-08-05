@@ -64,12 +64,16 @@ export function createPianoroll(opts) {
 
     container.appendChild(controls);
 
-    // Canvas
+    // Scrollable canvas area
+    const scroll = document.createElement('div');
+    scroll.className = 'pianoroll-scroll';
+
     const canvas = document.createElement('canvas');
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
     canvas.className = 'pianoroll-canvas';
-    container.appendChild(canvas);
+    scroll.appendChild(canvas);
+    container.appendChild(scroll);
 
     // Legend
     const legend = document.createElement('div');
@@ -223,7 +227,7 @@ export function createPianoroll(opts) {
 
         if (existing) {
             // Click on existing note — play it
-            playNoteFn(existing.midi);
+            playNoteFn(existing.midi, existing.dur * 250);
             return;
         }
 
@@ -295,33 +299,27 @@ export function createPianoroll(opts) {
         playBtn.disabled = true;
         stopBtn.disabled = false;
 
-        const msPerSixteenth = 125; // 120 BPM → 60000/120/4 = 125ms
-        let lastTime = performance.now();
+        const msPerSixteenth = 250; // 60 BPM → 60000/60/4 = 250ms
 
         function tick() {
             if (!playing) return;
 
-            // Find notes that start at this column
             for (const n of notes) {
                 if (n.start === playCol) {
-                    playNoteFn(n.midi);
+                    playNoteFn(n.midi, n.dur * 250);
                 }
             }
 
             draw();
 
-            playCol++;
-            if (playCol >= COLS) {
-                playCol = 0;
-            }
+            const current = playCol;
+            playCol = (current + 1) % COLS;
 
-            const elapsed = performance.now() - lastTime;
-            const delay = Math.max(0, msPerSixteenth - elapsed);
-            lastTime = performance.now();
-            playTimer = setTimeout(tick, delay);
+            playTimer = setTimeout(tick, msPerSixteenth);
         }
 
-        tick();
+        draw();
+        playTimer = setTimeout(tick, msPerSixteenth);
     }
 
     function stopPlayback() {
