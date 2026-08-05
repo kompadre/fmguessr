@@ -97,6 +97,139 @@ function drawMiniWaveform(canvas, samples) {
     ctx.stroke();
 }
 
+// Global drag state
+let _draggedRow = null;
+let _draggedMatch = null;
+
+function makeStarDraggable(star, row, match) {
+    star.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        row.draggable = true;
+    });
+    document.addEventListener('mouseup', () => {
+        row.draggable = false;
+    });
+
+    row.addEventListener('dragstart', (e) => {
+        _draggedRow = row;
+        _draggedMatch = match;
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+        requestAnimationFrame(() => row.classList.add('drag-ghost'));
+    });
+    row.addEventListener('dragend', () => {
+        row.classList.remove('dragging', 'drag-ghost');
+        row.draggable = false;
+        _draggedRow = null;
+        _draggedMatch = null;
+        document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    });
+}
+
+function makeDropTarget(body) {
+    body.addEventListener('dragover', (e) => {
+        if (!_draggedRow) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        body.classList.add('drag-over');
+
+        const rows = [...body.querySelectorAll('.patch-row:not(.dragging)')];
+        rows.forEach(r => r.classList.remove('drag-insert-before', 'drag-insert-after'));
+        const afterRow = getInsertAfterRow(body, e.clientY);
+        if (afterRow) {
+            afterRow.classList.add('drag-insert-before');
+        } else if (rows.length > 0) {
+            rows[rows.length - 1].classList.add('drag-insert-after');
+        }
+    });
+    body.addEventListener('dragleave', (e) => {
+        if (!body.contains(e.relatedTarget)) {
+            body.classList.remove('drag-over');
+            body.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
+                el.classList.remove('drag-insert-before', 'drag-insert-after');
+            });
+        }
+    });
+    body.addEventListener('drop', (e) => {
+        e.preventDefault();
+        body.classList.remove('drag-over');
+        body.querySelectorAll('.drag-insert-before, .drag-insert-after').forEach(el => {
+            el.classList.remove('drag-insert-before', 'drag-insert-after');
+        });
+
+        if (!_draggedRow || !_draggedMatch) return;
+
+        const srcBody = _draggedRow.parentElement;
+        const afterRow = getInsertAfterRow(body, e.clientY);
+
+        // Create minified clone
+        const mini = createMinifiedRow(_draggedMatch);
+        if (afterRow) {
+            body.insertBefore(mini, afterRow);
+        } else {
+            body.appendChild(mini);
+        }
+
+        // Remove from source
+        _draggedRow.remove();
+
+        // Collapse source list if empty
+        if (srcBody && srcBody.children.length === 0) {
+            const list = srcBody.closest('.patch-list, .collapsible-section');
+            if (list) list.style.display = 'none';
+        }
+
+        _draggedRow = null;
+        _draggedMatch = null;
+    });
+}
+
+function getInsertAfterRow(body, clientY) {
+    const rows = [...body.querySelectorAll('.patch-row:not(.dragging)')];
+    for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (clientY < rect.top + rect.height / 2) return row;
+    }
+    return null;
+}
+
+function createMinifiedRow(match) {
+    const row = document.createElement('div');
+    row.className = 'patch-row patch-row-minified';
+    row.draggable = true;
+
+    const star = document.createElement('button');
+    star.className = 'patch-star fav-active';
+    star.textContent = '★';
+    star.title = 'Drag to reorder';
+    row.appendChild(star);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'patch-name';
+    nameEl.textContent = match.name || ('#' + match.rank);
+    nameEl.title = match.name || ('#' + match.rank);
+    row.appendChild(nameEl);
+
+    // Store match data
+    row.dataset.algo = match.algorithm;
+    row.dataset.fb = match.feedback;
+    row._match = match;
+
+    // Drag from minified row too
+    makeStarDraggable(star, row, match);
+
+    // Click to expand
+    row.addEventListener('click', (e) => {
+        if (e.target === star) return;
+        row.classList.remove('patch-row-minified');
+        row.draggable = false;
+        row.removeEventListener('click', arguments.callee);
+    });
+
+    return row;
+}
+
 function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSelected, isFav }) {
     const row = document.createElement('div');
     row.className = 'patch-row' + (isSelected ? ' selected' : '');
@@ -189,20 +322,24 @@ function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSe
     });
     row.appendChild(assignBtn);
 
-    // Star (with other action buttons)
+    // Star (with other action buttons, acts as drag handle)
     const star = document.createElement('button');
     star.className = 'patch-star' + (isFav ? ' fav-active' : '');
     star.textContent = isFav ? '★' : '☆';
-    star.title = 'Favorite';
+    star.title = 'Favorite · Drag to reorder';
     if (onStar) {
         star.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (row.draggable) return; // don't toggle fav while dragging
             const isNowFav = onStar(match);
             star.textContent = isNowFav ? '★' : '☆';
             star.classList.toggle('fav-active', isNowFav);
         });
     }
     row.appendChild(star);
+
+    // Make star a drag handle
+    makeStarDraggable(star, row, match);
 
     // Edit button
     if (onEdit) {
@@ -222,9 +359,10 @@ function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSe
         if (onSelect) onSelect(match);
     });
 
-    // Store match data for highlighting
+    // Store match data for highlighting and drag
     row.dataset.algo = match.algorithm;
     row.dataset.fb = match.feedback;
+    row._match = match;
 
     return row;
 }
@@ -253,6 +391,9 @@ function createPatchList(matches, { title, subtitle, onSelect, onStar, onPlay, o
 
     const body = document.createElement('div');
     body.className = 'patch-list-body';
+
+    // Enable drop targets
+    makeDropTarget(body);
 
     const favSet = new Set(favIds || []);
     (matches || []).forEach(m => {
@@ -283,4 +424,4 @@ function highlightPatchRow(container, match) {
     });
 }
 
-export { createPatchRow, createPatchList, highlightPatchRow, decodeWavSamples, drawMiniWaveform };
+export { createPatchRow, createPatchList, highlightPatchRow, decodeWavSamples, drawMiniWaveform, makeDropTarget };

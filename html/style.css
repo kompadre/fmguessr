@@ -617,6 +617,52 @@ textarea:focus {
     min-width: 65px;
 }
 
+/* Minified row (dragged to another list) */
+.patch-row-minified {
+    padding: 0.3rem 0.6rem;
+    gap: 0.4rem;
+    background: #12121f;
+    border-left: 2px solid #f5c542;
+}
+
+.patch-row-minified .patch-spec,
+.patch-row-minified .patch-col,
+.patch-row-minified .patch-assign,
+.patch-row-minified .patch-edit-btn {
+    display: none;
+}
+
+.patch-row-minified .patch-star {
+    opacity: 1;
+}
+
+.patch-row-minified .patch-name {
+    color: #f5c542;
+    font-size: 0.8rem;
+}
+
+/* Drag states */
+.patch-row.dragging {
+    opacity: 0.4;
+}
+
+.patch-row.drag-ghost {
+    opacity: 0.2;
+}
+
+.patch-list-body.drag-over {
+    background: rgba(233, 69, 96, 0.05);
+    border-radius: 4px;
+}
+
+.patch-row.drag-insert-before {
+    border-top: 2px solid #e94560;
+}
+
+.patch-row.drag-insert-after {
+    border-bottom: 2px solid #e94560;
+}
+
 .patch-assign {
     background: none;
     border: 1px solid #333;

@@ -1,4 +1,4 @@
-import { createPatchRow, createPatchList, highlightPatchRow, decodeWavSamples, drawMiniWaveform } from './components/patch.js';
+import { createPatchRow, createPatchList, highlightPatchRow, decodeWavSamples, drawMiniWaveform, makeDropTarget } from './components/patch.js';
 import { createPianoDock } from './components/piano-dock.js';
 import { createSpectrogram } from './components/spectrogram.js';
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
@@ -1401,6 +1401,7 @@ function createSyxTabInner(tabId, name, patches) {
 
     const body = document.createElement('div');
     body.className = 'patch-list-body';
+    makeDropTarget(body);
 
     const patchNames = loadPatchNames();
 
