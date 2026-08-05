@@ -54,6 +54,7 @@ export function playNoteRealtime(voiceData, midi, velocity = 100) {
   if (!dx7Ready || !dx7Node) return null;
   const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
   dx7Node.port.postMessage({ type: 'patch', data: patch.buffer });
+  // Note On after patch loads (sysex must be processed first by the ring buffer)
   dx7Node.port.postMessage({ type: 'midi', data: [0x90, midi, velocity] });
   return () => {
     dx7Node.port.postMessage({ type: 'midi', data: [0x80, midi, 0] });
@@ -82,7 +83,7 @@ export async function renderOffline(voiceData, midi, durationMs) {
     node.port.postMessage({ type: 'patch', data: patch.buffer });
     node.port.postMessage({ type: 'midi', data: [0x90, midi, 100] });
 
-    // Capture via deprecated-but-reliable ScriptProcessorNode
+    // Capture via ScriptProcessorNode
     const collected = new Float32Array(captureSamples);
     let offset = 0;
     const scriptNode = tmpCtx.createScriptProcessor(1024, 1, 1);
