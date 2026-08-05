@@ -35,9 +35,9 @@ var noteNames = map[string]int{
 func main() {
 	outPath := flag.String("o", "", "export to WAV file instead of playing")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <patch.syx|patches.npy> [slot] [note]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Play an instrument from a DX7 .syx file or .npy patch bank.\n")
-		fmt.Fprintf(os.Stderr, "  slot: patch slot 0-31 for .syx, or 0-N for .npy (default: 0)\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <patch.syx|codebook.bin|patches.npy> [slot] [note]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Play an instrument from a DX7 .syx file, codebook .bin, or .npy patch bank.\n")
+		fmt.Fprintf(os.Stderr, "  slot: patch slot 0-31 for .syx, 0-N for .bin/.npy (default: play all)\n")
 		fmt.Fprintf(os.Stderr, "  note: C3, D#4, Bb5, etc. (default: C3)\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
@@ -50,7 +50,7 @@ func main() {
 	}
 	patchPath := flag.Arg(0)
 
-	slot := 0
+	slot := -1 // -1 = play all
 	if flag.NArg() >= 2 {
 		s, err := strconv.Atoi(flag.Arg(1))
 		if err != nil {
@@ -78,6 +78,57 @@ func main() {
 	ext := strings.ToLower(filepath.Ext(patchPath))
 
 	switch ext {
+	case ".bin":
+		// Load codebook (DXCB or DXCT format)
+		cb, err := match.LoadCodebookAny(patchPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading codebook %s: %v\n", patchPath, err)
+			os.Exit(1)
+		}
+		numPatches := len(cb.Entries)
+		if numPatches == 0 {
+			fmt.Fprintf(os.Stderr, "Codebook is empty\n")
+			os.Exit(1)
+		}
+		if slot >= numPatches {
+			fmt.Fprintf(os.Stderr, "Slot %d out of range: codebook has %d entries (0-%d)\n", slot, numPatches, numPatches-1)
+			os.Exit(1)
+		}
+
+		if slot < 0 {
+			// Play all codebook entries
+			// Load into synth bank (up to 32 at a time for synth compatibility)
+			playCount := numPatches
+			if playCount > 32 {
+				playCount = 32
+			}
+			for i := 0; i < playCount; i++ {
+				synth.SetVoice(i, cb.Entries[i].Candidate.Encode())
+			}
+			if *outPath != "" {
+				renderBankToWav(synth, nil, playCount, midiNote, *outPath)
+			} else {
+				playBankThroughSpeaker(synth, playCount, midiNote)
+			}
+			return
+		}
+
+		// Single slot
+		synth.SetVoice(0, cb.Entries[slot].Candidate.Encode())
+		synth.ChangeProgram(0, 0)
+		cand := cb.Entries[slot].Candidate
+		fmt.Printf("Loaded: codebook entry %d/%d — %s\n", slot, numPatches, cb.Entries[slot].Name)
+		fmt.Printf("  Algorithm: %d, Feedback: %d\n", cand.Algorithm+1, cand.Feedback)
+		for i := 0; i < 6; i++ {
+			op := cand.Ops[i]
+			role := "M"
+			if match.IsCarrier(cand.Algorithm, i) {
+				role = "C"
+			}
+			fmt.Printf("  Op%d [%s]: Level=%d Fine=%d Coarse=%d L3=%d R2=%d\n",
+				i+1, role, op.OutputLevel, op.FreqFine, op.FreqCoarse, op.Level3, op.Rate2)
+		}
+
 	case ".npy":
 		// Load patches from .npy file (N×128 uint8 array)
 		patchData, numPatches, err := match.LoadPatchBytes(patchPath)
@@ -85,7 +136,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", patchPath, err)
 			os.Exit(1)
 		}
-		if slot < 0 || slot >= numPatches {
+		if slot >= numPatches {
 			fmt.Fprintf(os.Stderr, "Slot %d out of range: .npy has %d patches (0-%d)\n", slot, numPatches, numPatches-1)
 			os.Exit(1)
 		}
@@ -97,6 +148,17 @@ func main() {
 		for i := 0; i < loadCount; i++ {
 			synth.SetVoice(i, patchData[i*128:(i+1)*128])
 		}
+
+		if slot < 0 {
+			// Play all patches
+			if *outPath != "" {
+				renderBankToWav(synth, patchData, loadCount, midiNote, *outPath)
+			} else {
+				playBankThroughSpeaker(synth, loadCount, midiNote)
+			}
+			return
+		}
+
 		synth.ChangeProgram(0, uint8(slot))
 		voiceData := patchData[slot*128 : (slot+1)*128]
 		cand := match.DecodeVoicePatch(voiceData)
@@ -116,7 +178,7 @@ func main() {
 
 	default:
 		// Load .syx file (loads all 32 voices into the bank)
-		if slot < 0 || slot > 31 {
+		if slot > 31 {
 			fmt.Fprintf(os.Stderr, "Invalid slot %d: must be 0-31 for .syx files\n", slot)
 			os.Exit(1)
 		}
@@ -124,6 +186,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", patchPath, err)
 			os.Exit(1)
 		}
+
+		if slot < 0 {
+			// Play all 32 patches
+			if *outPath != "" {
+				renderBankToWav(synth, nil, 32, midiNote, *outPath)
+			} else {
+				playBankThroughSpeaker(synth, 32, midiNote)
+			}
+			return
+		}
+
 		synth.ChangeProgram(0, uint8(slot))
 		fmt.Printf("Loaded: slot %d — %s\n", slot, synth.Programs[slot])
 
@@ -312,6 +385,186 @@ func renderToWav(synth *msfa.Synth, midiNote uint8, outPath string) {
 
 	duration := float64(len(samples)) / float64(sampleRate)
 	fmt.Printf("Wrote %s (%d samples, %.2fs)\n", outPath, len(samples), duration)
+}
+
+// playBankThroughSpeaker plays all patches in the bank sequentially.
+// 3s per patch (2s sustain + 1s release), 1s silence between patches.
+func playBankThroughSpeaker(synth *msfa.Synth, count int, midiNote uint8) {
+	err := miniaudio.Init(sampleRate, bufferSize)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening audio device: %v\n", err)
+		os.Exit(1)
+	}
+	defer miniaudio.Close()
+
+	bank := make([]byte, 4096)
+	synth.GetBank(bank)
+
+	sustainSamples := 2 * sampleRate  // 2s sustain
+	releaseSamples := 1 * sampleRate  // 1s release tail
+	pauseSamples := 1 * sampleRate    // 1s silence between patches
+
+	left := make([]float32, blockSize)
+	right := make([]float32, blockSize)
+	pcm := make([]int16, blockSize)
+
+	for slot := 0; slot < count; slot++ {
+		synth.ChangeProgram(0, uint8(slot))
+
+		// Print patch info
+		voiceStart := slot * 128
+		name := "?"
+		if slot < len(synth.Programs) {
+			name = synth.Programs[slot]
+		}
+		if voiceStart+128 <= len(bank) {
+			cand := match.DecodeVoicePatch(bank[voiceStart : voiceStart+128])
+			if cand != nil {
+				fmt.Printf("[%2d] %s  algo=%d fb=%d\n", slot, name, cand.Algorithm+1, cand.Feedback)
+			}
+		}
+
+		// Note On
+		synth.WriteMidi([]byte{0x90, midiNote, 100})
+
+		// Render sustain + release, paced to real-time
+		totalSamples := sustainSamples + releaseSamples
+		rendered := 0
+		for rendered < totalSamples {
+			n := blockSize
+			if rendered+n > totalSamples {
+				n = totalSamples - rendered
+			}
+			synth.GetSamples(pcm[:n])
+			for i := 0; i < n; i++ {
+				f := float32(pcm[i]) / 32768.0
+				left[i] = f
+				right[i] = f
+			}
+
+			// Pace to real-time: wait for the audio device to have space
+			for {
+				avail := miniaudio.AvailableWriteSpace()
+				if avail >= n {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			miniaudio.WriteChannels(left[:n], right[:n])
+			rendered += n
+
+			// Note Off after sustain
+			if rendered >= sustainSamples && rendered < sustainSamples+blockSize {
+				synth.WriteMidi([]byte{0x80, midiNote, 0})
+			}
+		}
+
+		// Silence pause (1s), also paced
+		silenceL := make([]float32, blockSize)
+		silenceR := make([]float32, blockSize)
+		for i := 0; i < pauseSamples; i += blockSize {
+			n := blockSize
+			if i+n > pauseSamples {
+				n = pauseSamples - i
+			}
+			for {
+				avail := miniaudio.AvailableWriteSpace()
+				if avail >= n {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			miniaudio.WriteChannels(silenceL[:n], silenceR[:n])
+		}
+	}
+
+	fmt.Println("Done — played all patches")
+}
+
+// renderBankToWav renders all patches to a single WAV file.
+// 3s per patch (2s sustain + 1s release), 1s silence between patches.
+func renderBankToWav(synth *msfa.Synth, patchData []byte, count int, midiNote uint8, outPath string) {
+	perPatchSamples := 3 * sampleRate  // 3s per patch
+	pauseSamples := 1 * sampleRate     // 1s silence
+	totalPerPatch := perPatchSamples + pauseSamples
+	totalSamples := totalPerPatch * count
+
+	bank := make([]byte, 4096)
+	synth.GetBank(bank)
+
+	fmt.Printf("Rendering %d patches to %s (%.0fs total)...\n", count, outPath, float64(totalSamples)/float64(sampleRate))
+
+	allSamples := make([]int16, 0, totalSamples)
+	pcm := make([]int16, blockSize)
+
+	for slot := 0; slot < count; slot++ {
+		synth.ChangeProgram(0, uint8(slot))
+
+		// Print patch info
+		voiceStart := slot * 128
+		name := "?"
+		if slot < len(synth.Programs) {
+			name = synth.Programs[slot]
+		}
+		if voiceStart+128 <= len(bank) {
+			cand := match.DecodeVoicePatch(bank[voiceStart : voiceStart+128])
+			if cand != nil {
+				fmt.Printf("  [%2d] %s  algo=%d fb=%d\n", slot, name, cand.Algorithm+1, cand.Feedback)
+			}
+		}
+
+		// Note On
+		synth.WriteMidi([]byte{0x90, midiNote, 100})
+
+		// Render sustain (2s) + release (1s)
+		sustainSamples := 2 * sampleRate
+		rendered := 0
+		for rendered < perPatchSamples {
+			synth.GetSamples(pcm)
+			allSamples = append(allSamples, pcm[:]...)
+			rendered += blockSize
+
+			// Note Off after sustain
+			if rendered >= sustainSamples && rendered < sustainSamples+blockSize {
+				synth.WriteMidi([]byte{0x80, midiNote, 0})
+			}
+		}
+
+		// Silence pause
+		silenceBlock := make([]int16, blockSize)
+		for i := 0; i < pauseSamples; i += blockSize {
+			allSamples = append(allSamples, silenceBlock...)
+		}
+	}
+
+	// Write WAV
+	f, err := os.Create(outPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating %s: %v\n", outPath, err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	enc := wav.NewEncoder(f, sampleRate, 16, 1, 1)
+	buf := &audio.IntBuffer{
+		Format: &audio.Format{NumChannels: 1, SampleRate: sampleRate},
+		Data:   make([]int, len(allSamples)),
+	}
+	for i, s := range allSamples {
+		buf.Data[i] = int(s)
+	}
+
+	if err := enc.Write(buf); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing WAV: %v\n", err)
+		os.Exit(1)
+	}
+	if err := enc.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error closing WAV: %v\n", err)
+		os.Exit(1)
+	}
+
+	duration := float64(len(allSamples)) / float64(sampleRate)
+	fmt.Printf("Wrote %s (%d samples, %.1fs, %d patches)\n", outPath, len(allSamples), duration, count)
 }
 
 func parseNote(s string) (uint8, error) {

@@ -37,6 +37,7 @@ type ServerConfig struct {
 	BudgetSeconds  float64
 	ExportDir      string
 	ModelData      []byte // Embedded ONNX model bytes (overrides ModelPath)
+	EncoderPath    string // Path to 1D ResNet ONNX encoder (optional)
 }
 
 type MatchResult struct {
@@ -64,6 +65,7 @@ type Job struct {
 	TimbralMatches  []MatchResult `json:"timbral_matches,omitempty"`
 	FullMatches     []MatchResult `json:"full_matches,omitempty"`
 	Favorites       []MatchResult `json:"favorites,omitempty"`
+	FormantMatches  []MatchResult `json:"formant_matches,omitempty"`
 
 	// Internal fields
 	audioSamples []float64
@@ -78,17 +80,33 @@ type Server struct {
 	jobQueue  chan *Job
 	cfg       ServerConfig
 	exportDir string
+	sessionsDir string
+	encoder   *match.AudioEncoder // Loaded once at startup, nil if not provided
 }
 
 func NewServer(cfg ServerConfig) *Server {
 	absExport, _ := filepath.Abs(cfg.ExportDir)
 	_ = os.MkdirAll(absExport, 0755)
+	sessionsDir := filepath.Join(absExport, "sessions")
+	_ = os.MkdirAll(sessionsDir, 0755)
 
 	s := &Server{
-		jobs:      make(map[string]*Job),
-		jobQueue:  make(chan *Job, cfg.MaxQueue),
-		cfg:       cfg,
-		exportDir: absExport,
+		jobs:        make(map[string]*Job),
+		jobQueue:    make(chan *Job, cfg.MaxQueue),
+		cfg:         cfg,
+		exportDir:   absExport,
+		sessionsDir: sessionsDir,
+	}
+
+	// Load encoder model if provided
+	if cfg.EncoderPath != "" {
+		enc, err := match.NewAudioEncoder(cfg.EncoderPath)
+		if err != nil {
+			log.Printf("Warning: encoder model not loaded: %v (trajectory distance disabled)", err)
+		} else {
+			s.encoder = enc
+			log.Printf("Loaded encoder model: %s", cfg.EncoderPath)
+		}
 	}
 
 	// Start single-worker processing goroutine
@@ -145,6 +163,43 @@ func (s *Server) processJob(job *Job) {
 	features, midiNote := match.ApplyFeatureOverrides(features, job.overrides)
 	noteFreq := 440.0 * math.Pow(2, float64(midiNote-69)/12.0)
 
+	// Trajectory distance: compute or load from shared session cache
+	var trajectorySpec *match.TrajectorySpec
+	var lfoSpectrum []float64
+	var phaseBounds match.PhaseBounds
+	if s.encoder != nil {
+		audioHash := match.AudioHash(targetSamples)
+		sessionPath := filepath.Join(s.sessionsDir, fmt.Sprintf("%x.bin", audioHash))
+
+		// Try to load existing session
+		if session, err := match.LoadSession(sessionPath); err == nil && session.AudioHash == audioHash {
+			trajectorySpec = session.Trajectory
+			lfoSpectrum = session.LFOSpectrum
+			phaseBounds = session.PhaseBounds
+			if job.overrides.Note != "" {
+				log.Printf("Job %s: loaded cached trajectory session", job.ID)
+			}
+		} else {
+			// Compute trajectory
+			traj := match.ExtractTrajectory(s.encoder, targetNorm)
+			if traj != nil {
+				phaseBounds = match.DetectPhaseBounds(targetSamples, job.sampleRate)
+				lfoSpectrum = match.ComputeLFOSpectrum(traj)
+				trajectorySpec = traj
+
+				// Save to shared sessions directory (atomic write)
+				if err := match.SaveSession(sessionPath, &match.SessionData{
+					AudioHash:   audioHash,
+					Trajectory:  traj,
+					PhaseBounds: phaseBounds,
+					LFOSpectrum: lfoSpectrum,
+				}); err != nil {
+					log.Printf("Job %s: warning: could not save session: %v", job.ID, err)
+				}
+			}
+		}
+	}
+
 	// Configure GA
 	gaCfg := match.DefaultGAConfig()
 	gaCfg.Generations = s.cfg.Generations
@@ -173,6 +228,13 @@ func (s *Server) processJob(job *Job) {
 		Verbose:         true,
 		GA:              gaCfg,
 		Ctx:             ctx,
+		Encoder:           s.encoder,
+		TargetTrajectory:  trajectorySpec,
+		TargetLFOSpectrum: lfoSpectrum,
+		PhaseBounds:       phaseBounds,
+		TrajectoryAlphaStart: 0.1,
+		TrajectoryAlphaEnd:   0.8,
+		TrajectoryConfig:     match.DefaultTrajectoryConfig(),
 		ProgressCallback: func(pct int, phase string) {
 			s.mu.Lock()
 			job.ProgressPercent = pct
@@ -281,6 +343,30 @@ func (s *Server) processJob(job *Job) {
 		})
 	}
 
+	// Render Formant Top 5 to WAV files
+	var formantMatches []MatchResult
+	for rank, cand := range result.FormantTop5 {
+		candAudio := match.RenderCandidateWithGate(cand, uint8(midiNote), gateDur, matchCfg.RenderDur)
+		wavPath := filepath.Join(jobDir, fmt.Sprintf("formant_%d.wav", rank+1))
+
+		if err := match.SaveWav(wavPath, candAudio, match.RenderSampleRate); err != nil {
+			s.failJob(job, fmt.Sprintf("failed to save formant candidate WAV: %v", err))
+			return
+		}
+
+		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
+		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
+
+		formantMatches = append(formantMatches, MatchResult{
+			Rank:      rank + 1,
+			Algorithm: int(cand.Algorithm + 1),
+			Feedback:  int(cand.Feedback),
+			Distance:  candDist,
+			WavURL:    fmt.Sprintf("/exports/%s/formant_%d.wav", job.ID, rank+1),
+			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
+		})
+	}
+
 	// Build Favorites: candidates in both TimbralTop5 and FullTop5
 	var favoriteMatches []MatchResult
 	fullSigs := make(map[string]bool, len(result.FullTop5))
@@ -319,6 +405,7 @@ func (s *Server) processJob(job *Job) {
 	job.Matches = matches
 	job.TimbralMatches = timbralMatches
 	job.FullMatches = fullMatches
+	job.FormantMatches = formantMatches
 	job.Favorites = favoriteMatches
 	s.mu.Unlock()
 }
@@ -343,6 +430,17 @@ func (s *Server) cleanupLoop() {
 			}
 		}
 		s.mu.Unlock()
+
+		// Prune stale session files (>1 hour old)
+		if s.sessionsDir != "" {
+			sessionFiles, _ := filepath.Glob(filepath.Join(s.sessionsDir, "*.bin"))
+			for _, f := range sessionFiles {
+				info, err := os.Stat(f)
+				if err == nil && now.Sub(info.ModTime()) > 1*time.Hour {
+					os.Remove(f)
+				}
+			}
+		}
 	}
 }
 
@@ -933,6 +1031,7 @@ func main() {
 	classifierOnly := flag.Bool("classifier-only", false, "use classifier predictions only, skip GA")
 	budgetSeconds := flag.Float64("budget-seconds", 0, "stop matching after N seconds (0=unlimited)")
 	exportDir := flag.String("exports", "./exports", "path to export directory for static files")
+	encoderPath := flag.String("encoder", "", "path to 1D ResNet ONNX encoder model for trajectory distance (optional)")
 
 	flag.Parse()
 
@@ -980,6 +1079,7 @@ func main() {
 		BudgetSeconds:  *budgetSeconds,
 		ExportDir:      *exportDir,
 		ModelData:      modelData,
+		EncoderPath:    *encoderPath,
 	}
 
 	server := NewServer(cfg)

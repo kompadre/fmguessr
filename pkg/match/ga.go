@@ -3,6 +3,7 @@ package match
 import (
 	"math"
 	"math/rand"
+	"sort"
 )
 
 // GAConfig holds genetic algorithm parameters.
@@ -49,6 +50,7 @@ type GA struct {
 	bestEverFit     float64     // All-time best fitness
 	generation      int
 	mutations       []MutationRecord // Records for the *next* evaluated population
+	nudge           []float64        // Trajectory Jacobian gradient for nudge-biased mutation
 }
 
 // NewGA creates a genetic algorithm with a seed population.
@@ -140,6 +142,10 @@ func (ga *GA) Evolve(targetF TargetFeatures) []*Candidate {
 		ga.mutations[i] = MutationRecord{ParentIdx: idxA, ParamIdx: -1}
 
 		if ga.rng.Float64() < mutationRate {
+			// Apply trajectory nudge bias to Direction/Velocity if available
+			if ga.nudge != nil && len(ga.nudge) > 0 {
+				applyNudgeBias(child, ga.nudge, ga.rng)
+			}
 			candF := ga.currentFeatures[idxA]
 			bestFit := ga.BestFitness()
 			mutant, pIdx, delta := child.MutateInformed(ga.rng, targetF, candF, bestFit)
@@ -252,13 +258,9 @@ func (ga *GA) updateElites() {
 	for i := range ga.currentPop {
 		sorted[i] = idxFit{i, ga.currentFit[i]}
 	}
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].fit < sorted[i].fit {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].fit < sorted[j].fit
+	})
 
 	numElites := ga.config.Elites
 	if numElites > n {
@@ -282,13 +284,9 @@ func (ga *GA) TopN(n int) []*Candidate {
 	for i := range ga.currentPop {
 		sorted[i] = idxFit{i, ga.currentFit[i]}
 	}
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].fit < sorted[i].fit {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].fit < sorted[j].fit
+	})
 
 	seen := make(map[string]bool)
 	var result []*Candidate
@@ -322,4 +320,60 @@ func (ga *GA) tournamentSelectIdx() int {
 
 func (ga *GA) tournamentSelect() *Candidate {
 	return ga.currentPop[ga.tournamentSelectIdx()]
+}
+
+// applyNudgeBias biases a candidate's mutation Direction and Velocity
+// based on the trajectory Jacobian gradient. This makes MutateInformed
+// more likely to pick parameters and directions that improve the worst
+// time step in the trajectory distance.
+//
+// The nudge vector comes from TrajectoryGradient which uses buildKnobs(true).
+// Each element is ∂d(t*)/∂θ_i — negative means "this direction improves distance".
+func applyNudgeBias(c *Candidate, nudge []float64, rng *rand.Rand) {
+	// Build knob→candidate parameter mapping
+	// buildKnobs(true) order: 6 ops × (Level, Fine, Coarse) + Feedback + Pitch.Level1, Pitch.Level2, Pitch.Rate1
+	knobIdx := 0
+	for op := 0; op < 6; op++ {
+		for _, paramIdx := range []int{3, 2, 1} { // OutputLevel, FreqFine, FreqCoarse in Candidate.Velocity indices
+			if knobIdx >= len(nudge) {
+				return
+			}
+			candParam := 1 + op*8 + paramIdx // offset from Candidate.Velocity layout
+			if candParam < NumCandidateParams {
+				bias := nudge[knobIdx]
+				if math.Abs(bias) > 1e-6 {
+					// Set direction toward gradient descent
+					if bias < 0 {
+						c.Direction[candParam] = 1
+					} else {
+						c.Direction[candParam] = -1
+					}
+					// Boost velocity proportionally to gradient magnitude
+					boost := math.Min(math.Abs(bias)*2.0, 4.0)
+					c.Velocity[candParam] += boost
+					if c.Velocity[candParam] > 8.0 {
+						c.Velocity[candParam] = 8.0
+					}
+				}
+			}
+			knobIdx++
+		}
+	}
+	// Feedback
+	if knobIdx < len(nudge) {
+		fbIdx := NumCandidateParams - 1
+		bias := nudge[knobIdx]
+		if math.Abs(bias) > 1e-6 {
+			if bias < 0 {
+				c.Direction[fbIdx] = 1
+			} else {
+				c.Direction[fbIdx] = -1
+			}
+			boost := math.Min(math.Abs(bias)*2.0, 4.0)
+			c.Velocity[fbIdx] += boost
+			if c.Velocity[fbIdx] > 8.0 {
+				c.Velocity[fbIdx] = 8.0
+			}
+		}
+	}
 }

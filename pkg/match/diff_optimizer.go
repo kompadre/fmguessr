@@ -135,38 +135,6 @@ func CrunchWavFile(wavPath string, initial *Candidate, maxIter int, verbose bool
 	return best, optimizer.BestDist(), nil
 }
 
-func buildTimbreKnobs() []KnobDef {
-	knobs := make([]KnobDef, 0, 19)
-	for op := 0; op < 6; op++ {
-		opIdx := op
-		knobs = append(knobs, KnobDef{
-			name:   fmt.Sprintf("Op%d.Level", opIdx+1),
-			getter: func(c *Candidate) int { return int(c.Ops[opIdx].OutputLevel) },
-			setter: func(c *Candidate, v int) { c.Ops[opIdx].OutputLevel = uint8(v) },
-			min:    0, max: 99,
-		})
-		knobs = append(knobs, KnobDef{
-			name:   fmt.Sprintf("Op%d.Fine", opIdx+1),
-			getter: func(c *Candidate) int { return int(c.Ops[opIdx].FreqFine) },
-			setter: func(c *Candidate, v int) { c.Ops[opIdx].FreqFine = uint8(v) },
-			min:    0, max: 99,
-		})
-		knobs = append(knobs, KnobDef{
-			name:   fmt.Sprintf("Op%d.Coarse", opIdx+1),
-			getter: func(c *Candidate) int { return int(c.Ops[opIdx].FreqCoarse) },
-			setter: func(c *Candidate, v int) { c.Ops[opIdx].FreqCoarse = uint8(v) },
-			min:    0, max: 31,
-		})
-	}
-	knobs = append(knobs, KnobDef{
-		name:   "Feedback",
-		getter: func(c *Candidate) int { return int(c.Feedback) },
-		setter: func(c *Candidate, v int) { c.Feedback = uint8(v) },
-		min:    0, max: 7,
-	})
-	return knobs
-}
-
 func buildTemporalKnobs() []KnobDef {
 	knobs := make([]KnobDef, 0, 27)
 	for op := 0; op < 6; op++ {
@@ -226,7 +194,7 @@ func (opt *DiffOptimizer) RunTopologySweep() float64 {
 		cands[algo] = c
 	}
 
-	fits, _ := evaluateBatchParallel(cands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS)
+	fits, _ := evaluateBatchParallel(cands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 	bestAlgo := opt.currentPatch.Algorithm
 	for algo, fit := range fits {
 		if fit < opt.bestDist {
@@ -237,7 +205,7 @@ func (opt *DiffOptimizer) RunTopologySweep() float64 {
 		}
 	}
 	if opt.verbose {
-		fmt.Printf("[DiffOpt-TopologySweep] Selected best Algo %d (Dist: %.6f)\n", bestAlgo+1, opt.bestDist)
+		fmt.Printf("%dms] [DiffOpt-TopologySweep] Selected best Algo %d (Dist: %.6f)\n", logMs(), bestAlgo+1, opt.bestDist)
 	}
 	return opt.bestDist
 }
@@ -258,7 +226,7 @@ phaseLoop:
 		select {
 		case <-opt.ctx.Done():
 			if opt.verbose {
-				fmt.Printf("[DiffOpt] CANCELLED at iter %d in %s — stopping\n", iter, phaseName)
+				fmt.Printf("%dms] [DiffOpt] CANCELLED at iter %d in %s — stopping\n", logMs(), iter, phaseName)
 			}
 			break phaseLoop
 		default:
@@ -359,7 +327,7 @@ phaseLoop:
 		}
 
 		if len(lineCands) > 0 {
-			fits, _ := evaluateBatchParallel(lineCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS)
+			fits, _ := evaluateBatchParallel(lineCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < opt.bestDist {
 					opt.bestDist = fit
@@ -369,7 +337,7 @@ phaseLoop:
 					// Cache the rendered spec of the new best
 					opt.cacheBestSpec()
 					if opt.verbose {
-						fmt.Printf("[DiffOpt-%s] Iter %d: New Best Dist %.6f via %s\n", phaseName, iter+1, opt.bestDist, lineLabels[i])
+						fmt.Printf("%dms] [DiffOpt-%s] Iter %d: New Best Dist %.6f via %s\n", logMs(), phaseName, iter+1, opt.bestDist, lineLabels[i])
 					}
 				}
 			}
@@ -379,7 +347,7 @@ phaseLoop:
 		if !improved {
 			coupledCands, coupledMeta := generateCoupledOperatorCandidates(opt.currentPatch, knobs)
 			if len(coupledCands) > 0 {
-				fits, _ := evaluateBatchParallel(coupledCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS)
+				fits, _ := evaluateBatchParallel(coupledCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 				for i, fit := range fits {
 					if fit < opt.bestDist {
 						opt.bestDist = fit
@@ -389,7 +357,7 @@ phaseLoop:
 						// Cache the rendered spec of the new best
 						opt.cacheBestSpec()
 						if opt.verbose {
-							fmt.Printf("[DiffOpt-%s-Coupled] Iter %d: New Best Dist %.6f via %s\n", phaseName, iter+1, opt.bestDist, coupledMeta[i].knobName)
+							fmt.Printf("%dms] [DiffOpt-%s-Coupled] Iter %d: New Best Dist %.6f via %s\n", logMs(), phaseName, iter+1, opt.bestDist, coupledMeta[i].knobName)
 						}
 					}
 				}
@@ -407,13 +375,13 @@ phaseLoop:
 // RunAlternating performs a 32-algorithm topology sweep (unless skipTopology) followed by alternating
 // back-to-back Timbre and Temporal optimization phases.
 func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
-	initialFits, _ := evaluateBatchParallel([]*Candidate{opt.currentPatch}, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS)
+	initialFits, _ := evaluateBatchParallel([]*Candidate{opt.currentPatch}, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 	if len(initialFits) > 0 && initialFits[0] < opt.bestDist {
 		opt.bestDist = initialFits[0]
 	}
 
 	if opt.verbose {
-		fmt.Printf("[DiffOpt-Start] Initial Distance: %.6f\n", opt.bestDist)
+		fmt.Printf("%dms] [DiffOpt-Start] Initial Distance: %.6f\n", logMs(), opt.bestDist)
 	}
 
 	if opt.bestDist <= 1e-4 {
@@ -425,7 +393,7 @@ func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
 		opt.RunTopologySweep()
 	}
 
-	timbreKnobs := buildTimbreKnobs()
+	timbreKnobs := buildKnobs(false)
 	temporalKnobs := buildTemporalKnobs()
 
 	for c := 0; c < cycles; c++ {
@@ -438,13 +406,13 @@ func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
 		opt.RunPhase(temporalKnobs, fmt.Sprintf("Cycle%d-Temporal", c+1), 2)
 
 		if opt.verbose {
-			fmt.Printf("[DiffOpt-Cycle %d] Dist: %.6f -> %.6f (Delta: %.6f)\n",
+			fmt.Printf("%dms] [DiffOpt-Cycle %d] Dist: %.6f -> %.6f (Delta: %.6f)\n", logMs(),
 				c+1, startDist, opt.bestDist, startDist-opt.bestDist)
 		}
 
 		if startDist-opt.bestDist < 1e-4 {
 			if opt.verbose {
-				fmt.Printf("[DiffOpt-Alternating] Converged at cycle %d\n", c+1)
+				fmt.Printf("%dms] [DiffOpt-Alternating] Converged at cycle %d\n", logMs(), c+1)
 			}
 			break
 		}

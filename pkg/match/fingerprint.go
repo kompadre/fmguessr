@@ -5,7 +5,6 @@ import (
 	"math/cmplx"
 
 	"github.com/madelynnblue/go-dsp/fft"
-	"github.com/madelynnblue/go-dsp/window"
 )
 
 // FingerprintDim is the length of the feature vector used for audio indexing.
@@ -153,7 +152,7 @@ func computePitchNormalizedMFCCs(samples []float64, sampleRate int, f0 float64, 
 	sumCoeffs := make([]float64, numCoeffs)
 	frameCount := 0
 
-	win := window.Hann(frameSize)
+	win := getHannWindow(frameSize)
 
 	for start := 0; start+frameSize <= len(samples); start += hopSize {
 		frame := samples[start : start+frameSize]

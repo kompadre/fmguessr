@@ -6,7 +6,6 @@ import (
 	"math/cmplx"
 
 	"github.com/madelynnblue/go-dsp/fft"
-	"github.com/madelynnblue/go-dsp/window"
 )
 
 // TargetFeatures holds acoustic features extracted from the target audio.
@@ -253,7 +252,7 @@ func detectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
 		buf[i] = s - mean
 	}
 
-	win := window.Hann(frameSize)
+	win := getHannWindow(frameSize)
 	for i := range buf {
 		buf[i] *= win[i]
 	}
@@ -630,7 +629,7 @@ func computeSpectrum(samples []float64, sampleRate int) []float64 {
 
 	frame := make([]complex128, fftSize)
 	// Apply Hann window ONLY to the actual signal portion, then pad
-	win := window.Hann(n)
+	win := getHannWindow(n)
 	for i := 0; i < n; i++ {
 		frame[i] = complex(samples[i]*win[i], 0)
 	}

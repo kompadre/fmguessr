@@ -57,14 +57,14 @@ func (poc *POCOptimizer) BestPatch() *Candidate {
 }
 
 func (poc *POCOptimizer) Run() *Candidate {
-	knobs := buildKnobs()
+	knobs := buildKnobs(true)
 	knobMap := make(map[string]KnobDef, len(knobs))
 	for _, k := range knobs {
 		knobMap[k.name] = k
 	}
 
 	// Initial evaluation
-	initialFits, _ := evaluateBatchParallel([]*Candidate{poc.currentPatch}, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS)
+	initialFits, _ := evaluateBatchParallel([]*Candidate{poc.currentPatch}, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 	if len(initialFits) > 0 {
 		poc.bestDist = initialFits[0]
 	}
@@ -79,7 +79,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 1. Single-knob Coarse Sweeps & Improver Harvesting
 		coarseCands, coarseMeta := generateBatch(poc.currentPatch, knobs, false)
 		if len(coarseCands) > 0 {
-			fits, _ := evaluateBatchParallel(coarseCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS)
+			fits, _ := evaluateBatchParallel(coarseCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 
 			// Update acceleration cache with coarse sweep second derivatives
 			updateAccelerationCache(poc.accelCache, knobs, poc.bestDist, coarseCands, coarseMeta, fits)
@@ -113,7 +113,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 			if len(improvers) >= 2 {
 				trajCands, trajMeta := generateMultiKnobTrajectoryCandidates(poc.currentPatch, knobs, improvers)
 				if len(trajCands) > 0 {
-					trajFits, _ := evaluateBatchParallel(trajCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS)
+					trajFits, _ := evaluateBatchParallel(trajCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 					for i, fit := range trajFits {
 						if fit < poc.bestDist {
 							poc.bestDist = fit
@@ -132,7 +132,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 3. Coupled Operator Candidates
 		coupledCands, coupledMeta := generateCoupledOperatorCandidates(poc.currentPatch, knobs)
 		if len(coupledCands) > 0 {
-			fits, _ := evaluateBatchParallel(coupledCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS)
+			fits, _ := evaluateBatchParallel(coupledCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < poc.bestDist {
 					poc.bestDist = fit
@@ -149,7 +149,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 4. Multi-Dial Cross-Trough Candidates from Acceleration Cache
 		crossCands, crossMeta := generateMultiDialCrossTroughCandidates(poc.currentPatch, knobs, poc.accelCache, poc.rng)
 		if len(crossCands) > 0 {
-			fits, _ := evaluateBatchParallel(crossCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS)
+			fits, _ := evaluateBatchParallel(crossCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < poc.bestDist {
 					poc.bestDist = fit
@@ -166,7 +166,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 5. Fine Sweeps
 		fineCands, fineMeta := generateBatch(poc.currentPatch, knobs, true)
 		if len(fineCands) > 0 {
-			fits, _ := evaluateBatchParallel(fineCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS)
+			fits, _ := evaluateBatchParallel(fineCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < poc.bestDist {
 					poc.bestDist = fit

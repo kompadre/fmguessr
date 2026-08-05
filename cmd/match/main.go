@@ -30,12 +30,37 @@ func main() {
 	classifier := flag.String("classifier", "", "path to patch classifier ONNX model (optional)")
 	classifierOnly := flag.Bool("classifier-only", false, "skip GA, return best classifier predictions only")
 	budgetSeconds := flag.Float64("budget-seconds", 0, "stop matching after N seconds (0=unlimited)")
+	encoderPath := flag.String("encoder", "", "path to 1D ResNet ONNX encoder model for trajectory distance (optional)")
+	sessionOut := flag.String("session-out", "", "save trajectory session to file (optional, for debugging/reuse)")
+	sessionIn := flag.String("session-in", "", "load trajectory session from file (skip recomputation)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <target.wav>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Find DX7 FM parameters that produce a sound similar to the target WAV.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
+
+	// Go's flag package stops at the first non-flag argument.
+	// This means ./match key.wav -syx out.syx silently ignores -syx.
+	// Fix: pull all flag-like args to the front before parsing.
+	args := os.Args[1:]
+	var flags []string
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		if len(args[i]) > 0 && args[i][0] == '-' {
+			flags = append(flags, args[i])
+			// Consume next arg as value only if this is NOT a boolean flag
+			// and the next arg looks like a value (not another flag)
+			if i+1 < len(args) && !isBoolFlag(args[i]) &&
+				(len(args[i+1]) == 0 || args[i+1][0] != '-') {
+				flags = append(flags, args[i+1])
+				i++
+			}
+		} else {
+			positional = append(positional, args[i])
+		}
+	}
+	os.Args = append([]string{os.Args[0]}, append(flags, positional...)...)
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -103,6 +128,56 @@ func main() {
 	target = match.NormalizeRMS(target)
 	fmt.Printf("  Comparison length: %d samples (%.2fs)\n", len(target), duration.Seconds())
 
+	// Set up trajectory distance if encoder or session file provided
+	var trajectorySpec *match.TrajectorySpec
+	var lfoSpectrum []float64
+	var phaseBounds match.PhaseBounds
+	var encoder *match.AudioEncoder
+
+	if *sessionIn != "" {
+		// Load pre-computed trajectory from session file
+		session, err := match.LoadSession(*sessionIn)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not load session file: %v\n", err)
+		} else {
+			trajectorySpec = session.Trajectory
+			lfoSpectrum = session.LFOSpectrum
+			phaseBounds = session.PhaseBounds
+			fmt.Printf("  Loaded trajectory session: %d timesteps, %d-dim embeddings\n",
+				trajectorySpec.TimeSteps, trajectorySpec.EmbDim)
+		}
+	} else if *encoderPath != "" {
+		// Compute trajectory from encoder model
+		var err error
+		encoder, err = match.NewAudioEncoder(*encoderPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not load encoder model: %v\n", err)
+		} else {
+			defer encoder.Close()
+			trajectorySpec = match.ExtractTrajectory(encoder, target)
+			phaseBounds = match.DetectPhaseBounds(target, sampleRate)
+			if trajectorySpec != nil {
+				lfoSpectrum = match.ComputeLFOSpectrum(trajectorySpec)
+				fmt.Printf("  Trajectory: %d timesteps, %d-dim embeddings, phase=[%d,%d]\n",
+					trajectorySpec.TimeSteps, trajectorySpec.EmbDim, phaseBounds.AttackEnd, phaseBounds.SustainEnd)
+			}
+		}
+	}
+
+	// Save session file if requested
+	if *sessionOut != "" && trajectorySpec != nil {
+		if err := match.SaveSession(*sessionOut, &match.SessionData{
+			AudioHash:   match.AudioHash(target),
+			Trajectory:  trajectorySpec,
+			PhaseBounds: phaseBounds,
+			LFOSpectrum: lfoSpectrum,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not save session file: %v\n", err)
+		} else {
+			fmt.Printf("  Saved trajectory session to: %s\n", *sessionOut)
+		}
+	}
+
 	// Configure GA
 	gaCfg := match.DefaultGAConfig()
 	gaCfg.Generations = *generations
@@ -149,6 +224,13 @@ func main() {
 		ClassifierPath:  *classifier,
 		ClassifierOnly:  *classifierOnly,
 		Ctx:             ctx,
+		Encoder:           encoder,
+		TargetTrajectory:  trajectorySpec,
+		TargetLFOSpectrum: lfoSpectrum,
+		PhaseBounds:       phaseBounds,
+		TrajectoryAlphaStart: 0.1,
+		TrajectoryAlphaEnd:   0.8,
+		TrajectoryConfig:     match.DefaultTrajectoryConfig(),
 	}
 
 	fmt.Printf("\nStarting GA: %d generations × %d population = %d evaluations max\n",
@@ -174,6 +256,14 @@ func main() {
 	if len(result.FullTop5) > 0 {
 		fmt.Printf("\n--- Full Top %d (by temporal distance, DiffOptimizer-refined) ---\n", len(result.FullTop5))
 		for i, c := range result.FullTop5 {
+			fmt.Printf("  #%d: %s\n", i+1, c.String())
+		}
+	}
+
+	// Print Formant Top 5
+	if len(result.FormantTop5) > 0 {
+		fmt.Printf("\n--- Formant Top %d (formant-constrained refinement) ---\n", len(result.FormantTop5))
+		for i, c := range result.FormantTop5 {
 			fmt.Printf("  #%d: %s\n", i+1, c.String())
 		}
 	}
@@ -210,4 +300,20 @@ func main() {
 			fmt.Printf("Auto-indexed best match '%s' into codebook %s\n", patchName, *codebookPath)
 		}
 	}
+}
+
+// isBoolFlag returns true if the flag is a boolean (no value) flag.
+func isBoolFlag(arg string) bool {
+	name := arg
+	for len(name) > 0 && name[0] == '-' {
+		name = name[1:]
+	}
+	boolFlags := map[string]bool{
+		"v":               true,
+		"auto-index":      true,
+		"beam":            true,
+		"cspoa":           true,
+		"classifier-only": true,
+	}
+	return boolFlags[name]
 }

@@ -38,6 +38,16 @@ type Config struct {
 	// Ctx for cancellation/budget. If nil, a default context is used.
 	// Cancel or set deadline to stop matching early.
 	Ctx context.Context
+
+	// Trajectory Distance (optional, requires encoder model).
+	// TODO: decouple from Config — pass encoder/trajectory as parameters to Run().
+	Encoder           *AudioEncoder     // Pre-loaded encoder instance (shared across calls)
+	TargetTrajectory  *TrajectorySpec   // Pre-computed target trajectory
+	TargetLFOSpectrum []float64         // Pre-computed target LFO spectrum
+	PhaseBounds       PhaseBounds       // Pre-computed phase boundaries
+	TrajectoryAlphaStart float64        // Trajectory blend weight at gen 0 (default 0.1)
+	TrajectoryAlphaEnd   float64        // Trajectory blend weight at final gen (default 0.8)
+	TrajectoryConfig     TrajectoryConfig // Phased weights, LFO params
 }
 
 // DefaultConfig returns sensible defaults.
@@ -59,6 +69,7 @@ type Result struct {
 	TimbralTop5 []*Candidate // Top 5 by static timbre distance (deduplicated)
 	FullTop5    []*Candidate // Top 5 by temporal distance (deduplicated)
 	Favorites   []*Candidate // Candidates appearing in both TimbralTop5 and FullTop5
+	FormantTop5 []*Candidate // Top 5 by formant-constrained refinement
 }
 
 func reportProgress(cfg Config, percent int, phase string) {
@@ -67,18 +78,80 @@ func reportProgress(cfg Config, percent int, phase string) {
 	}
 }
 
-// Package-level cached target mel spectrogram for fast distance computation.
-var cachedTargetMel *PrecomputedTargetMel
+var runStart time.Time
+
+func logElapsed(cfg Config, format string, args ...interface{}) {
+	if cfg.Verbose {
+		fmt.Printf("[%dms] "+format, append([]interface{}{logMs()}, args...)...)
+	}
+}
+
+// logMs returns milliseconds since runStart. Available to all package files.
+func logMs() int64 {
+	if runStart.IsZero() {
+		return 0
+	}
+	return time.Since(runStart).Milliseconds()
+}
+
+// loadedCodebooks holds codebooks loaded once at the start of Run().
+// All pipeline stages share these references instead of re-loading from disk.
+type loadedCodebooks struct {
+	fp     *Codebook        // fingerprint codebook (may be nil)
+	timbre *TimbreCodebook  // timbre codebook (may be nil)
+}
+
+// loadCodebooksOnce loads both codebooks from disk exactly once.
+func loadCodebooksOnce(codebookPath string, verbose bool) loadedCodebooks {
+	var cb loadedCodebooks
+	if codebookPath == "" {
+		return cb
+	}
+
+	// Fingerprint codebook
+	fp, fpErr := LoadCodebook(codebookPath)
+	if fpErr != nil {
+		if verbose {
+			fmt.Printf("Warning: could not load fingerprint codebook: %v\n", fpErr)
+		}
+	} else if len(fp.Entries) > 0 {
+		cb.fp = fp
+		if verbose {
+			fmt.Printf("Loaded fingerprint codebook: %d entries\n", len(fp.Entries))
+		}
+	}
+
+	// Timbre codebook (auto-derived path: *_timbre.bin)
+	timbrePath := codebookPath
+	if len(codebookPath) > 4 && codebookPath[len(codebookPath)-4:] == ".bin" {
+		timbrePath = codebookPath[:len(codebookPath)-4] + "_timbre.bin"
+	} else {
+		timbrePath = codebookPath + "_timbre.bin"
+	}
+	if tc, err := LoadTimbreCodebook(timbrePath); err == nil && len(tc.Entries) > 0 {
+		cb.timbre = tc
+		if verbose {
+			fmt.Printf("Loaded timbre codebook: %d entries\n", len(tc.Entries))
+		}
+	} else if verbose && codebookPath != "" {
+		if err != nil {
+			fmt.Printf("Note: timbre codebook not loaded: %v\n", err)
+		}
+	}
+
+	return cb
+}
 
 // Run executes the genetic algorithm optimization using a 32-Island Niche Model and Multi-Core Parallel Evaluation.
 func Run(target []float64, features TargetFeatures, cfg Config) Result {
+	runStart = time.Now()
 	rawTargetRMS := features.TargetRMS
 	if rawTargetRMS <= 0 {
 		rawTargetRMS = CalcRMS(target)
 	}
 
 	// Precompute target mel spectrogram for fitness evaluation
-	cachedTargetMel = ComputeTargetMel(target, RenderSampleRate)
+	cachedTargetMel := ComputeTargetMel(target, RenderSampleRate)
 
 	// Set up context with budget
 	ctx := cfg.Ctx
@@ -89,6 +162,11 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	if cfg.Verbose {
 		printFeatures(features)
 	}
+
+	// Load both codebooks once — reused by all pipeline stages
+	cbs := loadCodebooksOnce(cfg.CodebookPath, cfg.Verbose)
+	cb := cbs.fp
+	timbreCB := cbs.timbre
 
 	reportProgress(cfg, 5, "Step 1: Codebook Lookup")
 
@@ -103,26 +181,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	timbreCohort := NewEliteCohort(5)
 	fullCohort := NewEliteCohort(5)
 
-	if cfg.CodebookPath != "" {
-		// Load fingerprint codebook
-		cb, cbErr := LoadCodebook(cfg.CodebookPath)
-
-		// Load timbre codebook (auto-derived path: *_timbre.bin)
-		var timbreCB *TimbreCodebook
-		timbreCBPath := cfg.CodebookPath
-		if len(cfg.CodebookPath) > 4 && cfg.CodebookPath[len(cfg.CodebookPath)-4:] == ".bin" {
-			timbreCBPath = cfg.CodebookPath[:len(cfg.CodebookPath)-4] + "_timbre.bin"
-		} else {
-			timbreCBPath = cfg.CodebookPath + "_timbre.bin"
-		}
-		if tc, err := LoadTimbreCodebook(timbreCBPath); err == nil && len(tc.Entries) > 0 {
-			timbreCB = tc
-			if cfg.Verbose {
-				fmt.Printf("Loaded timbre codebook: %d entries from %s\n", len(tc.Entries), timbreCBPath)
-			}
-		}
-
-		if cbErr == nil && len(cb.Entries) > 0 {
+	if cfg.CodebookPath != "" && cb != nil && len(cb.Entries) > 0 {
 			targetFp := ComputeFingerprint(target, RenderSampleRate)
 
 			// Dual-codebook search: fingerprint → fullCohort, timbre → timbreCohort
@@ -135,25 +194,21 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				// Evaluate fingerprint matches → fullCohort
 				var fpFits []float64
 				if len(fpMatches) > 0 {
-					fpFits, _ = evaluateBatchParallel(fpMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					fpFits, _ = evaluateBatchParallel(fpMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 					for i, c := range fpMatches {
 						fullCohort.TryInsert(c, fpFits[i])
 					}
-					if cfg.Verbose {
-						fmt.Printf("Fingerprint codebook: evaluated %d candidates\n", len(fpMatches))
-					}
+					logElapsed(cfg, "Fingerprint codebook: evaluated %d candidates\n", len(fpMatches))
 				}
 
 				// Evaluate timbre matches → timbreCohort
 				var timFits []float64
 				if len(timMatches) > 0 {
-					timFits, _ = evaluateBatchParallel(timMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					timFits, _ = evaluateBatchParallel(timMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 					for i, c := range timMatches {
 						timbreCohort.TryInsert(c, timFits[i])
 					}
-					if cfg.Verbose {
-						fmt.Printf("Timbre codebook: evaluated %d candidates\n", len(timMatches))
-					}
+					logElapsed(cfg, "Timbre codebook: evaluated %d candidates\n", len(timMatches))
 				}
 
 				// Build knnMap for GA seeding (union of both codebooks)
@@ -195,7 +250,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 				knnMatches := cb.SearchKNN(targetFp, topK)
 				if len(knnMatches) > 0 {
-					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+					knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 					knnMap = make(map[uint8]*Candidate)
 					knnMapDists = make(map[uint8]float64)
 					bestDistPerAlgo := make(map[uint8]float64)
@@ -224,9 +279,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 			// Early return check if codebook match is exact (dist <= 0.0001)
 			if bestCodebookDist <= 1e-4 {
-				if cfg.Verbose {
-					fmt.Printf("Exact codebook match found in Step 1 (dist=%.6f <= 0.0001). Returning early!\n", bestCodebookDist)
-				}
+				logElapsed(cfg, "Exact codebook match found in Step 1 (dist=%.6f <= 0.0001). Returning early!\n", bestCodebookDist)
 				reportProgress(cfg, 100, "Completed (Exact Codebook Match)")
 				return Result{
 					Best:     bestCodebookCand,
@@ -249,10 +302,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 			if len(unusedEntries) > 0 {
 				codebookPool = NewCodebookPool(unusedEntries)
-				if cfg.Verbose {
-					fmt.Printf("Codebook: %d unused presets available for stagnation injection\n", len(unusedEntries))
-				}
-			}
+				logElapsed(cfg, "Codebook: %d unused presets available for stagnation injection\n", len(unusedEntries))
 		}
 	}
 
@@ -262,14 +312,57 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	reportProgress(cfg, 10, "Step 2: Timbre & NN Prediction")
 
-	// Phase 0: Extract timbre window from target
-	timbreSpec := ExtractTimbreWindow(target, RenderSampleRate)
-	if cfg.Verbose {
-		fmt.Printf("Extracted timbre window: %d bins\n", TimbreSpecBins)
+	// nnCandidates accumulates candidates from formant generation, NN prediction, and classifier
+	var nnCandidates []*Candidate
+
+	// Step 1.5: Formant-based candidate generation (zero-render, pure math)
+	// Extracts target spectral envelope → generates DX7 candidates whose
+	// FM sidebands match the target's formant structure.
+	var formantCandidates []*Candidate
+	{
+		targetFormants := ExtractFormants(target, RenderSampleRate, 4)
+		if len(targetFormants) > 0 && features.F0 > 20 {
+			formantNoteFreq := features.F0
+			if cfg.NoteFreq > 0 {
+				formantNoteFreq = cfg.NoteFreq
+			}
+			formantCandidates = GenerateFormantCandidates(targetFormants, formantNoteFreq, cfg.MIDINote)
+			if cfg.Verbose && len(formantCandidates) > 0 {
+				fmt.Printf("Formant generation: %d candidates from %d formants (%s)\n",
+					len(formantCandidates), len(targetFormants), formantString(targetFormants))
+				for i, fc := range formantCandidates {
+					peaks := PredictSpectralPeaks(fc, formantNoteFreq)
+					dist := FormantDistance(targetFormants, peaks)
+					fmt.Printf("  #%d: algo=%d formant_dist=%.3f peaks=%s\n",
+						i+1, fc.Algorithm+1, dist, formantString(peaks))
+				}
+			}
+		}
 	}
 
+	// Add formant candidates to nnCandidates for GA island seeding
+	if len(formantCandidates) > 0 {
+		if nnCandidates == nil {
+			nnCandidates = make([]*Candidate, 0)
+		}
+		for _, fc := range formantCandidates {
+			fcFits, _ := evaluateBatchParallel([]*Candidate{fc}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
+			fc.Fitness = fcFits[0]
+			nnCandidates = append(nnCandidates, fc)
+		}
+		if cfg.Verbose {
+			fmt.Printf("Formant candidates evaluated: %d added to GA pool\n", len(formantCandidates))
+			for i, fc := range formantCandidates {
+				fmt.Printf("  #%d: algo=%d mel_dist=%.6f\n", i+1, fc.Algorithm+1, fc.Fitness)
+			}
+		}
+	}
+
+	// Phase 0: Extract timbre window from target
+	timbreSpec := ExtractTimbreWindow(target, RenderSampleRate)
+	logElapsed(cfg, "Extracted timbre window: %d bins\n", TimbreSpecBins)
+
 	// Step 2: Try NN prediction if model available
-	var nnCandidates []*Candidate
 	if len(cfg.ModelData) > 0 || cfg.ModelPath != "" {
 		var probePredictor *ProbePredictor
 		var err error
@@ -291,30 +384,14 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 
-			// Load timbre codebook for RawBase attachment
-			var timbreCB *TimbreCodebook
-			if cfg.CodebookPath != "" {
-				timbreCBPath := cfg.CodebookPath
-				if len(cfg.CodebookPath) > 4 && cfg.CodebookPath[len(cfg.CodebookPath)-4:] == ".bin" {
-					timbreCBPath = cfg.CodebookPath[:len(cfg.CodebookPath)-4] + "_timbre.bin"
-				} else {
-					timbreCBPath = cfg.CodebookPath + "_timbre.bin"
-				}
-				if tcb, err := LoadTimbreCodebook(timbreCBPath); err == nil {
-					timbreCB = tcb
-				}
-			}
-
 			// NN predicts params — uses DX7 head if available, else probe+heuristic chain
 			predicted, probeResult := probePredictor.PredictToDirectCandidate(timbreSpec, int(cfg.MIDINote))
 
-			// Attach RawBase from nearest timbre codebook entry
+			// Attach RawBase from nearest codebook entry (reuse already-loaded codebooks)
 			if timbreCB != nil {
 				predicted = AttachNearestRawBaseTimbre(predicted, timbreCB)
-			} else if cfg.CodebookPath != "" {
-				if cb, err := LoadCodebook(cfg.CodebookPath); err == nil {
-					predicted = AttachNearestRawBase(predicted, cb)
-				}
+			} else if cb != nil {
+				predicted = AttachNearestRawBase(predicted, cb)
 			}
 
 			if cfg.Verbose {
@@ -334,12 +411,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				cand.Algorithm = algo
 				if timbreCB != nil {
 					cand = AttachNearestRawBaseTimbre(cand, timbreCB)
-				} else if cfg.CodebookPath != "" {
-					if cb, err := LoadCodebook(cfg.CodebookPath); err == nil {
-						cand = AttachNearestRawBase(cand, cb)
-					}
+				} else if cb != nil {
+					cand = AttachNearestRawBase(cand, cb)
 				}
-				fits, _ := evaluateBatchParallel([]*Candidate{cand}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+				fits, _ := evaluateBatchParallel([]*Candidate{cand}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 				scores = append(scores, algoScore{algo, fits[0], cand})
 			}
 
@@ -351,9 +426,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 			// Early return check if NN prediction is exact (dist <= 0.0001)
 			if scores[0].dist <= 1e-4 {
-				if cfg.Verbose {
-					fmt.Printf("Exact NN prediction found in Step 2 (dist=%.6f <= 0.0001). Returning early!\n", scores[0].dist)
-				}
+				logElapsed(cfg, "Exact NN prediction found in Step 2 (dist=%.6f <= 0.0001). Returning early!\n", scores[0].dist)
 				reportProgress(cfg, 100, "Completed (Exact NN Match)")
 				return Result{
 					Best:     scores[0].cand,
@@ -381,7 +454,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						bestCodebookDist, scores[0].dist)
 				}
 			}
-			globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+			globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
 			refined := globalLiveOpt.Run()
 
 			// Differential Jacobian steering on extended temporal timbre features
@@ -405,9 +478,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 					bestNnDist = diffOpt.bestDist
 				}
 				if bestNnDist <= 1e-4 {
-					if cfg.Verbose {
-						fmt.Printf("Exact match found during NN pre-optimization (dist=%.6f <= 0.0001). Returning early!\n", bestNnDist)
-					}
+					logElapsed(cfg, "Exact match found during NN pre-optimization (dist=%.6f <= 0.0001). Returning early!\n", bestNnDist)
 					reportProgress(cfg, 100, "Completed (Exact NN Match)")
 					return Result{
 						Best:     refined,
@@ -435,29 +506,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		reportProgress(cfg, 35, "Step 2.5: Constructive Beam Search")
 
 		// Build operator cache from codebook if available
-		var beamTimbreCB *TimbreCodebook
-		if cfg.CodebookPath != "" {
-			cb, cbErr := LoadCodebook(cfg.CodebookPath)
-			if cbErr == nil && len(cb.Entries) > 0 {
-				beamCB = cb
-				opCache = BuildOperatorCache(cb)
-				if cfg.Verbose {
-					fmt.Printf("Operator cache built from %d codebook entries\n", len(cb.Entries))
-				}
-			}
-			// Load timbre codebook for Tier 1 peak shape filtering
-			timbreCBPath := cfg.CodebookPath
-			if len(cfg.CodebookPath) > 4 && cfg.CodebookPath[len(cfg.CodebookPath)-4:] == ".bin" {
-				timbreCBPath = cfg.CodebookPath[:len(cfg.CodebookPath)-4] + "_timbre.bin"
-			} else {
-				timbreCBPath = cfg.CodebookPath + "_timbre.bin"
-			}
-			if tcb, err := LoadTimbreCodebook(timbreCBPath); err == nil && len(tcb.Entries) > 0 {
-				beamTimbreCB = tcb
-				if cfg.Verbose {
-					fmt.Printf("Beam search: loaded timbre codebook: %d entries\n", len(tcb.Entries))
-				}
-			}
+		if cb != nil && len(cb.Entries) > 0 {
+			beamCB = cb
+			opCache = BuildOperatorCache(cb)
+			logElapsed(cfg, "Operator cache built from %d codebook entries\n", len(cb.Entries))
 		}
 		if opCache == nil {
 			opCache = BuildOperatorCacheFromWaveformSeeds()
@@ -478,7 +530,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		beamResult = RunConstructiveBeam(
 			ctx,
 			target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur,
-			opCache, beamCB, beamTimbreCB, targetPeakShape, targetCachedSTFT,
+			opCache, beamCB, timbreCB, targetPeakShape, targetCachedSTFT,
 			beamWidth, beamRenders,
 			func(s string) { if cfg.Verbose { fmt.Println(s) } },
 		)
@@ -504,20 +556,10 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	// Step 2.6 — CSPOA: Codebook-Seeded Progressive Operator Attachment (explorative)
 	if cfg.CSPOA.Enabled {
-		// Load codebook for CSPOA if not already loaded by beam search
+		// Reuse codebook from beam search or top-level load
 		cspoaCB := beamCB
-		if cspoaCB == nil && cfg.CodebookPath != "" {
-			cb, cbErr := LoadCodebook(cfg.CodebookPath)
-			if cbErr != nil {
-				if cfg.Verbose {
-					fmt.Printf("[CSPOA] Codebook load error: %v\n", cbErr)
-				}
-			} else if len(cb.Entries) > 0 {
-				cspoaCB = cb
-				if cfg.Verbose {
-					fmt.Printf("CSPOA: loaded fingerprint codebook: %d entries\n", len(cb.Entries))
-				}
-			}
+		if cspoaCB == nil && cb != nil {
+			cspoaCB = cb
 		}
 		// Also build opCache for CSPOA if not available from beam search
 		cspoaCache := opCache
@@ -611,7 +653,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						candParams := candidateToParams53(cand)
 						combinedDist := CombinedDistance(target, candNormed, RenderSampleRate, refParams, candParams)
 						// Also compute full distance for GA seeding
-						fullDist := evaluateSingleCandidate(cand, target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur)
+						fullDist := evaluateSingleCandidate(cand, target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur, cachedTargetMel)
 
 						if nnCandidates == nil {
 							nnCandidates = make([]*Candidate, 0)
@@ -679,13 +721,9 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 
 		// Sort by distance
-		for i := 0; i < len(scored); i++ {
-			for j := i + 1; j < len(scored); j++ {
-				if scored[j].dist < scored[i].dist {
-					scored[i], scored[j] = scored[j], scored[i]
-				}
-			}
-		}
+		sort.Slice(scored, func(i, j int) bool {
+			return scored[i].dist < scored[j].dist
+		})
 
 		best := scored[0].cand
 		bestDist := scored[0].dist
@@ -732,7 +770,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			fmt.Printf("Classifier best seed: algo=%d fullDist=%.6f — running LiveOptimizer\n",
 				initialPatch.Algorithm+1, bestClassifierFullDist)
 		}
-		globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
 		refined := globalLiveOpt.Run()
 		fmt.Printf("Classifier pre-optimization: %.6f -> %.6f\n", bestClassifierFullDist, globalLiveOpt.bestDist)
 
@@ -753,13 +791,9 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 		if refinedDist < bestClassifierFullDist {
 			nnCandidates[bestClassifierNNIdx] = refined
-			if cfg.Verbose {
-				fmt.Printf("Classifier pre-optimization: improved from %.6f to %.6f\n", bestClassifierFullDist, refinedDist)
-			}
+			logElapsed(cfg, "Classifier pre-optimization: improved from %.6f to %.6f\n", bestClassifierFullDist, refinedDist)
 			if refinedDist <= 1e-4 {
-				if cfg.Verbose {
-					fmt.Printf("Exact match found during classifier pre-optimization (dist=%.6f). Returning early!\n", refinedDist)
-				}
+				logElapsed(cfg, "Exact match found during classifier pre-optimization (dist=%.6f). Returning early!\n", refinedDist)
 				reportProgress(cfg, 100, "Completed (Exact Classifier Match)")
 				return Result{
 					Best:     refined,
@@ -790,14 +824,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 		}
-		globalLiveOpt = NewLiveOptimizer(ctx, target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		globalLiveOpt = NewLiveOptimizer(ctx, target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
 		globalLiveOpt.Run()
 		// Insert LiveOptimizer result into elite cohort
 		timbreCohort.TryInsert(globalLiveOpt.bestPatch, globalLiveOpt.bestDist)
 		if globalLiveOpt.bestDist <= 1e-4 {
-			if cfg.Verbose {
-				fmt.Printf("Exact match found during pre-GA profiling (dist=%.6f <= 0.0001). Returning early!\n", globalLiveOpt.bestDist)
-			}
+			logElapsed(cfg, "Exact match found during pre-GA profiling (dist=%.6f <= 0.0001). Returning early!\n", globalLiveOpt.bestDist)
 			reportProgress(cfg, 100, "Completed (Exact Pre-GA Match)")
 			return Result{
 				Best:     globalLiveOpt.bestPatch,
@@ -849,6 +881,16 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	cfg.GA.Population = popSize
 
 	candidatesPerIsland := popSize / 32
+
+	// Trajectory LFO stats: persists across generations for Z-score normalization
+	var lfoStats *LFONormStats
+	if cfg.Encoder != nil && cfg.TargetTrajectory != nil {
+		alpha := cfg.TrajectoryConfig.LFONormAlpha
+		if alpha == 0 {
+			alpha = 0.01
+		}
+		lfoStats = NewLFONormStats(alpha)
+	}
 
 	// Seed 32 Algorithm Islands
 	islands := make([][]*Candidate, 32)
@@ -916,7 +958,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	}
 
 	// Multi-core parallel evaluation of initial population across all CPU cores
-	initialFits, initialFeats := evaluateBatchParallel(allInitialCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+	initialFits, initialFeats := evaluateBatchParallel(allInitialCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 	totalEvals += len(allInitialCandidates)
 
 	// Distribute initial fitnesses back to islands
@@ -948,9 +990,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	}
 
 	// --- PHASE 1: Niche Island Evolution (Generations 0 to 20) ---
-	if cfg.Verbose {
-		fmt.Printf("--- Phase 1: Niche Island Evolution (%d generations across 32 algorithms) ---\n", nicheGenerations)
-	}
+	logElapsed(cfg, "--- Phase 1: Niche Island Evolution (%d generations across 32 algorithms) ---\n", nicheGenerations)
 
 	gaStartTime := time.Now()
 
@@ -986,7 +1026,7 @@ nicheLoop:
 			}
 		}
 
-		genFits, genFeats := evaluateBatchParallel(allGenCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		genFits, genFeats := evaluateBatchParallel(allGenCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 		totalEvals += len(allGenCandidates)
 
 		// Update each island's GA state
@@ -1019,7 +1059,7 @@ nicheLoop:
 		// Early termination: check if any island found exact match
 		if checkExactMatch(islandGAs) {
 			if cfg.Verbose {
-				fmt.Printf("[niche gen %d/%d] EXACT MATCH FOUND — skipping remaining generations\n",
+				fmt.Printf("[%dms] [niche gen %d/%d] EXACT MATCH FOUND — skipping remaining generations\n", logMs(),
 					gen+1, nicheGenerations)
 			}
 			break nicheLoop
@@ -1027,9 +1067,7 @@ nicheLoop:
 	}
 
 	// --- PHASE 2: Global Migration & Fine-Tuning ---
-	if cfg.Verbose {
-		fmt.Printf("--- Phase 2: Global Convergence (%d generations) ---\n", cfg.GA.Generations-nicheGenerations)
-	}
+	logElapsed(cfg, "--- Phase 2: Global Convergence (%d generations) ---\n", cfg.GA.Generations-nicheGenerations)
 
 	// Collect top candidates from all islands into global population pool
 	globalSeed := make([]*Candidate, 0, popSize)
@@ -1057,7 +1095,7 @@ nicheLoop:
 		miniGABest := RunOperatorMiniGA(ctx, globalSeed, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, 10, 32, cfg.Verbose)
 		if miniGABest != nil && miniGABest.Fitness < globalBestFit {
 			if cfg.Verbose {
-				fmt.Printf("[Phase 1->2 Transition] Operator Mini-GA created hybrid candidate: dist=%.6f (improved from %.6f)\n",
+				fmt.Printf("[%dms] [Phase 1->2 Transition] Operator Mini-GA created hybrid candidate: dist=%.6f (improved from %.6f)\n", logMs(),
 					miniGABest.Fitness, globalBestFit)
 			}
 			// Find the slot with the worst fitness to replace (preserving diversity)
@@ -1092,8 +1130,14 @@ nicheLoop:
 	var boostGens int // generations to boost mutation rate after injection
 	maxInject := 8
 	prevBestFit := math.MaxFloat64
+	trajectoryEnabled := true
 	convergeGens := 0
-	convergeThreshold := 0.001 // 0.1% relative improvement threshold
+	convergeThreshold := 0.001 // absolute improvement threshold (not relative)
+	convergePatience := 5      // generations with no improvement before stopping
+	convergeMinGens := 20      // don't converge before this many global generations
+	settleActive := false      // true when in settle phase
+	settleGens := 0            // generations since settle started
+	settlePatience := 5        // settle phase patience
 
 	gaLoop:
 	for gen := nicheGenerations; gen < cfg.GA.Generations; gen++ {
@@ -1101,7 +1145,7 @@ nicheLoop:
 		select {
 		case <-ctx.Done():
 			if cfg.Verbose {
-				fmt.Printf("[global gen %d/%d] CANCELLED (%.1fs elapsed) — stopping early\n",
+				fmt.Printf("[%dms] [global gen %d/%d] CANCELLED (%.1fs elapsed) — stopping early\n", logMs(),
 					gen+1, cfg.GA.Generations, time.Since(gaStartTime).Seconds())
 			}
 			break gaLoop
@@ -1125,16 +1169,52 @@ nicheLoop:
 		if len(pendingMutants) > 0 {
 			replaceWeakestSorted(nextCandidates, globalGA.currentFit, pendingMutants, len(globalGA.eliteCandidates))
 			if cfg.Verbose {
-				fmt.Printf("[global gen %d/%d] injected %d codebook mutants\n",
+				fmt.Printf("[%dms] [global gen %d/%d] injected %d codebook mutants\n", logMs(),
 					gen+1, cfg.GA.Generations, len(pendingMutants))
 			}
 			pendingMutants = nil
 		}
 
-		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
 		totalEvals += len(nextCandidates)
 
+		// Stage 2: Trajectory refinement — score best candidate once.
+		// If trajectory never improves the candidate, disable for the rest of the run.
+		if cfg.Encoder != nil && cfg.TargetTrajectory != nil && trajectoryEnabled {
+			alpha := blendAlpha(gen, cfg.GA.Generations, cfg.TrajectoryAlphaStart, cfg.TrajectoryAlphaEnd)
+
+			bestIdx := argminFloat64(nextFitnesses)
+			oldFit := nextFitnesses[bestIdx]
+			candAudio := RenderCandidate(nextCandidates[bestIdx], cfg.MIDINote, cfg.RenderDur)
+			candNorm := NormalizeRMS(TrimOrPad(candAudio, len(target)))
+			candTraj := ExtractTrajectory(cfg.Encoder, candNorm)
+
+			if candTraj != nil {
+				trajDist := TrajectoryDistance(cfg.TargetTrajectory, candTraj,
+					cfg.TrajectoryConfig, cfg.TargetLFOSpectrum, lfoStats)
+				blended := (1-alpha)*oldFit + alpha*trajDist
+
+				if cfg.Verbose {
+					fmt.Printf("[%dms] [trajectory] gen %d: α=%.2f mel=%.6f traj=%.6f blended=%.6f\n",
+						logMs(), gen+1, alpha, oldFit, trajDist, blended)
+				}
+
+				if blended < oldFit {
+					nextFitnesses[bestIdx] = blended
+				} else {
+					// Trajectory made things worse — disable for the rest of the run
+					trajectoryEnabled = false
+					if cfg.Verbose {
+						fmt.Printf("[%dms] [trajectory] disabled (blended %.6f > mel %.6f)\n", logMs(), blended, oldFit)
+					}
+				}
+			}
+		}
+
 		// Immediate 1D Line Search Exploitation
+		// Collect all line search candidates first, then evaluate in one batch
+		var lineIndices []int       // which nextCandidates to potentially replace
+		var lineCandSets [][]*Candidate // 2 candidates per line index
 		for i := 0; i < len(nextCandidates); i++ {
 			record := globalGA.mutations[i]
 			if record.ParentIdx == -1 || record.ParamIdx == -1 {
@@ -1150,13 +1230,28 @@ nicheLoop:
 					applyStep(c, record.ParamIdx, step)
 					lineCands[s] = c
 				}
-				lineFits, lineFeats := evaluateBatchParallel(lineCands, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-				totalEvals += len(lineCands)
+				lineIndices = append(lineIndices, i)
+				lineCandSets = append(lineCandSets, lineCands)
+			}
+		}
+
+		if len(lineIndices) > 0 {
+			// Flatten into one batch for a single evaluateBatchParallel call
+			allLineCands := make([]*Candidate, 0, len(lineIndices)*2)
+			for _, cands := range lineCandSets {
+				allLineCands = append(allLineCands, cands...)
+			}
+			lineFits, lineFeats := evaluateBatchParallel(allLineCands, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, cachedTargetMel)
+			totalEvals += len(allLineCands)
+
+			// Apply improvements
+			for li, idx := range lineIndices {
+				base := li * 2
 				for s := 0; s < 2; s++ {
-					if lineFits[s] < nextFitnesses[i] {
-						nextCandidates[i] = lineCands[s]
-						nextFitnesses[i] = lineFits[s]
-						nextFeatures[i] = lineFeats[s]
+					if lineFits[base+s] < nextFitnesses[idx] {
+						nextCandidates[idx] = allLineCands[base+s]
+						nextFitnesses[idx] = lineFits[base+s]
+						nextFeatures[idx] = lineFeats[base+s]
 					}
 				}
 			}
@@ -1175,7 +1270,7 @@ nicheLoop:
 			stagnationTracker.Reset()
 			boostGens = 2 // boost mutation rate for 2 generations
 			if cfg.Verbose {
-				fmt.Printf("[global gen %d/%d] STAGNATION detected (best=%.6f plateaued for %d gens), queuing %d codebook mutants (%d remaining), mut boosted to 0.7 for 2 gens\n",
+				fmt.Printf("[%dms] [global gen %d/%d] STAGNATION detected (best=%.6f plateaued for %d gens), queuing %d codebook mutants (%d remaining), mut boosted to 0.7 for 2 gens\n", logMs(),
 					gen+1, cfg.GA.Generations, globalGA.BestFitness(), stagnationTracker.PatienceThreshold, len(pendingMutants), codebookPool.Remaining())
 			}
 		}
@@ -1188,31 +1283,53 @@ nicheLoop:
 		// Early termination: exact match found
 		if globalGA.bestEverFit <= 1e-4 {
 			if cfg.Verbose {
-				fmt.Printf("[global gen %d/%d] EXACT MATCH FOUND (dist=%.6f <= 0.0001) — stopping early\n",
+				fmt.Printf("[%dms] [global gen %d/%d] EXACT MATCH FOUND (dist=%.6f <= 0.0001) — stopping early\n", logMs(),
 					gen+1, cfg.GA.Generations, globalGA.bestEverFit)
 			}
 			break
 		}
 
-		// Early termination: convergence — improvement too small over 10 generations
+		// Early termination: convergence — improvement too small
 		bestFit := globalGA.BestFitness()
-		if bestFit < prevBestFit {
-			improvement := (prevBestFit - bestFit) / math.Max(prevBestFit, 1e-10)
-			if improvement < convergeThreshold {
-				convergeGens++
-			} else {
-				convergeGens = 0
-			}
-		} else {
+		improvement := prevBestFit - bestFit
+		if improvement < convergeThreshold {
 			convergeGens++
+		} else {
+			convergeGens = 0
 		}
 		prevBestFit = bestFit
-		if convergeGens >= 10 {
+
+		if convergeGens >= convergePatience && gen >= convergeMinGens {
+			if !settleActive {
+				// Settle phase: run a few quiet generations to confirm convergence.
+				// No injection — if the GA has stagnated, it's found its valley.
+				settleActive = true
+				settleGens = 0
+				convergeGens = 0
+				if cfg.Verbose {
+					fmt.Printf("[%dms] [global gen %d/%d] SETTLE: confirmed stagnation at %.6f, running %d quiet gens\n", logMs(),
+						gen+1, cfg.GA.Generations, bestFit, settlePatience)
+				}
+				continue
+			}
+
+			// Settle phase also converged — stop
 			if cfg.Verbose {
-				fmt.Printf("[global gen %d/%d] CONVERGED (best=%.6f, improvement < %.1f%% over %d gens) — stopping early\n",
-					gen+1, cfg.GA.Generations, bestFit, convergeThreshold*100, convergeGens)
+				fmt.Printf("[%dms] [global gen %d/%d] CONVERGED (best=%.6f, settle confirmed) — stopping early\n", logMs(),
+					gen+1, cfg.GA.Generations, bestFit)
 			}
 			break
+		}
+
+		if settleActive {
+			settleGens++
+			if settleGens >= settlePatience {
+				if cfg.Verbose {
+					fmt.Printf("[%dms] [global gen %d/%d] SETTLE done (best=%.6f after %d quiet gens)\n", logMs(),
+						gen+1, cfg.GA.Generations, bestFit, settleGens)
+				}
+				break
+			}
 		}
 	}
 
@@ -1224,7 +1341,7 @@ nicheLoop:
 
 	best := globalGA.Best()
 	gaBestDist := globalGA.BestFitness()
-	liveOpt := NewLiveOptimizer(ctx, target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+	liveOpt := NewLiveOptimizer(ctx, target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
 	finalPatch := liveOpt.Run()
 	finalDist := liveOpt.bestDist
 
@@ -1237,7 +1354,7 @@ nicheLoop:
 	}
 
 	if cfg.Verbose {
-		fmt.Printf("Phase 3 final distance: %.6f (GA was: %.6f, LiveOpt was: %.6f, DiffOpt was: %.6f)\n",
+		fmt.Printf("[%dms] Phase 3 final distance: %.6f (GA was: %.6f, LiveOpt was: %.6f, DiffOpt was: %.6f)\n", logMs(),
 			finalDist, gaBestDist, liveOpt.bestDist, diffOpt.bestDist)
 	}
 
@@ -1247,21 +1364,133 @@ nicheLoop:
 		best.Fitness = finalDist
 	}
 
-	topN := globalGA.TopN(32)
-	// Ensure best is in topN and deduplicated
-	bestSig := string(best.Encode())
-	found := false
-	for _, c := range topN {
-		if string(c.Encode()) == bestSig {
-			found = true
-			break
+	// Step 3.5: Formant-constrained refinement (experimental)
+	// Refine top candidates on formant distance while keeping mel within 10%.
+	var formantTop5 []*Candidate
+	{
+		targetFormants := ExtractFormants(target, RenderSampleRate, 4)
+		if len(targetFormants) > 0 {
+			noteFreq := 440.0 * math.Pow(2, float64(cfg.MIDINote-69)/12.0)
+
+			// Collect candidates to refine: best + island bests
+			refineSources := []*Candidate{best}
+			for algo := 0; algo < 32; algo++ {
+				if islandGAs[algo] != nil {
+					ib := islandGAs[algo].Best()
+					if ib != nil {
+						refineSources = append(refineSources, ib)
+					}
+				}
+			}
+
+			// Refine each, collect results
+			type formantResult struct {
+				cand         *Candidate
+				formantDist  float64
+				melDist      float64
+			}
+			var results []formantResult
+			seenFormant := make(map[string]bool)
+
+			for _, src := range refineSources {
+				sig := string(src.Encode())
+				if seenFormant[sig] {
+					continue
+				}
+				seenFormant[sig] = true
+
+				refined, fDist := FormantRefine(
+					src, targetFormants,
+					noteFreq, cfg.MIDINote, cfg.RenderDur,
+					target, rawTargetRMS, cachedTargetMel,
+					src.Fitness, 0.10, 5, false,
+				)
+				// Check mel distance
+				refAudio := RenderCandidate(refined, cfg.MIDINote, cfg.RenderDur)
+				refNorm := NormalizeRMS(TrimOrPad(refAudio, len(target)))
+				mDist := MelCosineDistanceCached(cachedTargetMel, refNorm, RenderSampleRate)
+
+				// Only keep if mel didn't blow up
+				if mDist <= src.Fitness*1.10 {
+					results = append(results, formantResult{refined, fDist, mDist})
+				}
+			}
+
+			// Sort by formant distance, take top 5
+			for i := 0; i < len(results); i++ {
+				for j := i + 1; j < len(results); j++ {
+					if results[j].formantDist < results[i].formantDist {
+						results[i], results[j] = results[j], results[i]
+					}
+				}
+			}
+			for i := 0; i < 5 && i < len(results); i++ {
+				formantTop5 = append(formantTop5, results[i].cand)
+			}
+
+			// Also update best if the top formant result beat it
+			if len(results) > 0 && results[0].melDist < best.Fitness {
+				best = results[0].cand
+				best.Fitness = results[0].melDist
+			}
+
+			if cfg.Verbose {
+				fmt.Printf("[%dms] Formant refine: %d candidates refined, %d kept (mel ≤ 110%%)\n",
+					logMs(), len(refineSources), len(results))
+				for i, r := range results {
+					if i < 5 {
+						fmt.Printf("  #%d: formant=%.6f mel=%.6f algo=%d\n",
+							i+1, r.formantDist, r.melDist, r.cand.Algorithm+1)
+					}
+				}
+			}
 		}
 	}
-	if !found {
-		topN = append([]*Candidate{best}, topN...)
-		if len(topN) > 32 {
-			topN = topN[:32]
+
+	// Build diverse top-32 from multiple sources (not just converged GA population)
+	// This prevents the export from being 32 near-identical patches.
+	seen := make(map[string]bool)
+	var topN []*Candidate
+
+	addUnique := func(c *Candidate) {
+		sig := string(c.Encode())
+		if !seen[sig] {
+			seen[sig] = true
+			topN = append(topN, c)
 		}
+	}
+
+	// 1. Best overall candidate
+	addUnique(best)
+
+	// 2. Best from each algorithm island (32 diverse candidates)
+	for algo := 0; algo < 32; algo++ {
+		if islandGAs[algo] != nil {
+			islandBest := islandGAs[algo].Best()
+			if islandBest != nil {
+				addUnique(islandBest)
+			}
+		}
+	}
+
+	// 3. Formant candidates
+	for _, fc := range formantCandidates {
+		addUnique(fc)
+	}
+
+	// 4. NN candidates
+	for _, nc := range nnCandidates {
+		addUnique(nc)
+	}
+
+	// 5. GA global top-N to fill remaining slots
+	for _, c := range globalGA.TopN(32) {
+		addUnique(c)
+	}
+
+	// Take at most 32
+	if len(topN) > 32 {
+		topN = topN[:32]
 	}
 
 	// Insert GA TopN into elite timbre cohort
@@ -1279,9 +1508,7 @@ nicheLoop:
 	// Step 7-8: Elite Cohort → Full Top Selection
 	// Render timbre cohort candidates (skip those already in fullCohort), evaluate with temporal distance
 	// -------------------------------------------------------------------------
-	if cfg.Verbose {
-		fmt.Printf("Elite timbre cohort: %d candidates\n", timbreCohort.Len())
-	}
+	logElapsed(cfg, "Elite timbre cohort: %d candidates\n", timbreCohort.Len())
 
 	targetSpec := ExtractTemporalTimbreSpec(target, RenderSampleRate)
 	for _, entry := range timbreCohort.entries {
@@ -1304,9 +1531,7 @@ nicheLoop:
 		fullCohort.TryInsert(entry.cand, dist)
 	}
 
-	if cfg.Verbose {
-		fmt.Printf("Elite full cohort: %d candidates\n", fullCohort.Len())
-	}
+	logElapsed(cfg, "Elite full cohort: %d candidates\n", fullCohort.Len())
 
 	timbralTop5 := timbreCohort.Candidates()
 	fullTop5 := fullCohort.Candidates()
@@ -1327,6 +1552,7 @@ nicheLoop:
 		TimbralTop5: timbralTop5,
 		FullTop5:    fullTop5,
 		Favorites:   favorites,
+		FormantTop5: formantTop5,
 	}
 }
 
@@ -1388,7 +1614,7 @@ func applyStep(c *Candidate, which int, step int8) {
 }
 
 // evaluateBatchParallel evaluates candidates concurrently across CPU cores using a multi-threaded worker pool.
-func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8, dur time.Duration, rawTargetRMS float64) ([]float64, []TargetFeatures) {
+func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8, dur time.Duration, rawTargetRMS float64, targetMel *PrecomputedTargetMel) ([]float64, []TargetFeatures) {
 	n := len(candidates)
 	results := make([]float64, n)
 	features := make([]TargetFeatures, n)
@@ -1412,11 +1638,10 @@ func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8
 			for idx := range taskChan {
 				candAudio := RenderCandidate(candidates[idx], note, dur)
 				trimmed := TrimOrPad(candAudio, len(target))
-				rawCandRMS := CalcRMS(trimmed)
-				candidate := NormalizeRMS(trimmed)
+				rawCandRMS, candidate := CalcRMSAndNormalize(0.1, trimmed)
 				var dist float64
-				if cachedTargetMel != nil {
-					dist = MelCosineDistanceCached(cachedTargetMel, candidate, RenderSampleRate)
+				if targetMel != nil {
+					dist = MelCosineDistanceCached(targetMel, candidate, RenderSampleRate)
 				} else {
 					dist = MelCosineDistance(target, candidate, RenderSampleRate)
 				}

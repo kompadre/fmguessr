@@ -169,6 +169,12 @@ func CalcRMS(samples []float64) float64 {
 // This preserves relative dynamic range better than peak normalization
 // for loud samples with sharp transients.
 func NormalizeRMS(samples []float64) []float64 {
+	return NormalizeRMSTo(0.1, samples)
+}
+
+// NormalizeRMSTo computes RMS and scales samples to the target RMS in a single pass.
+// Returns the original slice unchanged if RMS is near zero.
+func NormalizeRMSTo(targetRMS float64, samples []float64) []float64 {
 	sum := 0.0
 	for _, v := range samples {
 		sum += v * v
@@ -178,9 +184,28 @@ func NormalizeRMS(samples []float64) []float64 {
 		return samples
 	}
 	out := make([]float64, len(samples))
-	scale := 0.1 / rms
+	scale := targetRMS / rms
 	for i, v := range samples {
 		out[i] = v * scale
 	}
 	return out
+}
+
+// CalcRMSAndNormalize computes raw RMS and returns normalized samples in a single pass.
+// This avoids iterating the samples twice when both raw RMS and normalized audio are needed.
+func CalcRMSAndNormalize(targetRMS float64, samples []float64) (float64, []float64) {
+	sum := 0.0
+	for _, v := range samples {
+		sum += v * v
+	}
+	rawRMS := math.Sqrt(sum / float64(len(samples)))
+	if rawRMS < 1e-10 {
+		return 0, samples
+	}
+	out := make([]float64, len(samples))
+	scale := targetRMS / rawRMS
+	for i, v := range samples {
+		out[i] = v * scale
+	}
+	return rawRMS, out
 }

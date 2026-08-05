@@ -1,64 +1,62 @@
 # AGENTS.md
 
-## Execution Rules
-- **No Micro-Read Loops:** Read entire functions in one pass. Never creep offsets.
-- **Fail Fast:** If Edit fails twice consecutively, STOP and explain the issue.
-- **Whole-Function Replacements:** Prefer replacing entire functions over search-and-replace.
-- **Verify with Diagnostics:** Use `go vet`, `go test`, not manual line inspection.
-- **Commit on Completion:** Once a task is complete and verified (build + tests pass), commit changes immediately with a descriptive message. This preserves a clear history of what changed and why.
+## Rules
+- Read enough context before editing. Don't creep offsets line-by-line.
+- If Edit fails twice, stop and explain the issue.
+- Verify with `go build ./...`, `go vet ./...`, `go test` — not manual inspection.
+- When the user says a bug is recurring or similar to a past fix, offer a regression test first. Tag with `//go:build regression`.
+- Do not commit unless the user explicitly asks. Batch changes until told to commit.
+- Never call `LoadCodebook()` or `LoadTimbreCodebook()` directly — use `loadCodebooksOnce()` in `matcher.go`.
+- Wrap errors: `fmt.Errorf("context: %w", err)`.
+- Match existing code style in each file. Don't introduce conventions that conflict with neighbors.
 
-## Code Style
-- Zero-allocation hot paths (DSP, audio buffers). Reuse slices.
-- Wrap errors with context: `fmt.Errorf("context: %w", err)`.
-- Consistent naming — match existing patterns in the file.
+## Commands
 
-## Repository Overview
-`fmguessr` is a 6-operator FM synthesizer patch generator using genetic algorithms, NN prediction, and live hill-climbing to match target audio WAV files and generate DX7 `.syx` bank files.
+```bash
+make                    # Build all binaries
+make test               # Unit + E2E tests
+make test-smoke         # Fast e2e smoke tests (no external fixtures)
+make test-regression    # Regression tests (requires -tags regression)
+go test -v ./pkg/match/...           # Unit tests only
+go test -v -tags regression ./tests/...  # Regression tests only
+go test -race ./pkg/match/...        # Race detector
+```
 
-## Developer Commands
-- **Build:** `make` | **Test:** `make test`
-- **Index:** `./index Dexed_01.syx`
-- **Match:** `GOMAXPROCS=16 ./match -d 1s -generations 30 -population 128 -syx result.syx -v target.wav`
-- **Match with NN:** `./match -model model.onnx -v target.wav`
-- **Classifier-only:** `./match --classifier patch_classifier.onnx --classifier-only -v target.wav -syx result.syx`
-- **Play:** `./play result.syx 0 C3 -o test.wav`
-- **Train probe predictor:** `python scripts/generate_dataset.py --codebook dx7_codebook.bin && python scripts/train_model.py --dataset dataset.npz --output model.onnx`
-- **Train patch classifier:** `./classifier --codebook dx7_codebook.bin --output dataset_cls.bin --dur 3s && python scripts/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx`
-- **Debug classifier:** `./classifier --codebook dx7_codebook.bin --dump-wav test.wav --dump-patch 0 --dur 3s`
+## Architecture
 
-## Architecture Facts
+`fmguessr` matches DX7 FM patches to target audio via genetic algorithms.
 
-### 1. DX7 SysEx & Template Preservation
-- 128-byte voice patch: Op6 first (bytes 0–16), Op1 last (bytes 85–101).
-- `Candidate.RawBase` stores full original patch. `Encode()` overlays tuned params, preserving LFO/PitchEnv/Scaling.
+**Pipeline:** Codebook KNN → Formant candidates → NN prediction → Classifier → GA (32-island niche → global convergence → settle → hill-climbing → formant refinement)
 
-### 2. MSFA Engine Concurrency
-- Per-instance `channel_outputs_` buffers. `evaluateBatchParallel` spawns `GOMAXPROCS` workers.
-- Must evaluate via `RenderCandidate` (applies ResoFilter + clipping).
-- LFO/PitchEnv state must be instance members, reset in `reset()`/`init()`.
-
-### 3. Timbre Extraction
-- `timbre.go`: skips 80ms attack, finds 300ms min-flux window, temporal median STFT → 256-bin spectrum.
-- `SpectralDistance`: weights frames by target RMS ratio to prevent silence swamping.
-
-### 4. 32-Island GA & LiveOptimizer
-- 32 algorithm islands for niche evolution → global convergence → parallel LiveOptimizer hill-climbing.
-- LiveOptimizer: acceleration trough cacher, per-operator isolation, topological algorithm jumps.
-- Early termination at distance < 10⁻⁶. Stagnation recovery via codebook mutants.
-
-### 5. CNN Patch Classifier (Mel Spectrogram)
-- **Architecture:** Conv2d 1→32→64→128→256 (BN+pool) → AdaptiveAvgPool(4×4) → FC 4096→512→128 → dual heads (MIDI 37 + patch N).
-- **Input:** 128×128 mel spectrogram (`ComputeMelSpectrogram` in `spectrogram.go`). n_fft=2048, hop=512, f_min=20Hz, f_max=8kHz.
-- **Training:** `./classifier --dur 3s` → `dataset_cls.bin` → `train_classifier.py` → ONNX with embedded patch bytes.
-- **Inference:** `PatchClassifier` in `patch_classifier.go` loads ONNX, takes 16384-dim mel input, returns top-K patches.
-- **Why mel over 784-dim:** Old features collapsed temporal modulation via median STFT. CNN on mel preserves LFO vibrato/tremolo patterns.
-- **Render duration:** Must use `--dur 3s` to capture full LFO cycles.
-
-### 6. Duration Capping & Server
+**Key constraints:**
+- DX7 patch: 128 bytes, Op6 first. `Encode()` overlays tuned params onto `RawBase`, preserving LFO/PitchEnv/Scaling.
+- `RenderCandidate` creates a fresh MSFA synth per call. `evaluateBatchParallel` uses `GOMAXPROCS` workers.
+- `Candidate.Fitness = math.MaxFloat64` means unevaluated (zero-value = false perfect match).
+- `microMutate`/`envelopeMutate` must receive `rng` (constant seed kills diversity).
+- `cachedTargetMel` is local to `Run()`, passed to `evaluateBatchParallel` — never global.
 - Render duration capped at 3.0s. Target WAV truncated on load.
-- REST API: single-worker queue, bounded (5 jobs), 800KB upload limit, CORS-enabled exports.
+- REST API: single-worker queue, 5 jobs max, 800KB upload limit.
 
-## GA Invariants
-- `Candidate.Fitness` = `math.MaxFloat64` for unevaluated (zero-value = false perfect match).
-- `microMutate`/`envelopeMutate` must receive `rng` parameter (constant seed kills diversity).
-- `replaceWeakestSorted` must copy fitnesses slice internally.
+**Distance metrics:**
+- Primary: `MelCosineDistanceCached` — cosine on 128×128 mel spectrogram (16384-dim).
+- Formant: spectral envelope peak matching (greedy nearest-neighbor, freq+amp). Used for candidate generation and post-GA refinement.
+- Trajectory: dormant — infrastructure exists but auto-disables (scale mismatch with mel).
+
+**Formant synthesis:**
+- `ExtractFormants`: cepstral envelope + peak-picking → F1/F2/F3/F4 in Hz.
+- `PredictSpectralPeaks`: Bessel function FM sideband prediction from DX7 patch params.
+- `GenerateFormantCandidates`: maps target formants to DX7 operator ratios.
+- `FormantRefine`: constrained optimization — minimizes formant distance while keeping mel ≤ 110%.
+- Probe endpoint returns `F1Hz`, `F2Hz`, `F3Hz`.
+
+**GA convergence:**
+- Absolute threshold (0.001), 5-gen patience, min 20 global gens.
+- Settle phase: 5 quiet generations to confirm convergence (no injection).
+- Line search: batched into single `evaluateBatchParallel` call.
+- Top-32 export: diverse assembly from island bests + formant + NN + GA.
+
+**Caching:**
+- Mel filterbank: `getMelFilterbank()` via `sync.Once`.
+- Hann windows: `getHannWindow()` via `sync.Map`.
+- Elite signatures: `EliteCohort.TryInsert` caches `Encode()` results.
+- Session files: `exports/sessions/<hash>.bin`, atomic write, pruned after 1h.

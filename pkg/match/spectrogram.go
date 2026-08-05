@@ -3,6 +3,7 @@ package match
 import (
 	"math"
 	"math/cmplx"
+	"sync"
 
 	"github.com/madelynnblue/go-dsp/fft"
 	"github.com/madelynnblue/go-dsp/window"
@@ -17,6 +18,36 @@ const (
 	melSpecFMax     = 8000.0
 )
 
+var (
+	cachedMelFilterbank   [][]float64
+	cachedMelFilterbankSR int
+	cachedMelFilterbankMu sync.Once
+)
+
+func getMelFilterbank(sampleRate int) [][]float64 {
+	cachedMelFilterbankMu.Do(func() {
+		cachedMelFilterbank = buildMelFilterbank(melSpecSize, melSpecNFFT, sampleRate)
+		cachedMelFilterbankSR = sampleRate
+	})
+	if cachedMelFilterbankSR == sampleRate {
+		return cachedMelFilterbank
+	}
+	// Different sample rate — rebuild (rare path)
+	return buildMelFilterbank(melSpecSize, melSpecNFFT, sampleRate)
+}
+
+// hannCache caches Hann windows for common FFT sizes to avoid repeated allocation.
+var hannCache sync.Map // map[int][]float64
+
+func getHannWindow(n int) []float64 {
+	if v, ok := hannCache.Load(n); ok {
+		return v.([]float64)
+	}
+	w := window.Hann(n)
+	hannCache.Store(n, w)
+	return w
+}
+
 // ComputeMelSpectrogram extracts a 128×128 mel spectrogram from PCM audio.
 // The output is normalized to [0, 1] and matches the Python training pipeline exactly.
 func ComputeMelSpectrogram(samples []float64, sampleRate int) [melSpecSize][melSpecSize]float64 {
@@ -30,8 +61,8 @@ func ComputeMelSpectrogram(samples []float64, sampleRate int) [melSpecSize][melS
 		samples = samples[:nSamples]
 	}
 
-	// Build mel filterbank
-	filterbank := buildMelFilterbank(melSpecSize, melSpecNFFT, sampleRate)
+	// Build mel filterbank (cached)
+	filterbank := getMelFilterbank(sampleRate)
 
 	// Compute STFT frames
 	nFrames := (len(samples) - melSpecNFFT) / melSpecNHop + 1
@@ -39,7 +70,7 @@ func ComputeMelSpectrogram(samples []float64, sampleRate int) [melSpecSize][melS
 		nFrames = 1
 	}
 
-	win := window.Hann(melSpecNFFT)
+	win := getHannWindow(melSpecNFFT)
 	spec := make([]float64, melSpecSize*nFrames)
 
 	for i := 0; i < nFrames; i++ {

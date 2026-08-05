@@ -155,14 +155,14 @@ func prepareCandidate(bc *beamCandidate, algo uint8, newOpIdx int, params OpPara
 }
 
 // evaluateSingleCandidate renders one candidate and returns its spectral distance.
-func evaluateSingleCandidate(c *Candidate, target []float64, targetRMS float64, note uint8, dur time.Duration) float64 {
+func evaluateSingleCandidate(c *Candidate, target []float64, targetRMS float64, note uint8, dur time.Duration, targetMel *PrecomputedTargetMel) float64 {
 	audio := RenderCandidate(c, note, dur)
 	trimmed := TrimOrPad(audio, len(target))
 	rawRMS := CalcRMS(trimmed)
 	normed := NormalizeRMS(trimmed)
 	var dist float64
-	if cachedTargetMel != nil {
-		dist = MelCosineDistanceCached(cachedTargetMel, normed, RenderSampleRate)
+	if targetMel != nil {
+		dist = MelCosineDistanceCached(targetMel, normed, RenderSampleRate)
 	} else {
 		dist = MelCosineDistance(target, normed, RenderSampleRate)
 	}
@@ -180,7 +180,7 @@ func evaluateBatch(candidates []*Candidate, target []float64, targetRMS float64,
 	}
 
 	// Use the existing parallel infrastructure
-	dists, _ := evaluateBatchParallel(candidates, target, note, dur, targetRMS)
+	dists, _ := evaluateBatchParallel(candidates, target, note, dur, targetRMS, nil)
 	return dists
 }
 

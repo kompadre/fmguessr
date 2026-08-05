@@ -5,7 +5,6 @@ import (
 	"math/cmplx"
 
 	"github.com/madelynnblue/go-dsp/fft"
-	"github.com/madelynnblue/go-dsp/window"
 )
 
 const (
@@ -416,7 +415,7 @@ func stftMagnitude(samples []float64, winSize, hopSize int) [][]float64 {
 	}
 	halfWindow := winSize/2 + 1
 
-	win := window.Hann(winSize)
+	win := getHannWindow(winSize)
 	mags := make([][]float64, nFrames)
 
 	for i := 0; i < nFrames; i++ {

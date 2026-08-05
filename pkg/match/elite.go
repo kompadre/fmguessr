@@ -13,6 +13,7 @@ type EliteCohort struct {
 type EliteEntry struct {
 	cand     *Candidate
 	distance float64
+	sig      string // cached Encode() signature for dedup
 }
 
 // NewEliteCohort creates an empty cohort with the given maximum capacity.
@@ -33,7 +34,7 @@ func (ec *EliteCohort) TryInsert(c *Candidate, dist float64) bool {
 
 	// Check for duplicates
 	for _, e := range ec.entries {
-		if string(e.cand.Encode()) == sig {
+		if e.sig == sig {
 			return false
 		}
 	}
@@ -55,7 +56,7 @@ func (ec *EliteCohort) TryInsert(c *Candidate, dist float64) bool {
 	// Insert at position
 	ec.entries = append(ec.entries, EliteEntry{})
 	copy(ec.entries[pos+1:], ec.entries[pos:])
-	ec.entries[pos] = EliteEntry{cand: c.Copy(), distance: dist}
+	ec.entries[pos] = EliteEntry{cand: c.Copy(), distance: dist, sig: sig}
 
 	// Truncate to maxLen
 	if len(ec.entries) > ec.maxLen {

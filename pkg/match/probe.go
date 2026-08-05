@@ -48,6 +48,11 @@ type ProbeResult struct {
 	Harmonicity        float64 `json:"harmonicity"`
 	SpectralCentroidHz float64 `json:"spectral_centroid_hz"`
 
+	// Formant Analysis (dominant spectral resonances)
+	F1Hz float64 `json:"f1_hz,omitempty"`
+	F2Hz float64 `json:"f2_hz,omitempty"`
+	F3Hz float64 `json:"f3_hz,omitempty"`
+
 	// Codebook Look-up Status
 	SeenBefore bool                  `json:"seen_before"`
 	BestMatch  *CodebookMatchDetails `json:"best_match,omitempty"`
@@ -194,6 +199,18 @@ func ProbeAudio(samples []float64, sampleRate int, codebookPath string, override
 		SeenBefore:         false,
 	}
 
+	// Formant extraction (~1ms)
+	formants := ExtractFormants(norm, sampleRate, 3)
+	if len(formants) > 0 {
+		res.F1Hz = formants[0].Frequency
+	}
+	if len(formants) > 1 {
+		res.F2Hz = formants[1].Frequency
+	}
+	if len(formants) > 2 {
+		res.F3Hz = formants[2].Frequency
+	}
+
 	// Codebook lookup
 	if codebookPath == "" {
 		codebookPath = "dx7_codebook.bin"
@@ -226,7 +243,7 @@ func ProbeAudio(samples []float64, sampleRate int, codebookPath string, override
 	}
 
 	if len(matches) > 0 {
-		fits, _ := evaluateBatchParallel(matches, norm, uint8(midiNote), 1*time.Second, 0.0)
+		fits, _ := evaluateBatchParallel(matches, norm, uint8(midiNote), 1*time.Second, 0.0, nil)
 		bestIdx := 0
 		bestDist := math.MaxFloat64
 		for i, d := range fits {

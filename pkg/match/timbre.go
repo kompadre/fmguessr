@@ -6,7 +6,6 @@ import (
 	"sort"
 
 	"github.com/madelynnblue/go-dsp/fft"
-	"github.com/madelynnblue/go-dsp/window"
 )
 
 const (
@@ -182,7 +181,7 @@ func ExtractTimbreWindow(samples []float64, sampleRate int) [TimbreSpecBins]floa
 	// 4. Compute temporal median STFT (collapse vibrato & detune beating)
 	nFFT := 1024
 	halfWin := nFFT/2 + 1
-	win := window.Hann(nFFT)
+	win := getHannWindow(nFFT)
 
 	// Collect STFT magnitudes for each frequency bin across frames
 	allMags := make([][]float64, nFrames)
@@ -342,7 +341,7 @@ func fftMag(samples []float64) []float64 {
 	}
 
 	frame := make([]complex128, fftSize)
-	win := window.Hann(n)
+	win := getHannWindow(n)
 	for i := 0; i < n; i++ {
 		frame[i] = complex(samples[i]*win[i], 0)
 	}

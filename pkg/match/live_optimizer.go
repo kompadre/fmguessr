@@ -22,6 +22,7 @@ type LiveOptimizer struct {
 	verbose      bool
 	accelCache   map[string][]int
 	ctx          context.Context
+	targetMel    *PrecomputedTargetMel
 }
 
 type KnobDef struct {
@@ -31,8 +32,8 @@ type KnobDef struct {
 	min, max int
 }
 
-func buildKnobs() []KnobDef {
-	knobs := make([]KnobDef, 0, 19)
+func buildKnobs(includePitch bool) []KnobDef {
+	knobs := make([]KnobDef, 0, 22)
 	for op := 0; op < 6; op++ {
 		opIdx := op
 		knobs = append(knobs, KnobDef{
@@ -60,24 +61,26 @@ func buildKnobs() []KnobDef {
 		setter: func(c *Candidate, v int) { c.Feedback = uint8(v) },
 		min:    0, max: 7,
 	})
-	knobs = append(knobs, KnobDef{
-		name:   "Pitch.Level1",
-		getter: func(c *Candidate) int { return int(c.PitchLevel1) },
-		setter: func(c *Candidate, v int) { c.PitchLevel1 = uint8(v) },
-		min:    0, max: 99,
-	})
-	knobs = append(knobs, KnobDef{
-		name:   "Pitch.Level2",
-		getter: func(c *Candidate) int { return int(c.PitchLevel2) },
-		setter: func(c *Candidate, v int) { c.PitchLevel2 = uint8(v) },
-		min:    0, max: 99,
-	})
-	knobs = append(knobs, KnobDef{
-		name:   "Pitch.Rate1",
-		getter: func(c *Candidate) int { return int(c.PitchRate1) },
-		setter: func(c *Candidate, v int) { c.PitchRate1 = uint8(v) },
-		min:    0, max: 99,
-	})
+	if includePitch {
+		knobs = append(knobs, KnobDef{
+			name:   "Pitch.Level1",
+			getter: func(c *Candidate) int { return int(c.PitchLevel1) },
+			setter: func(c *Candidate, v int) { c.PitchLevel1 = uint8(v) },
+			min:    0, max: 99,
+		})
+		knobs = append(knobs, KnobDef{
+			name:   "Pitch.Level2",
+			getter: func(c *Candidate) int { return int(c.PitchLevel2) },
+			setter: func(c *Candidate, v int) { c.PitchLevel2 = uint8(v) },
+			min:    0, max: 99,
+		})
+		knobs = append(knobs, KnobDef{
+			name:   "Pitch.Rate1",
+			getter: func(c *Candidate) int { return int(c.PitchRate1) },
+			setter: func(c *Candidate, v int) { c.PitchRate1 = uint8(v) },
+			min:    0, max: 99,
+		})
+	}
 	return knobs
 }
 
@@ -108,6 +111,12 @@ func NewLiveOptimizer(ctx context.Context, target []float64, initial *Candidate,
 	}
 }
 
+// WithTargetMel sets the cached target mel spectrogram for faster distance evaluation.
+func (lo *LiveOptimizer) WithTargetMel(tm *PrecomputedTargetMel) *LiveOptimizer {
+	lo.targetMel = tm
+	return lo
+}
+
 // GeneratePermutationCandidate generates a candidate patch by sampling parameter values
 // from the cached acceleration troughs discovered during live optimization.
 func (lo *LiveOptimizer) GeneratePermutationCandidate(rng *rand.Rand, algo uint8) *Candidate {
@@ -118,7 +127,7 @@ func (lo *LiveOptimizer) GeneratePermutationCandidate(rng *rand.Rand, algo uint8
 		return c
 	}
 
-	knobs := buildKnobs()
+	knobs := buildKnobs(true)
 	for _, k := range knobs {
 		troughs, ok := lo.accelCache[k.name]
 		if ok && len(troughs) > 0 {
@@ -137,8 +146,8 @@ func (lo *LiveOptimizer) measureDeterministic(patch *Candidate) float64 {
 	rawCandRMS := CalcRMS(trimmed)
 	candidate := NormalizeRMS(trimmed)
 	var dist float64
-	if cachedTargetMel != nil {
-		dist = MelCosineDistanceCached(cachedTargetMel, candidate, RenderSampleRate)
+	if lo.targetMel != nil {
+		dist = MelCosineDistanceCached(lo.targetMel, candidate, RenderSampleRate)
 	} else {
 		dist = MelCosineDistance(lo.targetNorm, candidate, RenderSampleRate)
 	}
@@ -436,38 +445,51 @@ func generateBatch(base *Candidate, knobs []KnobDef, fine bool) ([]*Candidate, [
 }
 
 func (lo *LiveOptimizer) Run() *Candidate {
-	knobs := buildKnobs()
+	knobs := buildKnobs(true)
 
 	initialDist := lo.measureDeterministic(lo.currentPatch)
 	lo.bestDist = initialDist
 	lo.bestPatch = lo.currentPatch.Copy()
 
-	pianoPatch := DecodeVoicePatch(epiano)
-	pianoDist := lo.measureDeterministic(pianoPatch)
-
-	if lo.verbose {
-		fmt.Printf("[live-parallel] Starting: Piano1(%.6f) -> candidate(%.6f), 19 knobs\n", pianoDist, initialDist)
-	}
-
 	if lo.bestDist <= 1e-4 {
 		if lo.verbose {
-			fmt.Printf("[live] Candidate is already an exact match (dist=%.6f) — skipping live optimization\n", lo.bestDist)
+			fmt.Printf("%dms] [live] Candidate is already an exact match (dist=%.6f) — skipping live optimization\n", logMs(), lo.bestDist)
 		}
 		return lo.bestPatch
 	}
+
+	// When GA has already converged well (dist < 0.05), skip multi-seed
+	// exploration. Waveform seeds (Sine/Square/etc) at dist 0.1+ are a waste.
+	// Just refine the GA best candidate directly.
+	skipSeeds := lo.bestDist < 0.05
 
 	type seedDef struct {
 		patch *Candidate
 		name  string
 	}
 
-	seedDefs := []seedDef{
-		{patch: lo.currentPatch.Copy(), name: "Candidate"},
-		{patch: SineBase(), name: "Sine"},
-		{patch: SquareBase(), name: "Square"},
-		{patch: SawtoothBase(), name: "Sawtooth"},
-		{patch: TriangleBase(), name: "Triangle"},
-		{patch: DecodeVoicePatch(epiano), name: "Piano1"},
+	var seedDefs []seedDef
+	if skipSeeds {
+		seedDefs = []seedDef{
+			{patch: lo.currentPatch.Copy(), name: "Candidate"},
+		}
+		if lo.verbose {
+			fmt.Printf("%dms] [live-parallel] Starting: candidate(%.6f), 19 knobs (skipping waveform seeds — GA converged)\n", logMs(), initialDist)
+		}
+	} else {
+		pianoPatch := DecodeVoicePatch(epiano)
+		pianoDist := lo.measureDeterministic(pianoPatch)
+		seedDefs = []seedDef{
+			{patch: lo.currentPatch.Copy(), name: "Candidate"},
+			{patch: SineBase(), name: "Sine"},
+			{patch: SquareBase(), name: "Square"},
+			{patch: SawtoothBase(), name: "Sawtooth"},
+			{patch: TriangleBase(), name: "Triangle"},
+			{patch: pianoPatch, name: "Piano1"},
+		}
+		if lo.verbose {
+			fmt.Printf("%dms] [live-parallel] Starting: Piano1(%.6f) -> candidate(%.6f), 19 knobs\n", logMs(), pianoDist, initialDist)
+		}
 	}
 
 	type patchSeed struct {
@@ -483,7 +505,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 		// Skip non-candidate seed if current best candidate is already significantly better
 		if sIdx > 0 && seedDist >= lo.bestDist+0.25 {
 			if lo.verbose {
-				fmt.Printf("[live-parallel] Skipping %s base (dist %.6f >= best %.6f + 0.25)\n", sd.name, seedDist, lo.bestDist)
+				fmt.Printf("%dms] [live-parallel] Skipping %s base (dist %.6f >= best %.6f + 0.25)\n", logMs(), sd.name, seedDist, lo.bestDist)
 			}
 			continue
 		}
@@ -495,7 +517,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			algoCands[a] = c
 		}
 
-		fits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+		fits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 		type algoEntry struct {
 			cand *Candidate
@@ -533,7 +555,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 		// Prune branch if its starting distance is significantly worse than overall best
 		if curDist >= lo.bestDist+0.25 {
 			if lo.verbose {
-				fmt.Printf("[live-parallel] Pruning branch %s (dist %.6f >= best %.6f + 0.25)\n",
+				fmt.Printf("%dms] [live-parallel] Pruning branch %s (dist %.6f >= best %.6f + 0.25)\n", logMs(),
 					seed.label, curDist, lo.bestDist)
 			}
 			continue
@@ -545,7 +567,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 		}
 
 		if lo.verbose {
-			fmt.Printf("[live-parallel] Optimizing branch %s\n", seed.label)
+			fmt.Printf("%dms] [live-parallel] Optimizing branch %s\n", logMs(), seed.label)
 		}
 
 		maxBatchIters := lo.maxIter
@@ -559,7 +581,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			select {
 			case <-lo.ctx.Done():
 				if lo.verbose {
-					fmt.Printf("[live] CANCELLED at iter %d — stopping branch %s\n", iter, seed.label)
+					fmt.Printf("%dms] [live] CANCELLED at iter %d — stopping branch %s\n", logMs(), iter, seed.label)
 				}
 				break branchLoop
 			default:
@@ -569,7 +591,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// A. Acceleration Trough Probe Pass (ultra-fast leaps to cached 2nd-derivative troughs)
 			probeCands, probeMeta := generateProbeBatch(curPatch, knobs, accelCache)
 			if len(probeCands) > 0 {
-				fits, _ := evaluateBatchParallel(probeCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+				fits, _ := evaluateBatchParallel(probeCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 				bestIdx := -1
 				bestFit := curDist
@@ -592,7 +614,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 					}
 
 					if lo.verbose {
-						fmt.Printf("[live-accel] iter %d: %s -> %d (dist=%.6f, leaped via acceleration trough from %.6f!)\n",
+						fmt.Printf("%dms] [live-accel] iter %d: %s -> %d (dist=%.6f, leaped via acceleration trough from %.6f!)\n", logMs(),
 							iter, m.knobName, m.val, curDist, prevDist)
 					}
 					continue
@@ -602,7 +624,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// B. Coarse pass (1D single knob sweeps + Multi-Knob Coordinate Vector & Coupled Operator Sweeps)
 			coarseCands, coarseMeta := generateBatch(curPatch, knobs, false)
 			if len(coarseCands) > 0 {
-				fits, _ := evaluateBatchParallel(coarseCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+				fits, _ := evaluateBatchParallel(coarseCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 				bestIdx := -1
 				bestFit := curDist
@@ -646,7 +668,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 
 				numSingleKnob := len(coarseCands)
 				if len(multiCands) > 0 {
-					mFits, _ := evaluateBatchParallel(multiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+					mFits, _ := evaluateBatchParallel(multiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 					for i, mf := range mFits {
 						if mf < bestFit {
 							bestFit = mf
@@ -675,7 +697,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 					}
 
 					if lo.verbose {
-						fmt.Printf("[live] iter %d: %s (dist=%.6f, improved from %.6f)\n",
+						fmt.Printf("%dms] [live] iter %d: %s (dist=%.6f, improved from %.6f)\n", logMs(),
 							iter, m.knobName, curDist, prevDist)
 					}
 					continue
@@ -685,7 +707,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// C. Fine pass
 			fineCands, fineMeta := generateBatch(curPatch, knobs, true)
 			if len(fineCands) > 0 {
-				fineFits, _ := evaluateBatchParallel(fineCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+				fineFits, _ := evaluateBatchParallel(fineCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 				fineBestIdx := -1
 				fineBestFit := curDist
@@ -730,7 +752,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 
 				numSingleFine := len(fineCands)
 				if len(fineMultiCands) > 0 {
-					fmFits, _ := evaluateBatchParallel(fineMultiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+					fmFits, _ := evaluateBatchParallel(fineMultiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 					for i, fmf := range fmFits {
 						if fmf < fineBestFit {
 							fineBestFit = fmf
@@ -754,7 +776,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 					}
 
 					if lo.verbose {
-						fmt.Printf("[live-fine] iter %d: %s (dist=%.6f, improved from %.6f)\n",
+						fmt.Printf("%dms] [live-fine] iter %d: %s (dist=%.6f, improved from %.6f)\n", logMs(),
 							iter, m.knobName, curDist, prevDist)
 					}
 					continue
@@ -769,7 +791,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				algoCands[a] = c
 			}
 
-			algoFits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS)
+			algoFits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 			algoBestIdx := -1
 			algoBestFit := curDist
@@ -795,7 +817,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				}
 
 				if lo.verbose {
-					fmt.Printf("[live-algo] iter %d: Algorithm %d -> %d (dist=%.6f, improved from %.6f)\n",
+					fmt.Printf("%dms] [live-algo] iter %d: Algorithm %d -> %d (dist=%.6f, improved from %.6f)\n", logMs(),
 						iter, prevAlgo+1, curPatch.Algorithm+1, curDist, prevDist)
 				}
 				continue
@@ -815,21 +837,21 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				}
 
 				if lo.verbose {
-					fmt.Printf("[live-miniGA] iter %d: Operator Hybrid Crossbreed (dist=%.6f, improved from %.6f)\n",
+					fmt.Printf("%dms] [live-miniGA] iter %d: Operator Hybrid Crossbreed (dist=%.6f, improved from %.6f)\n", logMs(),
 						iter, curDist, prevDist)
 				}
 				continue
 			}
 
 			if lo.verbose {
-				fmt.Printf("[live] Local minimum reached for %s at dist=%.6f\n", seed.label, curDist)
+				fmt.Printf("%dms] [live] Local minimum reached for %s at dist=%.6f\n", logMs(), seed.label, curDist)
 			}
 			break
 		}
 	}
 
 	if lo.verbose {
-		fmt.Printf("[live] Final Best distance: %.6f\n", lo.bestDist)
+		fmt.Printf("%dms] [live] Final Best distance: %.6f\n", logMs(), lo.bestDist)
 	}
 
 	return lo.bestPatch

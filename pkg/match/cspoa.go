@@ -92,7 +92,7 @@ func RunCSPOA(
 		logFn = func(string) {}
 	}
 
-	knobs := buildKnobs()
+	knobs := buildKnobs(true)
 
 	// Initialize state from seed candidate or defaults
 	state := &cspoaState{
@@ -142,7 +142,7 @@ func RunCSPOA(
 	}
 
 	// Evaluate initial state
-	state.distance = evalCandidate(state.candidate, target, targetRMS, note, dur)
+	state.distance = evalCandidate(state.candidate, target, targetRMS, note, dur, nil)
 
 	// All candidates pool for top-K tracking
 	type scored struct {
@@ -195,7 +195,7 @@ cspoaLoop:
 			turns = turns[:remaining]
 		}
 
-		fits, _ := evaluateBatchParallel(cands, target, note, dur, targetRMS)
+		fits, _ := evaluateBatchParallel(cands, target, note, dur, targetRMS, nil)
 		renderCount += len(cands)
 
 		// Assign distances back to turns
@@ -494,7 +494,7 @@ func knobBelongsToOp(knob KnobDef, opIdx int) bool {
 
 // getKnobValue reads a knob's current value from a candidate.
 func getKnobValue(c *Candidate, opIdx int, knobName string) int {
-	for _, k := range buildKnobs() {
+	for _, k := range buildKnobs(true) {
 		if k.name == knobName {
 			return k.getter(c)
 		}
@@ -529,14 +529,14 @@ func defaultOpParams(role string, freqCoarse uint8) OpParams {
 }
 
 // evalCandidate renders a candidate and returns its spectral distance.
-func evalCandidate(c *Candidate, target []float64, targetRMS float64, note uint8, dur time.Duration) float64 {
+func evalCandidate(c *Candidate, target []float64, targetRMS float64, note uint8, dur time.Duration, targetMel *PrecomputedTargetMel) float64 {
 	audio := RenderCandidate(c, note, dur)
 	trimmed := TrimOrPad(audio, len(target))
 	rawRMS := CalcRMS(trimmed)
 	normed := NormalizeRMS(trimmed)
 	var dist float64
-	if cachedTargetMel != nil {
-		dist = MelCosineDistanceCached(cachedTargetMel, normed, RenderSampleRate)
+	if targetMel != nil {
+		dist = MelCosineDistanceCached(targetMel, normed, RenderSampleRate)
 	} else {
 		dist = MelCosineDistance(target, normed, RenderSampleRate)
 	}
