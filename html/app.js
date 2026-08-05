@@ -1203,8 +1203,9 @@ function renderFavorites() {
                     if (fav.voice_data) {
                         await ensureDx7Synth();
                         if (isDx7Ready()) {
-                            playNoteRealtime(fav.voice_data, 60);
-                            const blob = await renderOffline(fav.voice_data, 60, 1000);
+                            const stop = playNoteRealtime(fav.voice_data, 60);
+                            if (stop) setTimeout(stop, 3000);
+                            const blob = await renderOffline(fav.voice_data, 60, 3000);
                             return URL.createObjectURL(blob);
                         }
                         const resp = await fetch(baseUrl + '/api/play', {
@@ -1466,8 +1467,9 @@ function createSyxTabInner(tabId, name, patches) {
                     if (!patch.voice_data) return null;
                     await ensureDx7Synth();
                     if (isDx7Ready()) {
-                        playNoteRealtime(patch.voice_data, 60);
-                        const blob = await renderOffline(patch.voice_data, 60, 1000);
+                        const stop = playNoteRealtime(patch.voice_data, 60);
+                        if (stop) setTimeout(stop, 3000);
+                        const blob = await renderOffline(patch.voice_data, 60, 3000);
                         return URL.createObjectURL(blob);
                     }
                     const resp = await fetch(baseUrl + '/api/play', {
@@ -2309,7 +2311,8 @@ function renderResults(index) {
         if (m.voice_data) {
             await ensureDx7Synth();
             if (isDx7Ready()) {
-                playNoteRealtime(m.voice_data, 60);
+                const stop = playNoteRealtime(m.voice_data, 60);
+                if (stop) setTimeout(stop, 3000);
                 return;
             }
         }
