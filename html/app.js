@@ -2029,51 +2029,6 @@ function roundForInput(val) {
     return parseFloat(val.toFixed(6));
 }
 
-function decodeWavSamples(arrayBuffer) {
-    try {
-        const view = new DataView(arrayBuffer);
-        // RIFF header
-        if (view.getUint32(0, false) !== 0x52494646) return null; // "RIFF"
-        // fmt chunk
-        const channels = view.getUint16(22, true);
-        const sampleRate = view.getUint32(24, true);
-        const bitsPerSample = view.getUint16(34, true);
-        // Find data chunk
-        let offset = 36;
-        while (offset < view.byteLength - 8) {
-            const chunkId = view.getUint32(offset, false);
-            const chunkSize = view.getUint32(offset + 4, true);
-            if (chunkId === 0x64617461) { // "data"
-                const dataStart = offset + 8;
-                const availableBytes = view.byteLength - dataStart;
-                const bytesPerSample = bitsPerSample / 8;
-                const maxSamples = Math.floor(availableBytes / bytesPerSample);
-                const headerSamples = Math.floor(chunkSize / bytesPerSample);
-                const numSamples = Math.min(headerSamples, maxSamples);
-                if (numSamples <= 0) return null;
-                const samples = new Float32Array(numSamples);
-                for (let i = 0; i < numSamples; i++) {
-                    const s = view.getInt16(dataStart + i * bytesPerSample, true);
-                    samples[i] = s / 32768.0;
-                }
-                // Mix to mono if stereo
-                if (channels === 2) {
-                    const mono = new Float32Array(numSamples / 2);
-                    for (let i = 0; i < mono.length; i++) {
-                        mono[i] = (samples[i * 2] + samples[i * 2 + 1]) / 2;
-                    }
-                    return mono;
-                }
-                return samples;
-            }
-            offset += 8 + chunkSize;
-        }
-    } catch (e) {
-        console.warn('WAV decode failed:', e);
-    }
-    return null;
-}
-
 async function startMatch(index) {
     const job = jobs[index];
     if (!job || !job.probeData) return;
