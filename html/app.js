@@ -1425,6 +1425,7 @@ function createSyxTabInner(tabId, name, patches) {
             feedback: patch.feedback,
             distance: 0,
             wav_url: null,
+            voice_data: patch.voice_data || null,
         }, {
             onSelect: () => {
                 // Assign to piano — set active voice_data and pianoroll patch

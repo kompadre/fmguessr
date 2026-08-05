@@ -235,14 +235,17 @@ function appendFullFields(el, match) {
     if (onPlayRef) {
         playBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            const wavUrl = await onPlayRef(match);
-            if (wavUrl) {
-                try {
+            e.preventDefault();
+            try {
+                const wavUrl = await onPlayRef(match);
+                if (wavUrl) {
                     const resp = await fetch(wavUrl);
                     const buf = await resp.arrayBuffer();
                     const samples = decodeWavSamples(buf);
                     if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
-                } catch (_) {}
+                }
+            } catch (err) {
+                console.warn('[night-sky] play failed:', err);
             }
         });
     }
