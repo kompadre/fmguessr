@@ -2502,9 +2502,11 @@ initNightSky({
             if (isDx7Ready()) {
                 const stop = playNoteRealtime(match.voice_data, 60);
                 if (stop) setTimeout(stop, 3000);
-                return;
+                const blob = await renderOffline(match.voice_data, 60, 3000);
+                return URL.createObjectURL(blob);
             }
         }
+        return null;
     },
     onSelect: (match) => {
         if (match.voice_data) {

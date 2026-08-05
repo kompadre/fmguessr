@@ -1,6 +1,9 @@
 // Night Sky — free-floating patch canvas
 // Patches can be dragged out of lists onto a persistent canvas.
 
+import { batchRenderWaveforms } from '../synth/dx7-synth.js';
+import { decodeWavSamples, drawMiniWaveform } from './patch.js';
+
 const STORAGE_KEY = 'fmguessr_night_sky';
 
 let skyEl = null;
@@ -228,12 +231,33 @@ function appendFullFields(el, match) {
     nameEl.insertAdjacentElement('afterend', algoEl);
     nameEl.insertAdjacentElement('afterend', specWrap);
 
-    // Play handler
+    // Play handler + waveform draw
     if (onPlayRef) {
         playBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            onPlayRef(match);
+            const wavUrl = await onPlayRef(match);
+            if (wavUrl) {
+                try {
+                    const resp = await fetch(wavUrl);
+                    const buf = await resp.arrayBuffer();
+                    const samples = decodeWavSamples(buf);
+                    if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
+                } catch (_) {}
+            }
         });
+    }
+
+    // Render waveform in background if voice_data available
+    if (match.voice_data) {
+        batchRenderWaveforms(
+            [{ voiceData: match.voice_data, canvas }],
+            (cvs, blob) => {
+                blob.arrayBuffer().then(buf => {
+                    const samples = decodeWavSamples(buf);
+                    if (samples && samples.length > 0) drawMiniWaveform(cvs, samples);
+                });
+            }
+        );
     }
 }
 
