@@ -2591,6 +2591,7 @@ editSlider.addEventListener('input', () => {
 restoreSessions();
 restoreSyxTabs();
 loadFavorites();
+rebuildPianoDock();
 initSyxUpload();
 initNightSky({
     onPlay: async (match) => {
