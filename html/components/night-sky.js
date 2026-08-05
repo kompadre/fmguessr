@@ -177,6 +177,9 @@ function renderFloating(entry) {
 }
 
 function appendFullFields(el, match) {
+    const nameEl = el.querySelector('.patch-name');
+    if (!nameEl) return;
+
     // Spec
     const specWrap = document.createElement('div');
     specWrap.className = 'patch-spec';
@@ -185,40 +188,26 @@ function appendFullFields(el, match) {
     canvas.height = 48;
     canvas.className = 'patch-canvas';
     specWrap.appendChild(canvas);
-
     const playBtn = document.createElement('button');
     playBtn.className = 'patch-play';
     playBtn.textContent = '▶';
     playBtn.title = 'Play';
     specWrap.appendChild(playBtn);
 
-    // Insert spec after star
-    const starEl = el.querySelector('.patch-star');
-    starEl.insertAdjacentElement('afterend', specWrap);
-
-    // Play handler
-    if (onPlayRef) {
-        playBtn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            onPlayRef(match);
-        });
-    }
-
-    // Algo, FB, Dist
+    // Algo
     const algoEl = document.createElement('span');
     algoEl.className = 'patch-col patch-algo';
     algoEl.textContent = match.algorithm;
-    specWrap.insertAdjacentElement('afterend', algoEl);
 
+    // FB
     const fbEl = document.createElement('span');
     fbEl.className = 'patch-col patch-fb';
     fbEl.textContent = match.feedback;
-    algoEl.insertAdjacentElement('afterend', fbEl);
 
+    // Dist
     const distEl = document.createElement('span');
     distEl.className = 'patch-col patch-dist';
     distEl.textContent = (match.distance || 0).toFixed(4);
-    fbEl.insertAdjacentElement('afterend', distEl);
 
     // Assign
     const assignBtn = document.createElement('button');
@@ -231,7 +220,21 @@ function appendFullFields(el, match) {
         const dock = document.getElementById('piano-dock');
         if (dock) dock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
-    distEl.insertAdjacentElement('afterend', assignBtn);
+
+    // Append in order after name: spec, algo, fb, dist, assign
+    nameEl.insertAdjacentElement('afterend', assignBtn);
+    nameEl.insertAdjacentElement('afterend', distEl);
+    nameEl.insertAdjacentElement('afterend', fbEl);
+    nameEl.insertAdjacentElement('afterend', algoEl);
+    nameEl.insertAdjacentElement('afterend', specWrap);
+
+    // Play handler
+    if (onPlayRef) {
+        playBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            onPlayRef(match);
+        });
+    }
 }
 
 function removeFloating(id) {
