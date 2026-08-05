@@ -156,6 +156,7 @@ func (s *Server) processJob(job *Job) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(s.cfg.BudgetSeconds*float64(time.Second)))
 		defer cancel()
+		log.Printf("Job %s: budget set to %.1fs", job.ID, s.cfg.BudgetSeconds)
 	} else {
 		ctx = context.Background()
 	}
@@ -998,6 +999,9 @@ func main() {
 
 	fmt.Printf("fmguessr REST API Server listening on http://localhost:%d\n", cfg.Port)
 	fmt.Printf("  Max Queue: %d, Generations: %d, Population: %d\n", cfg.MaxQueue, cfg.Generations, cfg.Population)
+	if cfg.BudgetSeconds > 0 {
+		fmt.Printf("  Budget: %.1fs\n", cfg.BudgetSeconds)
+	}
 	fmt.Printf("  Codebook: %s (exists: %v)\n", cfg.CodebookPath, fileExists(cfg.CodebookPath))
 	fmt.Printf("  Exports Dir: %s\n", server.exportDir)
 
