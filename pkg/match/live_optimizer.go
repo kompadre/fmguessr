@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -20,6 +21,7 @@ type LiveOptimizer struct {
 	maxIter      int
 	verbose      bool
 	accelCache   map[string][]int
+	ctx          context.Context
 }
 
 type KnobDef struct {
@@ -79,12 +81,14 @@ func buildKnobs() []KnobDef {
 	return knobs
 }
 
-func NewLiveOptimizer(target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *LiveOptimizer {
+func NewLiveOptimizer(ctx context.Context, target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *LiveOptimizer {
 	targetNorm := NormalizeRMS(target)
 	optDur := dur
 	targetRMS := 0.0
-	if len(rawTargetRMS) > 0 && rawTargetRMS[0] > 0 {
-		targetRMS = rawTargetRMS[0]
+	if len(rawTargetRMS) > 0 {
+		if rawTargetRMS[0] > 0 {
+			targetRMS = rawTargetRMS[0]
+		}
 	} else {
 		targetRMS = CalcRMS(target)
 	}
@@ -100,6 +104,7 @@ func NewLiveOptimizer(target []float64, initial *Candidate, maxIter int, verbose
 		maxIter:      maxIter,
 		verbose:      verbose,
 		accelCache:   make(map[string][]int),
+		ctx:          ctx,
 	}
 }
 
@@ -131,7 +136,12 @@ func (lo *LiveOptimizer) measureDeterministic(patch *Candidate) float64 {
 	trimmed := TrimOrPad(candAudio, len(lo.targetNorm))
 	rawCandRMS := CalcRMS(trimmed)
 	candidate := NormalizeRMS(trimmed)
-	dist := SpectralDistance(lo.targetNorm, candidate)
+	var dist float64
+	if cachedTargetMel != nil {
+		dist = MelCosineDistanceCached(cachedTargetMel, candidate, RenderSampleRate)
+	} else {
+		dist = MelCosineDistance(lo.targetNorm, candidate, RenderSampleRate)
+	}
 	if lo.rawTargetRMS > 1e-4 {
 		dist += CalcDBPenalty(rawCandRMS, lo.rawTargetRMS)
 	}
@@ -543,7 +553,19 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			maxBatchIters = 10
 		}
 
+	branchLoop:
 		for iter := 0; iter < maxBatchIters; iter++ {
+			// Check context cancellation
+			select {
+			case <-lo.ctx.Done():
+				if lo.verbose {
+					fmt.Printf("[live] CANCELLED at iter %d — stopping branch %s\n", iter, seed.label)
+				}
+				break branchLoop
+			default:
+			}
+
+			// A. Acceleration Trough Probe Pass (ultra-fast leaps to cached 2nd-derivative troughs)
 			// A. Acceleration Trough Probe Pass (ultra-fast leaps to cached 2nd-derivative troughs)
 			probeCands, probeMeta := generateProbeBatch(curPatch, knobs, accelCache)
 			if len(probeCands) > 0 {
@@ -780,7 +802,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			}
 
 			// E. Operator Block Mini-GA Crossbreeding on Plateau
-			miniGABest := RunOperatorMiniGA([]*Candidate{curPatch, lo.bestPatch, SineBase(), SquareBase(), SawtoothBase(), TriangleBase()}, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, 10, 16, lo.verbose)
+			miniGABest := RunOperatorMiniGA(lo.ctx, []*Candidate{curPatch, lo.bestPatch, SineBase(), SquareBase(), SawtoothBase(), TriangleBase()}, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, 10, 16, lo.verbose)
 			if miniGABest != nil && (curDist-miniGABest.Fitness) > 1e-4 {
 				prevDist := curDist
 				curDist = miniGABest.Fitness

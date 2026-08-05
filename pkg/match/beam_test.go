@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -216,6 +217,7 @@ func TestRunConstructiveBeamSmoke(t *testing.T) {
 	cache := BuildOperatorCacheFromWaveformSeeds()
 
 	result := RunConstructiveBeam(
+		context.Background(),
 		target, targetRMS, 60, dur,
 		cache, nil, nil, PeakShape{}, nil,
 		2, 500, // nil codebook, small beam and budget for test

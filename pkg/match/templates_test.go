@@ -1,6 +1,7 @@
 package match_test
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func TestWaveformSeedsOptimization(t *testing.T) {
 	targetSquare := match.RenderCandidate(match.SquareBase(), 60, 1*time.Second)
 
 	// Run LiveOptimizer starting from neutral SineBase
-	liveOpt := match.NewLiveOptimizer(targetSquare, match.SineBase(), 10, true, 60, 1*time.Second)
+	liveOpt := match.NewLiveOptimizer(context.Background(), targetSquare, match.SineBase(), 10, true, 60, 1*time.Second)
 	best := liveOpt.Run()
 
 	t.Logf("LiveOptimizer starting from Sine on Square target: BestDist=%.6f", liveOpt.BestDist())

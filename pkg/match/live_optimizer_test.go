@@ -1,6 +1,7 @@
 package match_test
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestLiveOptimizerPreservesCandidateDistance(t *testing.T) {
 	target := match.RenderCandidate(cand, 60, renderDur)
 
 	// Create LiveOptimizer with renderDur = 2.0s
-	liveOpt := match.NewLiveOptimizer(target, cand, 10, false, 60, renderDur)
+	liveOpt := match.NewLiveOptimizer(context.Background(), target, cand, 10, false, 60, renderDur)
 	refined := liveOpt.Run()
 
 	// Since target was rendered directly from cand, liveOpt starting distance MUST be 0.000000
@@ -45,7 +46,7 @@ func TestMultiKnobLiveOptimizerImprovement(t *testing.T) {
 	perturbed.Ops[1].OutputLevel = uint8(max(0, int(cand.Ops[1].OutputLevel)-8))
 	perturbed.Ops[1].FreqFine = uint8(min(99, int(cand.Ops[1].FreqFine)+15))
 
-	liveOpt := match.NewLiveOptimizer(target, perturbed, 10, true, 60, renderDur)
+	liveOpt := match.NewLiveOptimizer(context.Background(), target, perturbed, 10, true, 60, renderDur)
 	refined := liveOpt.Run()
 
 	t.Logf("Initial perturbed dist: %.6f, Refined dist: %.6f", match.SpectralDistance(match.NormalizeRMS(target), match.NormalizeRMS(match.RenderCandidate(perturbed, 60, renderDur))), liveOpt.BestDist())

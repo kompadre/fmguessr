@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -33,6 +34,10 @@ type Config struct {
 	// Patch Classifier: standalone NN that classifies patches from codebook
 	ClassifierPath  string // Path to patch classifier ONNX model (optional)
 	ClassifierOnly  bool   // Skip GA, return only classifier predictions
+
+	// Ctx for cancellation/budget. If nil, a default context is used.
+	// Cancel or set deadline to stop matching early.
+	Ctx context.Context
 }
 
 // DefaultConfig returns sensible defaults.
@@ -62,11 +67,23 @@ func reportProgress(cfg Config, percent int, phase string) {
 	}
 }
 
+// Package-level cached target mel spectrogram for fast distance computation.
+var cachedTargetMel *PrecomputedTargetMel
+
 // Run executes the genetic algorithm optimization using a 32-Island Niche Model and Multi-Core Parallel Evaluation.
 func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	rawTargetRMS := features.TargetRMS
 	if rawTargetRMS <= 0 {
 		rawTargetRMS = CalcRMS(target)
+	}
+
+	// Precompute target mel spectrogram for fitness evaluation
+	cachedTargetMel = ComputeTargetMel(target, RenderSampleRate)
+
+	// Set up context with budget
+	ctx := cfg.Ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	if cfg.Verbose {
@@ -364,11 +381,11 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 						bestCodebookDist, scores[0].dist)
 				}
 			}
-			globalLiveOpt = NewLiveOptimizer(target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+			globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 			refined := globalLiveOpt.Run()
 
 			// Differential Jacobian steering on extended temporal timbre features
-			diffOpt := NewDiffOptimizer(target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+			diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 			diffRefined := diffOpt.RunAlternating(2)
 			if diffOpt.bestDist < globalLiveOpt.bestDist {
 				refined = diffRefined
@@ -459,6 +476,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 
 		beamResult = RunConstructiveBeam(
+			ctx,
 			target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur,
 			opCache, beamCB, beamTimbreCB, targetPeakShape, targetCachedSTFT,
 			beamWidth, beamRenders,
@@ -519,6 +537,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 			deltaLib := BuildDeltaLibrary(cspoaCB)
 			cspoaResults := RunCSPOA(
+				ctx,
 				target, rawTargetRMS, cfg.MIDINote, cfg.RenderDur,
 				deltaLib, cspoaCache, bestCodebookCand, cfg.CSPOA,
 				func(s string) { if cfg.Verbose { fmt.Println(s) } },
@@ -647,7 +666,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			audio := RenderCandidate(c, cfg.MIDINote, cfg.RenderDur)
 			trimmed := TrimOrPad(audio, len(target))
 			normed := NormalizeRMS(trimmed)
-			dist := SpectralDistance(target, normed)
+			var dist float64
+			if cachedTargetMel != nil {
+				dist = MelCosineDistanceCached(cachedTargetMel, normed, RenderSampleRate)
+			} else {
+				dist = MelCosineDistance(target, normed, RenderSampleRate)
+			}
 			if i < len(classifierFullDists) && classifierFullDists[i] < dist {
 				dist = classifierFullDists[i]
 			}
@@ -708,12 +732,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			fmt.Printf("Classifier best seed: algo=%d fullDist=%.6f — running LiveOptimizer\n",
 				initialPatch.Algorithm+1, bestClassifierFullDist)
 		}
-		globalLiveOpt = NewLiveOptimizer(target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		refined := globalLiveOpt.Run()
 		fmt.Printf("Classifier pre-optimization: %.6f -> %.6f\n", bestClassifierFullDist, globalLiveOpt.bestDist)
 
 		// Differential Jacobian steering on temporal timbre features
-		diffOpt := NewDiffOptimizer(target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		diffRefined := diffOpt.RunAlternating(2)
 		if diffOpt.bestDist < globalLiveOpt.bestDist {
 			refined = diffRefined
@@ -766,7 +790,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 		}
-		globalLiveOpt = NewLiveOptimizer(target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		globalLiveOpt = NewLiveOptimizer(ctx, target, startPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 		globalLiveOpt.Run()
 		// Insert LiveOptimizer result into elite cohort
 		timbreCohort.TryInsert(globalLiveOpt.bestPatch, globalLiveOpt.bestDist)
@@ -928,7 +952,21 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		fmt.Printf("--- Phase 1: Niche Island Evolution (%d generations across 32 algorithms) ---\n", nicheGenerations)
 	}
 
+	gaStartTime := time.Now()
+
+nicheLoop:
 	for gen := 0; gen < nicheGenerations; gen++ {
+		// Check context cancellation (budget)
+		select {
+		case <-ctx.Done():
+			if cfg.Verbose {
+				fmt.Printf("[niche gen %d/%d] CANCELLED (%.1fs elapsed) — stopping early\n",
+					gen+1, nicheGenerations, time.Since(gaStartTime).Seconds())
+			}
+			break nicheLoop
+		default:
+		}
+
 		p1 := 10 + (gen+1)*50/nicheGenerations
 		reportProgress(cfg, p1, fmt.Sprintf("Phase 1: Niche Evolution (gen %d/%d)", gen+1, nicheGenerations))
 
@@ -984,7 +1022,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				fmt.Printf("[niche gen %d/%d] EXACT MATCH FOUND — skipping remaining generations\n",
 					gen+1, nicheGenerations)
 			}
-			break
+			break nicheLoop
 		}
 	}
 
@@ -1016,7 +1054,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 		}
 
-		miniGABest := RunOperatorMiniGA(globalSeed, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, 10, 32, cfg.Verbose)
+		miniGABest := RunOperatorMiniGA(ctx, globalSeed, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, 10, 32, cfg.Verbose)
 		if miniGABest != nil && miniGABest.Fitness < globalBestFit {
 			if cfg.Verbose {
 				fmt.Printf("[Phase 1->2 Transition] Operator Mini-GA created hybrid candidate: dist=%.6f (improved from %.6f)\n",
@@ -1053,8 +1091,23 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	var pendingMutants []*Candidate
 	var boostGens int // generations to boost mutation rate after injection
 	maxInject := 8
+	prevBestFit := math.MaxFloat64
+	convergeGens := 0
+	convergeThreshold := 0.001 // 0.1% relative improvement threshold
 
+	gaLoop:
 	for gen := nicheGenerations; gen < cfg.GA.Generations; gen++ {
+		// Check context cancellation (budget)
+		select {
+		case <-ctx.Done():
+			if cfg.Verbose {
+				fmt.Printf("[global gen %d/%d] CANCELLED (%.1fs elapsed) — stopping early\n",
+					gen+1, cfg.GA.Generations, time.Since(gaStartTime).Seconds())
+			}
+			break gaLoop
+		default:
+		}
+
 		p2 := 60 + (gen-nicheGenerations+1)*25/(cfg.GA.Generations-nicheGenerations)
 		reportProgress(cfg, p2, fmt.Sprintf("Phase 2: Global Convergence (gen %d/%d)", gen-nicheGenerations+1, cfg.GA.Generations-nicheGenerations))
 
@@ -1140,6 +1193,27 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			}
 			break
 		}
+
+		// Early termination: convergence — improvement too small over 10 generations
+		bestFit := globalGA.BestFitness()
+		if bestFit < prevBestFit {
+			improvement := (prevBestFit - bestFit) / math.Max(prevBestFit, 1e-10)
+			if improvement < convergeThreshold {
+				convergeGens++
+			} else {
+				convergeGens = 0
+			}
+		} else {
+			convergeGens++
+		}
+		prevBestFit = bestFit
+		if convergeGens >= 10 {
+			if cfg.Verbose {
+				fmt.Printf("[global gen %d/%d] CONVERGED (best=%.6f, improvement < %.1f%% over %d gens) — stopping early\n",
+					gen+1, cfg.GA.Generations, bestFit, convergeThreshold*100, convergeGens)
+			}
+			break
+		}
 	}
 
 	// Final refinement: live optimizer & differential Jacobian steering with checkpoint backtracking
@@ -1150,12 +1224,12 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 	best := globalGA.Best()
 	gaBestDist := globalGA.BestFitness()
-	liveOpt := NewLiveOptimizer(target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+	liveOpt := NewLiveOptimizer(ctx, target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	finalPatch := liveOpt.Run()
 	finalDist := liveOpt.bestDist
 
 	// Differential Jacobian steering on extended temporal timbre features (alternating pass)
-	diffOpt := NewDiffOptimizer(target, finalPatch, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+	diffOpt := NewDiffOptimizer(ctx, target, finalPatch, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	diffPatch := diffOpt.RunAlternating(3)
 	if diffOpt.bestDist < finalDist {
 		finalPatch = diffPatch
@@ -1340,7 +1414,12 @@ func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8
 				trimmed := TrimOrPad(candAudio, len(target))
 				rawCandRMS := CalcRMS(trimmed)
 				candidate := NormalizeRMS(trimmed)
-				dist := SpectralDistance(target, candidate)
+				var dist float64
+				if cachedTargetMel != nil {
+					dist = MelCosineDistanceCached(cachedTargetMel, candidate, RenderSampleRate)
+				} else {
+					dist = MelCosineDistance(target, candidate, RenderSampleRate)
+				}
 				if rawTargetRMS > 1e-4 {
 					dist += CalcDBPenalty(rawCandRMS, rawTargetRMS)
 				}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -28,6 +29,7 @@ func main() {
 	cspoaBudget := flag.Int("cspoa-budget", 5000, "CSPOA render budget")
 	classifier := flag.String("classifier", "", "path to patch classifier ONNX model (optional)")
 	classifierOnly := flag.Bool("classifier-only", false, "skip GA, return best classifier predictions only")
+	budgetSeconds := flag.Float64("budget-seconds", 0, "stop matching after N seconds (0=unlimited)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <target.wav>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Find DX7 FM parameters that produce a sound similar to the target WAV.\n\n")
@@ -118,24 +120,35 @@ func main() {
 	// Compute note frequency from MIDI note number (A4 = 69 = 440 Hz)
 	noteFreq := 440.0 * math.Pow(2, float64(*note-69)/12.0)
 
+	// Set up context with budget
+	var ctx context.Context
+	if *budgetSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(*budgetSeconds*float64(time.Second)))
+		defer cancel()
+	} else {
+		ctx = context.Background()
+	}
+
 	// Run optimization
 	cfg := match.Config{
-		RenderDur:    *duration,
-		MIDINote:     uint8(*note),
-		NoteFreq:     noteFreq,
-		CodebookPath: *codebookPath,
-		ModelPath:    *modelPath,
-		Verbose:      *verbose,
-		GA:           gaCfg,
-		UseBeamSearch:  *beam,
-		BeamWidth:      *beamWidth,
-		BeamMaxRenders: *beamRenders,
+		RenderDur:       *duration,
+		MIDINote:        uint8(*note),
+		NoteFreq:        noteFreq,
+		CodebookPath:    *codebookPath,
+		ModelPath:       *modelPath,
+		Verbose:         *verbose,
+		GA:              gaCfg,
+		UseBeamSearch:   *beam,
+		BeamWidth:       *beamWidth,
+		BeamMaxRenders:  *beamRenders,
 		CSPOA: match.CSPOAConfig{
 			Enabled:    *cspoa,
 			MaxRenders: *cspoaBudget,
 		},
-		ClassifierPath: *classifier,
-		ClassifierOnly: *classifierOnly,
+		ClassifierPath:  *classifier,
+		ClassifierOnly:  *classifierOnly,
+		Ctx:             ctx,
 	}
 
 	fmt.Printf("\nStarting GA: %d generations × %d population = %d evaluations max\n",

@@ -97,7 +97,7 @@ func binarySearchLerpEx(source, target *Candidate, targetAudio []float64, target
 		mid := (lo + hi) / 2.0
 		cand := LerpCandidates(source, target, mid)
 		candAudio := RenderCandidate(cand, note, dur)
-		dist := SpectralDistance(targetAudio, candAudio)
+		dist := MelCosineDistance(targetAudio, candAudio, RenderSampleRate)
 
 		diff := math.Abs(dist - targetDist)
 		if diff < bestDist {
@@ -134,7 +134,7 @@ func Morph(cfg MorphConfig) MorphResult {
 	// Render source and target
 	sourceAudio := RenderCandidate(cfg.Source, cfg.Note, cfg.Dur)
 	targetAudio := RenderCandidate(cfg.Target, cfg.Note, cfg.Dur)
-	sourceDist := SpectralDistance(targetAudio, sourceAudio)
+	sourceDist := MelCosineDistance(targetAudio, sourceAudio, RenderSampleRate)
 
 	if cfg.Verbose {
 		fmt.Printf("Source distance: %.6f\n", sourceDist)
@@ -154,7 +154,7 @@ func Morph(cfg MorphConfig) MorphResult {
 	alpha, morphed := binarySearchLerpEx(cfg.Source, cfg.Target, targetAudio, targetDist, lo, hi, cfg.Note, cfg.Dur)
 
 	morphedAudio := RenderCandidate(morphed, cfg.Note, cfg.Dur)
-	morphDist := SpectralDistance(targetAudio, morphedAudio)
+	morphDist := MelCosineDistance(targetAudio, morphedAudio, RenderSampleRate)
 
 	if cfg.Verbose {
 		fmt.Printf("After lerp (α=%.4f): distance=%.6f (ratio=%.4f)\n", alpha, morphDist, morphDist/sourceDist)
@@ -180,7 +180,7 @@ func Morph(cfg MorphConfig) MorphResult {
 			}
 
 			candidateAudio := RenderCandidate(candidate, cfg.Note, cfg.Dur)
-			newDist := SpectralDistance(targetAudio, candidateAudio)
+			newDist := MelCosineDistance(targetAudio, candidateAudio, RenderSampleRate)
 
 			if newDist < currentDist {
 				current = candidate

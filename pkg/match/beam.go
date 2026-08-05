@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -159,7 +160,12 @@ func evaluateSingleCandidate(c *Candidate, target []float64, targetRMS float64, 
 	trimmed := TrimOrPad(audio, len(target))
 	rawRMS := CalcRMS(trimmed)
 	normed := NormalizeRMS(trimmed)
-	dist := SpectralDistance(target, normed)
+	var dist float64
+	if cachedTargetMel != nil {
+		dist = MelCosineDistanceCached(cachedTargetMel, normed, RenderSampleRate)
+	} else {
+		dist = MelCosineDistance(target, normed, RenderSampleRate)
+	}
 	if targetRMS > 1e-4 {
 		dist += CalcDBPenalty(rawRMS, targetRMS)
 	}
@@ -184,6 +190,7 @@ func evaluateBatch(candidates []*Candidate, target []float64, targetRMS float64,
 // targetPeak and targetCachedSTFT enable the 3-tier peak-window filtering pipeline.
 // timbreCB enables Tier 1 metadata pre-filtering (zero-render).
 func RunConstructiveBeam(
+	ctx context.Context,
 	target []float64,
 	targetRMS float64,
 	note uint8,
@@ -293,7 +300,16 @@ func RunConstructiveBeam(
 
 	// ── Steps 2-6: Add operators in reverse index order ──
 
+beamLoop:
 	for step := 1; step < 6; step++ {
+		// Check context cancellation (budget)
+		select {
+		case <-ctx.Done():
+			logFn("[Beam] CANCELLED — stopping early")
+			break beamLoop
+		default:
+		}
+
 		newOpIdx := placementOrder[step]
 		logFn(fmt.Sprintf("[Beam] Step %d: Adding Op%d (index %d)...", step+1, 6-newOpIdx, newOpIdx))
 

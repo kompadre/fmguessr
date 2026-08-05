@@ -1,6 +1,7 @@
 package match_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestOperatorMiniGA(t *testing.T) {
 	rawTargetRMS := match.CalcRMS(targetAudio)
 
 	// Run operator mini-GA
-	best := match.RunOperatorMiniGA(parents, targetNorm, 60, 1*time.Second, rawTargetRMS, 25, 32, true)
+	best := match.RunOperatorMiniGA(context.Background(), parents, targetNorm, 60, 1*time.Second, rawTargetRMS, 25, 32, true)
 
 	if best == nil {
 		t.Fatalf("RunOperatorMiniGA returned nil candidate")

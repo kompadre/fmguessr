@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	_ "embed"
@@ -25,14 +26,17 @@ import (
 var defaultModelData []byte
 
 type ServerConfig struct {
-	Port         int
-	MaxQueue     int
-	Generations  int
-	Population   int
-	ModelPath    string
-	CodebookPath string
-	ExportDir    string
-	ModelData    []byte // Embedded ONNX model bytes (overrides ModelPath)
+	Port           int
+	MaxQueue       int
+	Generations    int
+	Population     int
+	ModelPath      string
+	CodebookPath   string
+	ClassifierPath string
+	ClassifierOnly bool
+	BudgetSeconds  float64
+	ExportDir      string
+	ModelData      []byte // Embedded ONNX model bytes (overrides ModelPath)
 }
 
 type MatchResult struct {
@@ -146,15 +150,28 @@ func (s *Server) processJob(job *Job) {
 	gaCfg.Generations = s.cfg.Generations
 	gaCfg.Population = s.cfg.Population
 
+	// Set up context with budget
+	var ctx context.Context
+	if s.cfg.BudgetSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(s.cfg.BudgetSeconds*float64(time.Second)))
+		defer cancel()
+	} else {
+		ctx = context.Background()
+	}
+
 	matchCfg := match.Config{
-		RenderDur:    2 * time.Second,
-		MIDINote:     uint8(midiNote),
-		NoteFreq:     noteFreq,
-		CodebookPath: s.cfg.CodebookPath,
-		ModelPath:    s.cfg.ModelPath,
-		ModelData:    s.cfg.ModelData,
-		Verbose:      true,
-		GA:           gaCfg,
+		RenderDur:       2 * time.Second,
+		MIDINote:        uint8(midiNote),
+		NoteFreq:        noteFreq,
+		CodebookPath:    s.cfg.CodebookPath,
+		ModelPath:       s.cfg.ModelPath,
+		ModelData:       s.cfg.ModelData,
+		ClassifierPath:  s.cfg.ClassifierPath,
+		ClassifierOnly:  s.cfg.ClassifierOnly,
+		Verbose:         true,
+		GA:              gaCfg,
+		Ctx:             ctx,
 		ProgressCallback: func(pct int, phase string) {
 			s.mu.Lock()
 			job.ProgressPercent = pct
@@ -203,7 +220,7 @@ func (s *Server) processJob(job *Job) {
 
 		// Compute spectral distance for this candidate
 		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.SpectralDistance(targetNorm, candNorm)
+		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
 
 		matches = append(matches, MatchResult{
 			Rank:      rank + 1,
@@ -227,7 +244,7 @@ func (s *Server) processJob(job *Job) {
 		}
 
 		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.SpectralDistance(targetNorm, candNorm)
+		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
 
 		timbralMatches = append(timbralMatches, MatchResult{
 			Rank:      rank + 1,
@@ -251,7 +268,7 @@ func (s *Server) processJob(job *Job) {
 		}
 
 		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.SpectralDistance(targetNorm, candNorm)
+		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
 
 		fullMatches = append(fullMatches, MatchResult{
 			Rank:      rank + 1,
@@ -278,7 +295,7 @@ func (s *Server) processJob(job *Job) {
 				continue
 			}
 			favNorm := match.NormalizeRMS(match.TrimOrPad(favAudio, len(targetNorm)))
-			favDist := match.SpectralDistance(targetNorm, favNorm)
+			favDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), favNorm, match.RenderSampleRate)
 			favoriteMatches = append(favoriteMatches, MatchResult{
 				Rank:      len(favoriteMatches) + 1,
 				Algorithm: int(c.Algorithm + 1),
@@ -911,6 +928,9 @@ func main() {
 	population := flag.Int("population", 64, "GA population size")
 	modelPath := flag.String("model", "", "path to ONNX model file (default: embedded)")
 	codebookPath := flag.String("codebook", "dx7_codebook.bin", "path to pre-indexed dx7_codebook.bin")
+	classifierPath := flag.String("classifier", "", "path to patch classifier ONNX model (optional)")
+	classifierOnly := flag.Bool("classifier-only", false, "use classifier predictions only, skip GA")
+	budgetSeconds := flag.Float64("budget-seconds", 0, "stop matching after N seconds (0=unlimited)")
 	exportDir := flag.String("exports", "./exports", "path to export directory for static files")
 
 	flag.Parse()
@@ -948,14 +968,17 @@ func main() {
 	}
 
 	cfg := ServerConfig{
-		Port:         *port,
-		MaxQueue:     *maxQueue,
-		Generations:  *generations,
-		Population:   *population,
-		ModelPath:    *modelPath,
-		CodebookPath: *codebookPath,
-		ExportDir:    *exportDir,
-		ModelData:    modelData,
+		Port:           *port,
+		MaxQueue:       *maxQueue,
+		Generations:    *generations,
+		Population:     *population,
+		ModelPath:      *modelPath,
+		CodebookPath:   *codebookPath,
+		ClassifierPath: *classifierPath,
+		ClassifierOnly: *classifierOnly,
+		BudgetSeconds:  *budgetSeconds,
+		ExportDir:      *exportDir,
+		ModelData:      modelData,
 	}
 
 	server := NewServer(cfg)

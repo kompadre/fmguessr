@@ -1,6 +1,7 @@
 package match_test
 
 import (
+	"context"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ func TestDiffOptimizerExactMatch(t *testing.T) {
 	renderDur := 1 * time.Second
 	target := match.RenderCandidate(cand, 60, renderDur)
 
-	diffOpt := match.NewDiffOptimizer(target, cand, 5, true, 60, renderDur)
+	diffOpt := match.NewDiffOptimizer(context.Background(), target, cand, 5, true, 60, renderDur)
 	refined := diffOpt.Run()
 
 	t.Logf("DiffOptimizer starting/final distance for exact match: %.6f", diffOpt.BestDist())
@@ -46,7 +47,7 @@ func TestDiffOptimizerMultiKnobPerturbation(t *testing.T) {
 	initialDist := match.SpectralDistance(match.NormalizeRMS(target), match.NormalizeRMS(match.RenderCandidate(perturbed, 60, renderDur)))
 	t.Logf("Initial perturbed dist: %.6f", initialDist)
 
-	diffOpt := match.NewDiffOptimizer(target, perturbed, 5, true, 60, renderDur)
+	diffOpt := match.NewDiffOptimizer(context.Background(), target, perturbed, 5, true, 60, renderDur)
 	refined := diffOpt.Run()
 
 	t.Logf("Refined dist after DiffOptimizer: %.6f", diffOpt.BestDist())
@@ -116,7 +117,7 @@ func TestDiffOptimizerAlternatingPasses(t *testing.T) {
 	initDist := match.SpectralDistance(match.NormalizeRMS(targetPcm), match.NormalizeRMS(match.RenderCandidate(seed, 60, renderDur)))
 	t.Logf("Initial dual-perturbed distance: %.6f", initDist)
 
-	diffOpt := match.NewDiffOptimizer(targetPcm, seed, 5, true, 60, renderDur)
+	diffOpt := match.NewDiffOptimizer(context.Background(), targetPcm, seed, 5, true, 60, renderDur)
 	refined := diffOpt.RunAlternating(3)
 
 	finalDist := diffOpt.BestDist()

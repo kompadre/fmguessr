@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -34,13 +35,17 @@ type DiffOptimizer struct {
 
 	// When true, skips the 32-algorithm topology sweep in RunAlternating
 	skipTopology bool
+
+	ctx context.Context
 }
 
-func NewDiffOptimizer(target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *DiffOptimizer {
+func NewDiffOptimizer(ctx context.Context, target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *DiffOptimizer {
 	targetNorm := NormalizeRMS(target)
 	tRMS := 0.0
-	if len(rawTargetRMS) > 0 && rawTargetRMS[0] > 0 {
-		tRMS = rawTargetRMS[0]
+	if len(rawTargetRMS) > 0 {
+		if rawTargetRMS[0] > 0 {
+			tRMS = rawTargetRMS[0]
+		}
 	} else {
 		tRMS = CalcRMS(target)
 	}
@@ -62,6 +67,7 @@ func NewDiffOptimizer(target []float64, initial *Candidate, maxIter int, verbose
 		verbose:      verbose,
 		sampleRate:   44100,
 		rng:          rand.New(rand.NewSource(42)),
+		ctx:          ctx,
 	}
 }
 
@@ -124,7 +130,7 @@ func CrunchWavFile(wavPath string, initial *Candidate, maxIter int, verbose bool
 		targetPcm = targetPcm[:int(renderDur.Seconds()*float64(sr))]
 	}
 
-	optimizer := NewDiffOptimizer(targetPcm, initial, maxIter, verbose, 60, renderDur)
+	optimizer := NewDiffOptimizer(context.Background(), targetPcm, initial, maxIter, verbose, 60, renderDur)
 	best := optimizer.Run()
 	return best, optimizer.BestDist(), nil
 }
@@ -246,7 +252,18 @@ func (opt *DiffOptimizer) RunPhase(knobs []KnobDef, phaseName string, maxIters i
 	targetSpecVec := ExtractTemporalTimbreSpec(opt.targetNorm, opt.sampleRate).ToExtendedVector()
 	numFeatures := len(targetSpecVec)
 
+phaseLoop:
 	for iter := 0; iter < maxIters; iter++ {
+		// Check context cancellation
+		select {
+		case <-opt.ctx.Done():
+			if opt.verbose {
+				fmt.Printf("[DiffOpt] CANCELLED at iter %d in %s — stopping\n", iter, phaseName)
+			}
+			break phaseLoop
+		default:
+		}
+
 		improved := false
 
 		currPcm := RenderCandidate(opt.currentPatch, opt.note, opt.dur)

@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -10,7 +11,7 @@ import (
 
 // RunOperatorMiniGA executes an ultra-fast local mini-GA (5-10 generations) that cross-breeds
 // modular operator blocks across top candidate patches and algorithm topologies.
-func RunOperatorMiniGA(parents []*Candidate, targetNorm []float64, note uint8, dur time.Duration, rawTargetRMS float64, generations int, popSize int, verbose bool) *Candidate {
+func RunOperatorMiniGA(ctx context.Context, parents []*Candidate, targetNorm []float64, note uint8, dur time.Duration, rawTargetRMS float64, generations int, popSize int, verbose bool) *Candidate {
 	if len(parents) == 0 {
 		return nil
 	}
@@ -70,6 +71,16 @@ func RunOperatorMiniGA(parents []*Candidate, targetNorm []float64, note uint8, d
 
 	// Evolve mini-GA over generations
 	for gen := 0; gen < generations; gen++ {
+		// Check context cancellation (budget)
+		select {
+		case <-ctx.Done():
+			if verbose {
+				fmt.Printf("[mini-GA] CANCELLED at gen %d — stopping early\n", gen+1)
+			}
+			return bestCand
+		default:
+		}
+
 		// Sort population by fitness
 		type popFit struct {
 			cand *Candidate

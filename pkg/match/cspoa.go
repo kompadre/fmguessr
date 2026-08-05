@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -70,6 +71,7 @@ type knobProgress struct {
 // It returns the top-K candidates found, sorted by distance.
 // seedCandidate is the best codebook match used to initialize operator parameters.
 func RunCSPOA(
+	ctx context.Context,
 	target []float64,
 	targetRMS float64,
 	note uint8,
@@ -157,7 +159,16 @@ func RunCSPOA(
 
 	// Main loop: iteratively pick the best available turn
 	maxIterations := 200
+cspoaLoop:
 	for iter := 0; iter < maxIterations && renderCount < cfg.MaxRenders; iter++ {
+		// Check context cancellation (budget)
+		select {
+		case <-ctx.Done():
+			logFn(fmt.Sprintf("[CSPOA] CANCELLED at iteration %d — stopping early", iter))
+			break cspoaLoop
+		default:
+		}
+
 		// Generate all available turns
 		turns := generateTurns(state, deltaLib)
 		if len(turns) == 0 {
@@ -523,7 +534,12 @@ func evalCandidate(c *Candidate, target []float64, targetRMS float64, note uint8
 	trimmed := TrimOrPad(audio, len(target))
 	rawRMS := CalcRMS(trimmed)
 	normed := NormalizeRMS(trimmed)
-	dist := SpectralDistance(target, normed)
+	var dist float64
+	if cachedTargetMel != nil {
+		dist = MelCosineDistanceCached(cachedTargetMel, normed, RenderSampleRate)
+	} else {
+		dist = MelCosineDistance(target, normed, RenderSampleRate)
+	}
 	if targetRMS > 1e-4 {
 		dist += CalcDBPenalty(rawRMS, targetRMS)
 	}
