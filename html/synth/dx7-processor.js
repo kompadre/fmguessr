@@ -5,16 +5,12 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
   AudioWorkletGlobalScope._dx7Registered = true;
 
   class DX7Processor extends AudioWorkletProcessor {
-    constructor(options) {
+    constructor() {
       super();
-      const WAM = options.processorOptions.mod;
-      const wasmBinary = options.processorOptions.wasmBinary;
+      const WAM = AudioWorkletGlobalScope.WAM.DX7;
       this.WAM = WAM;
       this.bufsize = 128;
       this.sr = sampleRate;
-
-      WAM.wasmBinary = wasmBinary;
-      WAM.ENVIRONMENT = 'WEB';
 
       const wam_ctor = WAM.cwrap('createModule', 'number', []);
       const wam_init = WAM.cwrap('wam_init', null, ['number','number','number','string']);

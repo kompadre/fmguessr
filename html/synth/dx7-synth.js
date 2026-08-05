@@ -4,10 +4,16 @@
 let dx7Node = null;
 let dx7Ready = false;
 let dx7Loading = null;
-let wasmBinary = null;
 
 export function isDx7Ready() {
   return dx7Ready;
+}
+
+async function loadModules(audioCtx) {
+  const base = new URL('./wasm/', import.meta.url).pathname;
+  await audioCtx.audioWorklet.addModule(base + 'dx7.wasm.js');
+  await audioCtx.audioWorklet.addModule(base + 'dx7.js');
+  await audioCtx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
 }
 
 export async function initDx7Synth(audioCtx) {
@@ -16,27 +22,12 @@ export async function initDx7Synth(audioCtx) {
 
   dx7Loading = (async () => {
     try {
-      const base = new URL('./wasm/', import.meta.url).pathname;
-      if (!wasmBinary) {
-        const resp = await fetch(base + 'dx7.wasm.js');
-        const text = await resp.text();
-        const match = text.match(/new Uint8Array\((\[[\d,\s]+\])\)/);
-        if (!match) throw new Error('Failed to parse dx7.wasm.js');
-        wasmBinary = new Uint8Array(JSON.parse(match[1]));
-      }
-
-      await audioCtx.audioWorklet.addModule(base + 'dx7.wasm.js');
-      await audioCtx.audioWorklet.addModule(base + 'dx7.js');
-      await audioCtx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
+      await loadModules(audioCtx);
 
       dx7Node = new AudioWorkletNode(audioCtx, 'dx7-synth', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
         outputChannelCount: [1],
-        processorOptions: {
-          mod: AudioWorkletGlobalScope.WAM.DX7,
-          wasmBinary: wasmBinary,
-        },
       });
       dx7Node.connect(audioCtx.destination);
       dx7Ready = true;
@@ -75,19 +66,12 @@ export async function renderOffline(voiceData, midi, durationMs) {
   const totalSamples = Math.ceil(totalSec * sr);
 
   const offlineCtx = new OfflineAudioContext(1, totalSamples, sr);
-  const base = new URL('./wasm/', import.meta.url).pathname;
-  await offlineCtx.audioWorklet.addModule(base + 'dx7.wasm.js');
-  await offlineCtx.audioWorklet.addModule(base + 'dx7.js');
-  await offlineCtx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
+  await loadModules(offlineCtx);
 
   const node = new AudioWorkletNode(offlineCtx, 'dx7-synth', {
     numberOfInputs: 0,
     numberOfOutputs: 1,
     outputChannelCount: [1],
-    processorOptions: {
-      mod: AudioWorkletGlobalScope.WAM.DX7,
-      wasmBinary: wasmBinary,
-    },
   });
   node.connect(offlineCtx.destination);
 
