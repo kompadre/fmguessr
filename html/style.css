@@ -13,12 +13,12 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
     background-color: #1a1a2e;
     color: #e0e0e0;
     font-family: system-ui, -apple-system, sans-serif;
-    padding: 2rem;
-    gap: 2rem;
+    padding: 0;
+    margin: 0;
+    position: relative;
 }
 
 /* ============================================================
@@ -246,6 +246,8 @@ textarea:focus {
     font-size: 0.75rem;
     cursor: pointer;
     margin-left: 0.5rem;
+    position: relative;
+    z-index: 2;
 }
 
 #clear-btn:hover {
@@ -282,17 +284,44 @@ textarea:focus {
 #night-sky {
     position: relative;
     width: 100%;
-    height: 1200px;
+    flex: 1;
+    min-height: 600px;
     display: none;
+    z-index: 0;
 }
 
 #night-sky.visible {
     display: block;
 }
 
+#night-sky > * {
+    position: relative;
+    z-index: 1;
+}
+
+h1, .file-input-wrapper, #progress-wrapper {
+    position: relative;
+    z-index: 2;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
+
+h1 {
+    padding-top: 1.5rem;
+}
+
+.imported-panel,
+.edit-panel {
+    position: relative;
+    z-index: 10;
+    margin-left: 1rem;
+    margin-right: 1rem;
+}
+
 /* Imported panel — minimizable, movable container */
 .imported-panel {
     width: 100%;
+    min-width: 450px;
     max-width: 500px;
     background-color: #16213e;
     border: 1px solid #333;
@@ -1785,11 +1814,18 @@ footer {
     border-top: 1px solid #333;
     width: 100%;
     max-width: 500px;
+    position: relative;
+    z-index: 2;
+    background-color: #1a1a2e;
 }
 
 #log-details {
     width: 100%;
     max-width: 500px;
+    position: relative;
+    z-index: 2;
+    background-color: #1a1a2e;
+    padding: 0 2rem 1rem;
 }
 
 #log-details summary {
