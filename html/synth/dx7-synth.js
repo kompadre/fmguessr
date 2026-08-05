@@ -62,32 +62,60 @@ export function playNoteRealtime(voiceData, midi, velocity = 100) {
 
 export async function renderOffline(voiceData, midi, durationMs) {
   const sr = 44100;
-  const totalSec = (durationMs / 1000) + 0.25;
-  const totalSamples = Math.ceil(totalSec * sr);
+  const renderDur = Math.max(durationMs, 500);
+  const captureDur = (renderDur / 1000) + 0.3;
+  const captureSamples = Math.ceil(captureDur * sr);
 
-  const offlineCtx = new OfflineAudioContext(1, totalSamples, sr);
-  await loadModules(offlineCtx);
+  const tmpCtx = new AudioContext({ sampleRate: sr });
+  if (tmpCtx.state === 'suspended') await tmpCtx.resume();
 
-  const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
-  const node = new AudioWorkletNode(offlineCtx, 'dx7-synth', {
-    numberOfInputs: 0,
-    numberOfOutputs: 1,
-    outputChannelCount: [1],
-    processorOptions: {
-      patch: patch.buffer,
-      note: midi,
-      velocity: 100,
-    },
-  });
-  node.connect(offlineCtx.destination);
+  try {
+    await loadModules(tmpCtx);
 
-  const audioBuffer = await offlineCtx.startRendering();
-  return audioBufferToWavBlob(audioBuffer);
+    const node = new AudioWorkletNode(tmpCtx, 'dx7-synth', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
+
+    const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
+    node.port.postMessage({ type: 'patch', data: patch.buffer });
+    node.port.postMessage({ type: 'midi', data: [0x90, midi, 100] });
+
+    // Capture via deprecated-but-reliable ScriptProcessorNode
+    const collected = new Float32Array(captureSamples);
+    let offset = 0;
+    const scriptNode = tmpCtx.createScriptProcessor(1024, 1, 1);
+    scriptNode.onaudioprocess = (e) => {
+      if (offset >= captureSamples) return;
+      const input = e.inputBuffer.getChannelData(0);
+      const end = Math.min(offset + input.length, captureSamples);
+      collected.set(input.subarray(0, end - offset), offset);
+      offset = end;
+    };
+    node.connect(scriptNode);
+    scriptNode.connect(tmpCtx.destination);
+
+    await new Promise((resolve) => {
+      setTimeout(() => {
+        node.port.postMessage({ type: 'midi', data: [0x80, midi, 0] });
+        setTimeout(() => {
+          scriptNode.disconnect();
+          node.disconnect();
+          resolve();
+        }, 300);
+      }, renderDur);
+    });
+
+    tmpCtx.close();
+    return samplesToWavBlob(collected.subarray(0, offset), sr);
+  } catch (err) {
+    tmpCtx.close();
+    throw err;
+  }
 }
 
-function audioBufferToWavBlob(audioBuffer) {
-  const samples = audioBuffer.getChannelData(0);
-  const sr = audioBuffer.sampleRate;
+function samplesToWavBlob(samples, sr) {
   const numSamples = samples.length;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
