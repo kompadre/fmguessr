@@ -267,6 +267,8 @@ textarea:focus {
     border: 1px solid #333;
     border-radius: 8px;
     padding: 1.5rem;
+    overflow: auto;
+    max-height: 300px;
 }
 
 #tab-content.visible {
@@ -282,12 +284,13 @@ textarea:focus {
    ============================================================ */
 
 #night-sky {
-    position: relative;
-    width: 100%;
-    flex: 1;
-    min-height: 600px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: calc(100vh - 220px);
     display: none;
-    z-index: 0;
+    z-index: -1;
 }
 
 #night-sky.visible {
@@ -374,13 +377,15 @@ h1 {
 }
 
 .night-sky-canvas {
-    position: relative;
-    width: 100%;
-    min-height: 300px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 100%;
     border: 1px dashed #2a2a3e;
     border-radius: 8px;
     background: radial-gradient(ellipse at center, #0d0d1a 0%, #080812 100%);
-    overflow: auto;
 }
 
 .sky-toolbar {
@@ -1260,8 +1265,9 @@ h1 {
 /* Piano wrapper — sticky above footer */
 
 #piano-dock {
-    position: sticky;
+    position: absolute;
     bottom: 0;
+    right: 0;
     z-index: 20;
     display: flex;
     flex-direction: column;
@@ -1321,6 +1327,24 @@ h1 {
 
 .dock-panel.active {
     display: flex;
+}
+
+.dock-panel-log {
+    flex-direction: column;
+}
+
+.dock-log {
+    width: 100%;
+    min-width: 400px;
+    height: 200px;
+    background: #0f0f23;
+    color: #8f8;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0.5rem;
+    font-family: monospace;
+    font-size: 0.75rem;
+    resize: vertical;
 }
 
 .dock-panel .keyboard {

@@ -40,9 +40,6 @@ document.getElementById('imported-header').addEventListener('click', (e) => {
         importedPanel.style.left = origLeft + 'px';
         importedPanel.style.top = origTop + 'px';
         importedPanel.style.zIndex = 1000;
-        if (!importedPanel.classList.contains('minimized')) {
-            importedPanel.style.maxWidth = 'none';
-        }
         e.preventDefault();
     });
     document.addEventListener('mousemove', (e) => {

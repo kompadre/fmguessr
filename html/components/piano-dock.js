@@ -67,11 +67,16 @@ export function createPianoDock(opts) {
     tabKeyboard.textContent = 'Keyboard';
 
     const tabPianoroll = document.createElement('button');
-    tabPianoroll.className = 'dock-tab' + (initialTab !== 'keyboard' ? ' active' : '');
+    tabPianoroll.className = 'dock-tab' + (initialTab === 'pianoroll' ? ' active' : '');
     tabPianoroll.textContent = 'Piano Roll';
+
+    const tabLog = document.createElement('button');
+    tabLog.className = 'dock-tab' + (initialTab === 'log' ? ' active' : '');
+    tabLog.textContent = 'Log';
 
     tabBar.appendChild(tabKeyboard);
     tabBar.appendChild(tabPianoroll);
+    tabBar.appendChild(tabLog);
     wrapper.appendChild(tabBar);
 
     // Panels
@@ -79,26 +84,25 @@ export function createPianoDock(opts) {
     keyboardPanel.className = 'dock-panel' + (initialTab === 'keyboard' ? ' active' : '');
 
     const pianorollPanel = document.createElement('div');
-    pianorollPanel.className = 'dock-panel' + (initialTab !== 'keyboard' ? ' active' : '');
+    pianorollPanel.className = 'dock-panel' + (initialTab === 'pianoroll' ? ' active' : '');
+
+    const logPanel = document.createElement('div');
+    logPanel.className = 'dock-panel dock-panel-log' + (initialTab === 'log' ? ' active' : '');
 
     wrapper.appendChild(keyboardPanel);
     wrapper.appendChild(pianorollPanel);
+    wrapper.appendChild(logPanel);
 
-    function showKeyboard() {
-        tabKeyboard.classList.add('active');
-        tabPianoroll.classList.remove('active');
-        keyboardPanel.classList.add('active');
-        pianorollPanel.classList.remove('active');
-    }
-    function showPianoroll() {
-        tabPianoroll.classList.add('active');
-        tabKeyboard.classList.remove('active');
-        pianorollPanel.classList.add('active');
-        keyboardPanel.classList.remove('active');
+    function activateTab(tab, panel) {
+        [tabKeyboard, tabPianoroll, tabLog].forEach(t => t.classList.remove('active'));
+        [keyboardPanel, pianorollPanel, logPanel].forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        panel.classList.add('active');
     }
 
-    tabKeyboard.addEventListener('click', showKeyboard);
-    tabPianoroll.addEventListener('click', showPianoroll);
+    tabKeyboard.addEventListener('click', () => activateTab(tabKeyboard, keyboardPanel));
+    tabPianoroll.addEventListener('click', () => activateTab(tabPianoroll, pianorollPanel));
+    tabLog.addEventListener('click', () => activateTab(tabLog, logPanel));
 
     // --- Keyboard panel ---
     const note = matchedMidi || 60;
@@ -166,9 +170,19 @@ export function createPianoDock(opts) {
         pianorollPanel.appendChild(placeholder);
     }
 
+    // --- Log panel ---
+    const logTextarea = document.createElement('textarea');
+    logTextarea.id = 'log';
+    logTextarea.readOnly = true;
+    logTextarea.placeholder = 'Log output will appear here...';
+    logTextarea.className = 'dock-log';
+    logPanel.appendChild(logTextarea);
+
     wrapper._updateHighlights = updateHighlights;
     wrapper._pianoroll = pianorollRef;
-    wrapper._showKeyboard = showKeyboard;
-    wrapper._showPianoroll = showPianoroll;
+    wrapper._showKeyboard = () => activateTab(tabKeyboard, keyboardPanel);
+    wrapper._showPianoroll = () => activateTab(tabPianoroll, pianorollPanel);
+    wrapper._showLog = () => activateTab(tabLog, logPanel);
+    wrapper._logPanel = logPanel;
     return wrapper;
 }
