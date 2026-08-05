@@ -5,6 +5,7 @@
 - **Fail Fast:** If Edit fails twice consecutively, STOP and explain the issue.
 - **Whole-Function Replacements:** Prefer replacing entire functions over search-and-replace.
 - **Verify with Diagnostics:** Use `go vet`, `go test`, not manual line inspection.
+- **Commit on Completion:** Once a task is complete and verified (build + tests pass), commit changes immediately with a descriptive message. This preserves a clear history of what changed and why.
 
 ## Code Style
 - Zero-allocation hot paths (DSP, audio buffers). Reuse slices.
