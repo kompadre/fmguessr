@@ -1,93 +1,96 @@
-// DX7 AudioWorkletProcessor — wraps webdx7 WASM (MSFA engine)
-// Based on webdx7 by Jari Kleimola (MIT License) and MSFA by Raph Levien (Apache 2.0)
+// DX7 AudioWorkletProcessor — standalone WASM via msfa_bridge
+// Based on MSFA by Google (Apache 2.0), patched for fmguessr
 
 if (!AudioWorkletGlobalScope._dx7Registered) {
   AudioWorkletGlobalScope._dx7Registered = true;
 
+  const wasiStub = {
+    fd_close: () => 0,
+    fd_fdstat_get: () => 0,
+    fd_seek: () => 0,
+    fd_write: () => 0,
+    poll_oneoff: () => 0,
+    proc_exit: () => {},
+  };
+
   class DX7Processor extends AudioWorkletProcessor {
-    constructor(options) {
+    constructor() {
       super();
-      const WAM = AudioWorkletGlobalScope.WAM.DX7;
-      this.WAM = WAM;
       this.bufsize = 128;
       this.sr = sampleRate;
+      this.ready = false;
 
-      const wam_ctor = WAM.cwrap('createModule', 'number', []);
-      const wam_init = WAM.cwrap('wam_init', null, ['number','number','number','string']);
-      this.wam_onmidi = WAM.cwrap('wam_onmidi', null, ['number','number','number','number']);
-      this.wam_onsysex = WAM.cwrap('wam_onsysex', null, ['number','number','number']);
-      this.wam_onprocess = WAM.cwrap('wam_onprocess', 'number', ['number','number','number']);
-
-      this.inst = wam_ctor();
-      wam_init(this.inst, this.bufsize, this.sr, '');
-
-      const obuf = WAM._malloc(this.bufsize * 4);
-      this.audiobus = WAM._malloc(8);
-      WAM.setValue(this.audiobus, 0, 'i32');
-      WAM.setValue(this.audiobus + 4, obuf, 'i32');
-      this.outBufIdx = obuf / 4;
-
-      const opts = options.processorOptions;
-      if (opts && opts.patch) {
-        this.loadPatch(opts.patch);
-        if (opts.note != null) {
-          this.handleMidi(0x90, opts.note, opts.velocity || 100);
-        }
+      const binary = AudioWorkletGlobalScope._msfaWasmBinary;
+      if (!binary) {
+        console.error('[DX7] No WASM binary found');
+        return;
       }
 
       this.port.onmessage = this.handleMessage.bind(this);
-      this.port.start();
+      this._init(binary);
     }
 
-    handleMessage(e) {
-      const msg = e.data;
-      switch (msg.type) {
-        case 'midi': this.handleMidi(msg.data[0], msg.data[1], msg.data[2]); break;
-        case 'patch': this.loadPatch(msg.data); break;
+    async _init(binary) {
+      try {
+        const { instance } = await WebAssembly.instantiate(binary, {
+          wasi_snapshot_preview1: wasiStub,
+        });
+        this.exp = instance.exports;
+        this.heapI16 = new Int16Array(this.exp.memory.buffer);
+
+        this.exp.init_engine(this.sr);
+        this.ready = true;
+        this.port.postMessage({ type: 'ready' });
+
+        if (this._pending) {
+          for (const msg of this._pending) this.handleMessage(msg);
+          this._pending = null;
+        }
+      } catch (err) {
+        console.error('[DX7] WASM init failed:', err);
       }
     }
 
-    // Load patch as DX7 sysex bank dump (slot 0), same as demo's dx7.setPatch()
+    handleMessage(e) {
+      if (!this.ready) {
+        if (!this._pending) this._pending = [];
+        this._pending.push(e);
+        return;
+      }
+      const msg = e.data;
+      switch (msg.type) {
+        case 'patch': this.loadPatch(msg.data); break;
+        case 'midi':
+          if (msg.data[0] === 0x90) this.exp.note_on(msg.data[1], msg.data[2]);
+          else if (msg.data[0] === 0x80) this.exp.note_off(msg.data[1]);
+          break;
+      }
+    }
+
     loadPatch(data) {
       const voice = new Uint8Array(data);
       if (voice.length < 128) return;
-
-      // Build 4104-byte DX7 sysex: 6 header + 4096 data + 1 checksum + 1 EOX
-      const sysex = new Uint8Array(4104);
-      sysex[0] = 0xF0; // Sysex start
-      sysex[1] = 0x43; // Yamaha ID
-      sysex[2] = 0x00; // Sub-status + channel
-      sysex[3] = 0x09; // Format: 32 voices
-      sysex[4] = 0x20; // Data length MSB (4096)
-      sysex[5] = 0x00; // Data length LSB
-      // Copy voice into slot 0 (first 128 bytes of 4096-byte data block)
-      sysex.set(voice, 6);
-      // Remaining 3968 bytes stay zero (empty slots)
-      // Checksum: XOR of 4096 data bytes, complemented & 0x7F
-      let checksum = 0;
-      for (let i = 6; i < 6 + 4096; i++) checksum ^= sysex[i];
-      sysex[6 + 4096] = (~checksum) & 0x7F;
-      sysex[6 + 4096 + 1] = 0xF7; // EOX
-
-      const WAM = this.WAM;
-      const buf = WAM._malloc(sysex.length);
-      for (let i = 0; i < sysex.length; i++)
-        WAM.setValue(buf + i, sysex[i], 'i8');
-      this.wam_onsysex(this.inst, buf, sysex.length);
-      WAM._free(buf);
-
-      // Select slot 0 via Program Change
-      this.handleMidi(0xC0, 0, 0);
-    }
-
-    handleMidi(status, data1, data2) {
-      this.wam_onmidi(this.inst, status, data1, data2);
+      // Allocate temp buffer in WASM heap, copy voice, load, free
+      const ptr = this.exp._Znam(128);
+      new Uint8Array(this.exp.memory.buffer).set(voice.subarray(0, 128), ptr);
+      this.exp.load_voice(ptr);
+      this.exp._ZdaPv(ptr);
     }
 
     process(inputs, outputs) {
-      const WAM = this.WAM;
-      this.wam_onprocess(this.inst, this.audiobus, 0);
-      outputs[0][0].set(WAM.HEAPF32.subarray(this.outBufIdx, this.outBufIdx + this.bufsize));
+      if (!this.ready) return true;
+
+      // render_audio returns pointer to int16 buffer
+      const ptr = this.exp.render_audio(this.bufsize);
+      if (!ptr) return true;
+
+      // Update heap view (memory may have grown)
+      const heapI16 = new Int16Array(this.exp.memory.buffer);
+      const out = outputs[0][0];
+      const i16base = ptr >> 1;
+      for (let i = 0; i < this.bufsize; i++) {
+        out[i] = heapI16[i16base + i] * (1.0 / 32768.0);
+      }
       return true;
     }
   }

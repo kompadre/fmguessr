@@ -1,5 +1,5 @@
-// DX7 Synth — client-side DX7 rendering via webdx7 WASM
-// Based on webdx7 by Jari Kleimola (MIT License) and MSFA by Raph Levien (Apache 2.0)
+// DX7 Synth — client-side DX7 rendering via patched MSFA WASM
+// Based on MSFA by Google (Apache 2.0), patched for fmguessr
 
 let dx7Node = null;
 let dx7Ready = false;
@@ -11,8 +11,7 @@ export function isDx7Ready() {
 
 async function loadModules(audioCtx) {
   const base = new URL('./wasm/', import.meta.url).pathname;
-  await audioCtx.audioWorklet.addModule(base + 'dx7.wasm.js');
-  await audioCtx.audioWorklet.addModule(base + 'dx7.js');
+  await audioCtx.audioWorklet.addModule(base + 'msfa.wasm.js');
   await audioCtx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
 }
 
@@ -30,6 +29,16 @@ export async function initDx7Synth(audioCtx) {
         outputChannelCount: [1],
       });
       dx7Node.connect(audioCtx.destination);
+
+      // Wait for the processor to finish WASM init
+      await new Promise((resolve) => {
+        dx7Node.port.onmessage = (e) => {
+          if (e.data.type === 'ready') resolve();
+        };
+        // Fallback: resolve after 2s even if no ready message
+        setTimeout(resolve, 2000);
+      });
+
       dx7Ready = true;
       return true;
     } catch (err) {
@@ -54,7 +63,6 @@ export function playNoteRealtime(voiceData, midi, velocity = 100) {
   if (!dx7Ready || !dx7Node) return null;
   const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
   dx7Node.port.postMessage({ type: 'patch', data: patch.buffer });
-  // Note On after patch loads (sysex must be processed first by the ring buffer)
   dx7Node.port.postMessage({ type: 'midi', data: [0x90, midi, velocity] });
   return () => {
     dx7Node.port.postMessage({ type: 'midi', data: [0x80, midi, 0] });
@@ -77,6 +85,14 @@ export async function renderOffline(voiceData, midi, durationMs) {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [1],
+    });
+
+    // Wait for processor WASM init
+    await new Promise((resolve) => {
+      node.port.onmessage = (e) => {
+        if (e.data.type === 'ready') resolve();
+      };
+      setTimeout(resolve, 2000);
     });
 
     const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
