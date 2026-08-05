@@ -282,12 +282,66 @@ textarea:focus {
 #night-sky {
     position: relative;
     width: 100%;
-    min-height: 300px;
+    height: 1200px;
     display: none;
 }
 
 #night-sky.visible {
     display: block;
+}
+
+/* Imported panel — minimizable, movable container */
+.imported-panel {
+    width: 100%;
+    max-width: 500px;
+    background-color: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    display: none;
+}
+
+.imported-panel.visible {
+    display: block;
+}
+
+.imported-panel.minimized .imported-body {
+    display: none;
+}
+
+.imported-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.8rem;
+    cursor: move;
+    user-select: none;
+    border-bottom: 1px solid #2a2a3e;
+}
+
+.imported-header:hover {
+    background: rgba(233, 69, 96, 0.05);
+}
+
+.imported-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #ccc;
+    letter-spacing: 0.03em;
+}
+
+.imported-panel .config-arrow {
+    font-size: 0.7rem;
+    color: #666;
+    transition: transform 0.2s;
+}
+
+.imported-panel.minimized .config-arrow {
+    transform: rotate(-90deg);
+}
+
+.imported-body {
+    padding: 0;
 }
 
 .night-sky-canvas {

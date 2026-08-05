@@ -11,6 +11,45 @@ const fileName = document.getElementById('file-name');
 const log = document.getElementById('log');
 const tabsEl = document.getElementById('tabs');
 const tabContent = document.getElementById('tab-content');
+const importedPanel = document.getElementById('imported-panel');
+
+function showImportedPanel() {
+    importedPanel.classList.add('visible');
+}
+
+// Imported panel: minimize toggle
+document.getElementById('imported-header').addEventListener('click', (e) => {
+    if (e.target.closest('.config-arrow') || e.currentTarget === e.target) {
+        importedPanel.classList.toggle('minimized');
+    }
+});
+
+// Imported panel: drag by header
+(() => {
+    const header = document.getElementById('imported-header');
+    let dragging = false, startX, startY, origLeft, origTop;
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.config-arrow')) return;
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = importedPanel.getBoundingClientRect();
+        origLeft = rect.left;
+        origTop = rect.top;
+        importedPanel.style.position = 'fixed';
+        importedPanel.style.left = origLeft + 'px';
+        importedPanel.style.top = origTop + 'px';
+        importedPanel.style.zIndex = 1000;
+        importedPanel.style.maxWidth = 'none';
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        importedPanel.style.left = (origLeft + e.clientX - startX) + 'px';
+        importedPanel.style.top = (origTop + e.clientY - startY) + 'px';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+})();
 const baseUrl = window.location.origin.indexOf("localhost") > -1 ? "http://localhost:8080" : window.location.origin;
 
 let pollInterval = null;
@@ -202,6 +241,7 @@ async function clearAllSessions() {
     tabsEl.classList.remove('visible');
     tabContent.innerHTML = '';
     tabContent.classList.remove('visible');
+    importedPanel.classList.remove('visible');
     document.getElementById('piano-dock').innerHTML = '';
     if (pianorollInstance) pianorollInstance.stopPlayback();
     pianorollInstance = null;
@@ -1355,6 +1395,7 @@ function createSyxTabFromData(tabId, name, patches) {
     const tab = tabsEl.querySelector(`[data-tab-id="${tabId}"]`);
     if (tab) tabsEl.appendChild(tab);
     tabsEl.classList.add('visible');
+    showImportedPanel();
     switchTab(tabId);
 }
 
@@ -1720,6 +1761,7 @@ function addTab(index) {
     tab.addEventListener('click', () => showJob(index));
     tabsEl.appendChild(tab);
     tabsEl.classList.add('visible');
+    showImportedPanel();
     job.tabEl = tab;
 
     // Create per-job content div inside tabContent
@@ -1751,6 +1793,7 @@ function showOnlyTabContent(id) {
         tc.classList.toggle('visible', tc.id === id);
     });
     tabContent.classList.add('visible');
+    showImportedPanel();
 }
 
 function upgradeTab(index) {
@@ -2027,6 +2070,7 @@ function renderProbe(index) {
     });
 
     tabContent.classList.add('visible');
+    showImportedPanel();
 }
 
 function roundForInput(val) {
@@ -2431,6 +2475,7 @@ function renderResults(index) {
     }
 
     tabContent.classList.add('visible');
+    showImportedPanel();
 }
 
 function appendLog(message) {
