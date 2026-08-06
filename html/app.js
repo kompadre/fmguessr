@@ -2472,6 +2472,7 @@ function renderResults(index) {
 }
 
 function appendLog(message) {
+    const log = document.getElementById("log");
     const timestamp = new Date().toLocaleTimeString();
     log.value += `[${timestamp}] ${message}\n`;
     log.scrollTop = log.scrollHeight;
