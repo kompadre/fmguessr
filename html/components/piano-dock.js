@@ -53,7 +53,6 @@ const PIANO_NOTES = [
 
 export function createPianoDock(opts) {
     const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, activeVoiceData, initialTab } = opts;
-    const disabled = !playNoteFn;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'piano-dock-inner';
@@ -109,7 +108,7 @@ export function createPianoDock(opts) {
 
     const label = document.createElement('div');
     label.className = 'keyboard-label';
-    label.textContent = disabled ? 'Load a patch to play' : 'Click to preview note';
+    label.textContent = 'Click to preview note';
     keyboardPanel.appendChild(label);
 
     const kb = document.createElement('div');
@@ -123,17 +122,16 @@ export function createPianoDock(opts) {
         if (n.midi === note) key.classList.add('matched');
         if (n.white) key.textContent = n.name;
 
-        if (!disabled) {
-            let pressed = false;
-            key.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                pressed = true;
-                key.classList.add('pressed');
-                playNoteFn(n.midi);
-            });
-            key.addEventListener('mouseup', () => { pressed = false; key.classList.remove('pressed'); });
-            key.addEventListener('mouseleave', () => { if (pressed) key.classList.remove('pressed'); });
-        }
+        const playFn = playNoteFn || (() => {});
+        let pressed = false;
+        key.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            pressed = true;
+            key.classList.add('pressed');
+            playFn(n.midi);
+        });
+        key.addEventListener('mouseup', () => { pressed = false; key.classList.remove('pressed'); });
+        key.addEventListener('mouseleave', () => { if (pressed) key.classList.remove('pressed'); });
 
         keyElements[n.midi] = key;
         kb.appendChild(key);
@@ -153,22 +151,15 @@ export function createPianoDock(opts) {
     updateHighlights();
 
     // --- Pianoroll panel ---
-    let pianorollRef = null;
-    if (!disabled) {
-        pianorollRef = createPianoroll({
-            notes: pianorollNotes,
-            playNoteFn,
-            onNotesChange: updateHighlights,
-            activePatchId,
-            activeVoiceData,
-        });
-        pianorollPanel.appendChild(pianorollRef.element);
-    } else {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'pianoroll-placeholder';
-        placeholder.textContent = 'Load a patch to use Piano Roll';
-        pianorollPanel.appendChild(placeholder);
-    }
+    const pianorollPlayFn = playNoteFn || (() => {});
+    const pianorollRef = createPianoroll({
+        notes: pianorollNotes,
+        playNoteFn: pianorollPlayFn,
+        onNotesChange: updateHighlights,
+        activePatchId,
+        activeVoiceData,
+    });
+    pianorollPanel.appendChild(pianorollRef.element);
 
     // --- Log panel ---
     const logTextarea = document.createElement('textarea');

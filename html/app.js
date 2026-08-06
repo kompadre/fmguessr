@@ -252,8 +252,7 @@ function rebuildPianoDock(midiNote, job) {
     if (pianorollInstance) pianorollInstance.stopPlayback();
     pianoDock.innerHTML = '';
 
-    const hasVoice = !!(activeSyxVoiceData || job);
-    const playFn = hasVoice ? (midi, durationMs, voiceData) => playNote(midi, job || null, voiceData || activeSyxVoiceData, durationMs) : null;
+    const playFn = (midi, durationMs, voiceData) => playNote(midi, job || null, voiceData || activeSyxVoiceData, durationMs);
 
     const dock = createPianoDock({
         matchedMidi: midiNote || 60,
