@@ -9,6 +9,8 @@
 - Never call `LoadCodebook()` or `LoadTimbreCodebook()` directly — use `loadCodebooksOnce()` in `matcher.go`.
 - Wrap errors: `fmt.Errorf("context: %w", err)`.
 - Match existing code style in each file. Don't introduce conventions that conflict with neighbors.
+- Never call `rebuildPianoDock()` — it was removed. Piano dock is static. Use `currentJob` mutable reference for playback context.
+- Verify JS changes with `node --check html/app.js`.
 
 ## Commands
 
@@ -60,3 +62,18 @@ go test -race ./pkg/match/...        # Race detector
 - Hann windows: `getHannWindow()` via `sync.Map`.
 - Elite signatures: `EliteCohort.TryInsert` caches `Encode()` results.
 - Session files: `exports/sessions/<hash>.bin`, atomic write, pruned after 1h.
+
+**Frontend (Vanilla JS, no framework):**
+- `html/app.js`: main orchestrator, tab management, polling, patch rows, batch rendering
+- `html/components/piano-dock.js`: static dock — keyboard | pianoroll | voicebank | log tabs, created once at startup via `initPianoDock()`
+- `html/components/pianoroll.js`: sequencer, `draw()` is idempotent, uses `requestAnimationFrame` loop, exports `_pianoroll` with `setActivePatch()`/`stopPlayback()`
+- `html/components/voicebank.js`: voice palette, persists to localStorage (`fmguessr_voices`), calls `pianorollRef.setActivePatch()` on selection
+- `html/components/patch.js`: patch list rows, `.matched` class for active patch highlight
+- `html/components/night-sky.js`: floating patch display with galactic core spinner
+- `html/synth/dx7-synth.js`: Web Audio API layer — `initDx7Synth()`, `playNoteRealtime()`, `renderOffline()`, batch waveforms via offline graph
+- `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine
+- Mutable globals: `activeSyxVoiceData`, `activePianorollPatchId`, `activeKeyboardNote`, `currentJob`
+- Pianoroll notes store per-note `voiceData` (patch that was active when drawn)
+- Night sky patches use `activeKeyboardNote` for playback; imported match results use `job.probeData.midi_note`
+
+**Deploy:** `make deploy` stages to `deploy/app/`. Docker via `deploy/Dockerfile` + `deploy/docker-compose.yml`.
