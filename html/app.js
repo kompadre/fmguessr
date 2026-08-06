@@ -161,6 +161,9 @@ async function restoreSessions() {
         } else if (job.statusUrl) {
             // Job was in-progress when page was unloaded — resume polling
             inProgressJobs.push(idx);
+        } else {
+            // Probe completed but match never started — remove spinner
+            upgradeTab(idx);
         }
     }
 
