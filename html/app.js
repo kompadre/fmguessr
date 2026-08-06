@@ -1680,6 +1680,10 @@ async function checkStatus(jobIndex) {
             data = JSON.parse(text);
         } catch {
             appendLog(`[status] ${text}`);
+            if (tabLabel) tabLabel.textContent = job.fileName + ' (failed)';
+            const tabSpinner = job.tabEl ? job.tabEl.querySelector('.spinner') : null;
+            if (tabSpinner) tabSpinner.remove();
+            advanceQueue();
             return;
         }
 
@@ -1723,6 +1727,13 @@ async function checkStatus(jobIndex) {
         }
     } catch (err) {
         appendLog(`[status error] ${err.message}`);
+        if (job.tabEl) {
+            const tabLabel = job.tabEl.querySelector('.tab-label');
+            if (tabLabel) tabLabel.textContent = job.fileName + ' (failed)';
+            const tabSpinner = job.tabEl.querySelector('.spinner');
+            if (tabSpinner) tabSpinner.remove();
+        }
+        advanceQueue();
     }
 }
 
