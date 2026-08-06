@@ -1368,6 +1368,93 @@ h1 {
     flex-direction: column;
     align-items: center;
     padding: 0.3rem 0;
+    flex: 1;
+    min-width: 0;
+}
+
+.pianoroll-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+}
+
+/* VoiceBank */
+.voicebank {
+    min-width: 100px;
+    max-width: 140px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background: #12121f;
+    flex-shrink: 0;
+}
+
+.voicebank-header {
+    font-size: 0.7rem;
+    color: #666;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid #2a2a3e;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.voicebank-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.voicebank-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.72rem;
+    color: #aaa;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-bottom: 1px solid #1e1e30;
+    min-height: 24px;
+}
+
+.voicebank-item:hover {
+    background: #1a2744;
+}
+
+.voicebank-item.active {
+    background: #16213e;
+    color: #fff;
+}
+
+.voicebank-item.voicebank-empty {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.voicebank-item.voicebank-drop-target {
+    border-top: 2px solid #e94560;
+}
+
+.voicebank-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.voicebank-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.voicebank-placeholder {
+    color: #333;
+    font-size: 0.65rem;
+}
+
+.voicebank-drag-over {
+    border-color: #e94560;
 }
 
 .pianoroll-controls {

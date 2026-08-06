@@ -393,6 +393,10 @@ export function createPianoroll(opts) {
             draw();
             renderLegend();
         },
+        setActivePatch(patchId, voiceData) {
+            opts.activePatchId = patchId;
+            opts.activeVoiceData = voiceData;
+        },
         colorForPatch,
     };
 }

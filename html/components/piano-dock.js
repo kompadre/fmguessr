@@ -1,4 +1,5 @@
 import { createPianoroll } from './pianoroll.js';
+import { createVoiceBank } from './voicebank.js';
 
 const PIANO_NOTES = [
     { midi: 36, name: 'C2',  white: true },
@@ -156,7 +157,19 @@ export function createPianoDock(opts) {
     }
     updateHighlights();
 
-    // --- Pianoroll panel ---
+    // --- Pianoroll panel (voicebank + pianoroll side by side) ---
+    const pianorollRow = document.createElement('div');
+    pianorollRow.className = 'pianoroll-row';
+
+    const voiceBank = createVoiceBank({
+        onSelect: (entry) => {
+            if (pianorollRef) {
+                pianorollRef.setActivePatch(entry.patchId, entry.voiceData);
+            }
+        },
+    });
+    pianorollRow.appendChild(voiceBank);
+
     const pianorollPlayFn = playNoteFn || (() => {});
     const pianorollRef = createPianoroll({
         notes: pianorollNotes,
@@ -165,7 +178,8 @@ export function createPianoDock(opts) {
         activePatchId,
         activeVoiceData,
     });
-    pianorollPanel.appendChild(pianorollRef.element);
+    pianorollRow.appendChild(pianorollRef.element);
+    pianorollPanel.appendChild(pianorollRow);
 
     // --- Log panel ---
     const logTextarea = document.createElement('textarea');
@@ -177,6 +191,7 @@ export function createPianoDock(opts) {
 
     wrapper._updateHighlights = updateHighlights;
     wrapper._pianoroll = pianorollRef;
+    wrapper._voiceBank = voiceBank;
     wrapper._showKeyboard = () => activateTab(tabKeyboard, keyboardPanel);
     wrapper._showPianoroll = () => activateTab(tabPianoroll, pianorollPanel);
     wrapper._showLog = () => activateTab(tabLog, logPanel);
