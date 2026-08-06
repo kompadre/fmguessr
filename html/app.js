@@ -58,6 +58,7 @@ let activePianorollPatchId = null; // patch name/id for pianoroll note coloring
 let activeKeyboardNote = 60; // last-clicked keyboard note (used for detached patch playback)
 let pianorollNotes = []; // [{midi, start, dur, patchId, color}]
 let pianorollInstance = null; // current pianoroll component instance
+let currentJob = null; // current job for pianoroll/keyboard playback
 
 const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
 
@@ -246,20 +247,19 @@ async function clearAllSessions() {
     tabContent.innerHTML = '';
     tabContent.classList.remove('visible');
     importedPanel.classList.remove('visible');
-    document.getElementById('piano-dock').innerHTML = '';
     if (pianorollInstance) pianorollInstance.stopPlayback();
-    pianorollInstance = null;
+    pianorollNotes.length = 0;
+    currentJob = null;
     pianorollNotes.length = 0;
     renderFavorites();
     updateClearBtn();
 }
 
-function rebuildPianoDock(midiNote, job) {
+function initPianoDock() {
     const pianoDock = document.getElementById('piano-dock');
-    if (pianorollInstance) pianorollInstance.stopPlayback();
     pianoDock.innerHTML = '';
 
-    const playFn = (midi, durationMs, voiceData) => playNote(midi, job || null, voiceData || activeSyxVoiceData, durationMs);
+    const playFn = (midi, durationMs, voiceData) => playNote(midi, currentJob || null, voiceData || activeSyxVoiceData, durationMs);
 
     const dock = createPianoDock({
         matchedMidi: activeKeyboardNote,
@@ -1900,7 +1900,7 @@ function switchTab(tabId) {
         }
     }
 
-    rebuildPianoDock();
+    currentJob = null;
 
     // Make patch rows set the active voice_data on click
     if (syxContent) {
@@ -1938,7 +1938,7 @@ function renderProbe(index) {
     const locked = !!job.statusUrl;
     const el = ensureTabContent('tab-wav-' + index);
     el.innerHTML = '';
-    rebuildPianoDock();
+    currentJob = null;
 
     const header = document.createElement('div');
     header.className = 'config-header' + (locked ? ' collapsed' : '');
@@ -2495,8 +2495,8 @@ function renderResults(index) {
         highlightPatchRow(fullList, job.selectedMatch);
     }
 
-    // Piano — anchored above footer in piano-dock
-    rebuildPianoDock(data.midi_note, job);
+    // Piano — update active job
+    currentJob = job;
 
     // Batch-render waveforms for match results
     const matchEls = [];
@@ -2649,7 +2649,7 @@ editSlider.addEventListener('input', () => {
 restoreSessions();
 restoreSyxTabs();
 loadFavorites();
-rebuildPianoDock();
+initPianoDock();
 initSyxUpload();
 initNightSky({
     onPlay: async (match) => {
