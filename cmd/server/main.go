@@ -408,6 +408,12 @@ func (s *Server) processJob(job *Job) {
 	job.FormantMatches = formantMatches
 	job.Favorites = favoriteMatches
 	s.mu.Unlock()
+
+	// Persist job result for recovery after server restart
+	resultPath := filepath.Join(jobDir, "result.json")
+	if jsonData, err := json.MarshalIndent(job, "", "  "); err == nil {
+		_ = os.WriteFile(resultPath, jsonData, 0644)
+	}
 }
 
 func (s *Server) failJob(job *Job, errMsg string) {
@@ -561,6 +567,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	job, exists := s.jobs[jobID]
 	if !exists {
 		s.mu.RUnlock()
+		// Job not in memory — check for persisted result (server may have restarted)
+		resultPath := filepath.Join(s.exportDir, jobID, "result.json")
+		if data, err := os.ReadFile(resultPath); err == nil {
+			var recovered Job
+			if jsonErr := json.Unmarshal(data, &recovered); jsonErr == nil {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(recovered)
+				return
+			}
+		}
+		// Check if job directory exists (job was created but not completed)
+		jobDir := filepath.Join(s.exportDir, jobID)
+		if _, err := os.Stat(jobDir); err == nil {
+			// Directory exists but no result.json — job was interrupted
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"job_id": jobID,
+				"status": "failed",
+				"error":  "Server restarted before job completed",
+			})
+			return
+		}
 		http.Error(w, `{"error":"Job not found"}`, http.StatusNotFound)
 		return
 	}
