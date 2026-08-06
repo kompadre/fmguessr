@@ -2367,11 +2367,13 @@ function renderResults(index) {
         highlightPatchRow(fullList, m);
     };
 
+    const detectedNote = job.probeData ? (job.probeData.midi_note || 60) : 60;
+
     const onPlayFn = async (m) => {
         if (m.voice_data) {
             await ensureDx7Synth();
             if (isDx7Ready()) {
-                const stop = playNoteRealtime(m.voice_data, 60);
+                const stop = playNoteRealtime(m.voice_data, detectedNote);
                 if (stop) setTimeout(stop, 3000);
                 return;
             }
@@ -2506,12 +2508,13 @@ function renderResults(index) {
         });
     });
     if (matchEls.length > 0) {
+        const midiNote = data.midi_note || 60;
         batchRenderWaveforms(matchEls, (canvas, blob) => {
             blob.arrayBuffer().then(buf => {
                 const samples = decodeWavSamples(buf);
                 if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
             });
-        });
+        }, midiNote);
     }
 
     tabContent.classList.add('visible');

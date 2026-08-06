@@ -201,7 +201,7 @@ function refreshHeapViews() {
   }
 }
 
-export async function batchRenderWaveforms(patches, onResult) {
+export async function batchRenderWaveforms(patches, onResult, midiNote = 60) {
   if (!(await ensureWasmExports())) return;
 
   const sr = 44100;
@@ -225,7 +225,7 @@ export async function batchRenderWaveforms(patches, onResult) {
       wasmExports.load_voice(ptr);
       wasmExports._ZdaPv(ptr);
 
-      wasmExports.note_on(60, 100);
+      wasmExports.note_on(midiNote, 100);
       const samplesPtr = wasmExports.render_audio(nSamples);
 
       refreshHeapViews();
