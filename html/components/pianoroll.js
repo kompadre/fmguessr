@@ -1,7 +1,14 @@
-// Pianoroll: 1.5 octaves (C4–B5) × 1 measure of 4/4 (16 sixteenth notes)
+// Pianoroll: 3 octaves (C3–C6) × 1 measure of 4/4 (16 sixteenth notes)
 // Click+drag creates notes, double-click removes, sequencer plays all notes.
 
 const NOTES = [
+    { midi: 84, name: 'C6',  white: true },
+    { midi: 83, name: 'B5',  white: true },
+    { midi: 82, name: 'A#5', white: false },
+    { midi: 81, name: 'A5',  white: true },
+    { midi: 80, name: 'G#5', white: false },
+    { midi: 79, name: 'G5',  white: true },
+    { midi: 78, name: 'F#5', white: false },
     { midi: 77, name: 'F5',  white: true },
     { midi: 76, name: 'E5',  white: true },
     { midi: 75, name: 'D#5', white: false },
@@ -20,6 +27,18 @@ const NOTES = [
     { midi: 62, name: 'D4',  white: true },
     { midi: 61, name: 'C#4', white: false },
     { midi: 60, name: 'C4',  white: true },
+    { midi: 59, name: 'B3',  white: true },
+    { midi: 58, name: 'A#3', white: false },
+    { midi: 57, name: 'A3',  white: true },
+    { midi: 56, name: 'G#3', white: false },
+    { midi: 55, name: 'G3',  white: true },
+    { midi: 54, name: 'F#3', white: false },
+    { midi: 53, name: 'F3',  white: true },
+    { midi: 52, name: 'E3',  white: true },
+    { midi: 51, name: 'D#3', white: false },
+    { midi: 50, name: 'D3',  white: true },
+    { midi: 49, name: 'C#3', white: false },
+    { midi: 48, name: 'C3',  white: true },
 ];
 
 const COLS = 16; // 16 sixteenth notes = 1 measure of 4/4

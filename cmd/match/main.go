@@ -21,7 +21,7 @@ func main() {
 	modelPath := flag.String("model", "", "path to ONNX model for NN prediction (optional)")
 	generations := flag.Int("generations", 200, "GA generations")
 	population := flag.Int("population", 128, "GA population size (32-256)")
-	autoIndex := flag.Bool("auto-index", true, "automatically index best result into codebook")
+	autoIndex := flag.Bool("auto-index", false, "automatically index best result into codebook")
 	beam := flag.Bool("beam", false, "enable constructive beam search (experimental)")
 	beamWidth := flag.Int("beam-width", 4, "beam search width (K best candidates per step)")
 	beamRenders := flag.Int("beam-renders", 20000, "beam search render budget")
@@ -207,27 +207,27 @@ func main() {
 
 	// Run optimization
 	cfg := match.Config{
-		RenderDur:       *duration,
-		MIDINote:        uint8(*note),
-		NoteFreq:        noteFreq,
-		CodebookPath:    *codebookPath,
-		ModelPath:       *modelPath,
-		Verbose:         *verbose,
-		GA:              gaCfg,
-		UseBeamSearch:   *beam,
-		BeamWidth:       *beamWidth,
-		BeamMaxRenders:  *beamRenders,
+		RenderDur:      *duration,
+		MIDINote:       uint8(*note),
+		NoteFreq:       noteFreq,
+		CodebookPath:   *codebookPath,
+		ModelPath:      *modelPath,
+		Verbose:        *verbose,
+		GA:             gaCfg,
+		UseBeamSearch:  *beam,
+		BeamWidth:      *beamWidth,
+		BeamMaxRenders: *beamRenders,
 		CSPOA: match.CSPOAConfig{
 			Enabled:    *cspoa,
 			MaxRenders: *cspoaBudget,
 		},
-		ClassifierPath:  *classifier,
-		ClassifierOnly:  *classifierOnly,
-		Ctx:             ctx,
-		Encoder:           encoder,
-		TargetTrajectory:  trajectorySpec,
-		TargetLFOSpectrum: lfoSpectrum,
-		PhaseBounds:       phaseBounds,
+		ClassifierPath:       *classifier,
+		ClassifierOnly:       *classifierOnly,
+		Ctx:                  ctx,
+		Encoder:              encoder,
+		TargetTrajectory:     trajectorySpec,
+		TargetLFOSpectrum:    lfoSpectrum,
+		PhaseBounds:          phaseBounds,
 		TrajectoryAlphaStart: 0.1,
 		TrajectoryAlphaEnd:   0.8,
 		TrajectoryConfig:     match.DefaultTrajectoryConfig(),
