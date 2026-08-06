@@ -161,9 +161,12 @@ async function restoreSessions() {
         } else if (job.statusUrl) {
             // Job was in-progress when page was unloaded — resume polling
             inProgressJobs.push(idx);
-        } else {
+        } else if (job.probeData) {
             // Probe completed but match never started — remove spinner
             upgradeTab(idx);
+        } else {
+            // Probe was in-flight — re-trigger it
+            reprobeJob(idx);
         }
     }
 
@@ -1648,6 +1651,34 @@ fileInput.addEventListener('change', async () => {
         appendLog(`Error: ${err.message}`);
     }
 });
+
+async function reprobeJob(idx) {
+    const job = jobs[idx];
+    if (!job || !job.file) return;
+    appendLog(`Re-probing: ${job.fileName}`);
+    try {
+        const formData = new FormData();
+        formData.append('file', job.file);
+        const response = await fetch(baseUrl + '/api/probe', {
+            method: 'POST',
+            body: formData
+        });
+        if (!response.ok) {
+            appendLog(`[reprobe ${response.status}] ${await response.text()}`);
+            upgradeTab(idx);
+            return;
+        }
+        const data = await response.json();
+        job.probeData = data;
+        saveSessions();
+        upgradeTab(idx);
+        if (activeJobIndex === idx) renderProbe(idx);
+        appendLog(`Re-probe complete: ${job.fileName}`);
+    } catch (err) {
+        appendLog(`Re-probe error: ${err.message}`);
+        upgradeTab(idx);
+    }
+}
 
 function startPolling() {
     stopPolling();
