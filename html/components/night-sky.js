@@ -110,6 +110,17 @@ function renderFloating(entry) {
     star.title = 'Drag to move';
     el.appendChild(star);
 
+    // Remove button
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'sky-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remove from sky';
+    removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeFloating(entry.id);
+    });
+    el.appendChild(removeBtn);
+
     // Name
     const nameEl = document.createElement('span');
     nameEl.className = 'patch-name';
@@ -271,6 +282,20 @@ function removeFloating(id) {
     saveState();
 }
 
+function removeContainer(id) {
+    // Remove container and any patches inside it
+    const el = canvasEl.querySelector(`[data-container-id="${id}"]`);
+    if (el) {
+        el.querySelectorAll('.patch-float').forEach(p => {
+            const skyId = p.dataset.skyId;
+            if (skyId) untethered = untethered.filter(u => u.id !== skyId);
+        });
+        el.remove();
+    }
+    containers = containers.filter(c => c.id !== id);
+    saveState();
+}
+
 function renderAll() {
     canvasEl.querySelectorAll('.patch-float, .sky-container').forEach(el => el.remove());
     for (const c of containers) renderContainer(c);
@@ -343,7 +368,21 @@ function renderContainer(c) {
 
     const header = document.createElement('div');
     header.className = 'sky-container-header';
-    header.textContent = c.name;
+
+    const headerName = document.createElement('span');
+    headerName.textContent = c.name;
+    header.appendChild(headerName);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'sky-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remove container';
+    removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeContainer(c.id);
+    });
+    header.appendChild(removeBtn);
+
     el.appendChild(header);
 
     const body = document.createElement('div');

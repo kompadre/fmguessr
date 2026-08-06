@@ -764,12 +764,35 @@ h1 {
 .sky-container-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 0.3rem;
     padding: 0.2rem 0.5rem;
     font-size: 0.7rem;
     color: #666;
     cursor: move;
     border-bottom: 1px dashed #2a2a3e;
+}
+
+.sky-remove {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.9rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    line-height: 1;
+    transition: color 0.15s;
+    opacity: 0;
+    flex-shrink: 0;
+}
+
+.patch-float:hover .sky-remove,
+.sky-container:hover .sky-remove {
+    opacity: 1;
+}
+
+.sky-remove:hover {
+    color: #e94560;
 }
 
 .sky-container-body {
