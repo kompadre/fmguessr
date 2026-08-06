@@ -52,7 +52,7 @@ const PIANO_NOTES = [
 ];
 
 export function createPianoDock(opts) {
-    const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, activeVoiceData, initialTab } = opts;
+    const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, activeVoiceData, initialTab, onNoteClick } = opts;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'piano-dock-inner';
@@ -128,6 +128,12 @@ export function createPianoDock(opts) {
             e.preventDefault();
             pressed = true;
             key.classList.add('pressed');
+            if (onNoteClick) {
+                onNoteClick(n.midi);
+                // Update matched highlight
+                kb.querySelectorAll('.key.matched').forEach(k => k.classList.remove('matched'));
+                key.classList.add('matched');
+            }
             playFn(n.midi);
         });
         key.addEventListener('mouseup', () => { pressed = false; key.classList.remove('pressed'); });

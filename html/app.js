@@ -55,6 +55,7 @@ let activeJobIndex = -1;
 let pollQueue = [];
 let activeSyxVoiceData = null; // voice_data of currently selected .syx patch for piano
 let activePianorollPatchId = null; // patch name/id for pianoroll note coloring
+let activeKeyboardNote = 60; // last-clicked keyboard note (used for detached patch playback)
 let pianorollNotes = []; // [{midi, start, dur, patchId, color}]
 let pianorollInstance = null; // current pianoroll component instance
 
@@ -261,11 +262,12 @@ function rebuildPianoDock(midiNote, job) {
     const playFn = (midi, durationMs, voiceData) => playNote(midi, job || null, voiceData || activeSyxVoiceData, durationMs);
 
     const dock = createPianoDock({
-        matchedMidi: midiNote || 60,
+        matchedMidi: activeKeyboardNote,
         playNoteFn: playFn,
         pianorollNotes,
         activePatchId: activePianorollPatchId,
         activeVoiceData: activeSyxVoiceData,
+        onNoteClick: (midi) => { activeKeyboardNote = midi; },
     });
     pianoDock.appendChild(dock);
     pianorollInstance = dock._pianoroll || null;
@@ -2650,9 +2652,10 @@ initNightSky({
         if (match.voice_data) {
             await ensureDx7Synth();
             if (isDx7Ready()) {
-                const stop = playNoteRealtime(match.voice_data, 60);
+                const note = activeKeyboardNote || 60;
+                const stop = playNoteRealtime(match.voice_data, note);
                 if (stop) setTimeout(stop, 3000);
-                const blob = await renderOffline(match.voice_data, 60, 3000);
+                const blob = await renderOffline(match.voice_data, note, 3000);
                 return URL.createObjectURL(blob);
             }
         }
