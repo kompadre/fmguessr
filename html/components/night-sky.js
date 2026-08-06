@@ -110,7 +110,25 @@ function renderFloating(entry) {
     star.title = 'Drag to move';
     el.appendChild(star);
 
-    // Remove button
+    // Name
+    const nameEl = document.createElement('span');
+    nameEl.className = 'patch-name';
+    nameEl.textContent = entry.match.name || ('#' + entry.match.rank);
+    el.appendChild(nameEl);
+
+    // Assign to voicebank (always visible)
+    const assignBtn = document.createElement('button');
+    assignBtn.className = 'patch-assign';
+    assignBtn.textContent = '♫';
+    assignBtn.title = 'Add to voicebank';
+    assignBtn.style.opacity = '1';
+    assignBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (onSelectRef) onSelectRef(entry.match);
+    });
+    el.appendChild(assignBtn);
+
+    // Remove button (last)
     const removeBtn = document.createElement('button');
     removeBtn.className = 'sky-remove';
     removeBtn.textContent = '×';
@@ -120,12 +138,6 @@ function renderFloating(entry) {
         removeFloating(entry.id);
     });
     el.appendChild(removeBtn);
-
-    // Name
-    const nameEl = document.createElement('span');
-    nameEl.className = 'patch-name';
-    nameEl.textContent = entry.match.name || ('#' + entry.match.rank);
-    el.appendChild(nameEl);
 
     if (!entry.minified) {
         appendFullFields(el, entry.match);
@@ -223,20 +235,7 @@ function appendFullFields(el, match) {
     distEl.className = 'patch-col patch-dist';
     distEl.textContent = (match.distance || 0).toFixed(4);
 
-    // Assign
-    const assignBtn = document.createElement('button');
-    assignBtn.className = 'patch-assign';
-    assignBtn.textContent = '♫';
-    assignBtn.title = 'Assign to pianoroll';
-    assignBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (onSelectRef) onSelectRef(match);
-        const dock = document.getElementById('piano-dock');
-        if (dock) dock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    });
-
-    // Append in order after name: spec, algo, fb, dist, assign
-    nameEl.insertAdjacentElement('afterend', assignBtn);
+    // Append in order after name: spec, algo, fb, dist
     nameEl.insertAdjacentElement('afterend', distEl);
     nameEl.insertAdjacentElement('afterend', fbEl);
     nameEl.insertAdjacentElement('afterend', algoEl);

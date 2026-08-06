@@ -1478,10 +1478,10 @@ function createSyxTabInner(tabId, name, patches) {
                     activeSyxVoiceData = patch.voice_data;
                     activePianorollPatchId = displayName;
                     rebuildPianoDock();
-                    // Add to voicebank
+                    // Add to voicebank (re-query dock after rebuild)
                     const dock = document.getElementById('piano-dock');
                     if (dock._voiceBank) dock._voiceBank._addEntry(displayName, patch.voice_data, displayName);
-                    document.getElementById('piano-dock').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    dock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
             },
             onStar: () => {

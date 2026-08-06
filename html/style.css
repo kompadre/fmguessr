@@ -704,6 +704,7 @@ h1 {
     padding: 0.15rem 0.4rem;
     line-height: 1;
     flex-shrink: 0;
+    opacity: 1;
 }
 
 .patch-float:not(.minified) .patch-assign:hover {
@@ -725,14 +726,18 @@ h1 {
 
 .patch-float.minified .patch-spec,
 .patch-float.minified .patch-col,
-.patch-float.minified .patch-assign,
 .patch-float.minified .patch-edit-btn {
     display: none;
 }
 
 .patch-float.minified .patch-star {
     opacity: 1;
-    font-size: 1.1rem;
+}
+
+.patch-float.minified .patch-assign {
+    opacity: 1;
+    font-size: 0.75rem;
+    padding: 0.1rem 0.3rem;
 }
 
 .patch-float.minified .patch-name {
