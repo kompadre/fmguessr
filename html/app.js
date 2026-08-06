@@ -1473,14 +1473,11 @@ function createSyxTabInner(tabId, name, patches) {
             voice_data: patch.voice_data || null,
         }, {
             onSelect: () => {
-                // Assign to piano — set active voice_data and pianoroll patch
                 if (patch.voice_data) {
-                    activeSyxVoiceData = patch.voice_data;
-                    activePianorollPatchId = displayName;
-                    rebuildPianoDock();
-                    // Add to voicebank (re-query dock after rebuild)
                     const dock = document.getElementById('piano-dock');
-                    if (dock._voiceBank) dock._voiceBank._addEntry(displayName, patch.voice_data, displayName);
+                    if (dock._voiceBank) {
+                        dock._voiceBank._addEntry(displayName, patch.voice_data, displayName);
+                    }
                     dock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
             },
@@ -2370,7 +2367,6 @@ function renderResults(index) {
         highlightPatchRow(primaryList, m);
         highlightPatchRow(timbralList, m);
         highlightPatchRow(fullList, m);
-        // Add to voicebank
         if (m.voice_data) {
             const dock = document.getElementById('piano-dock');
             if (dock._voiceBank) dock._voiceBank._addEntry(m.name || ('#' + m.rank), m.voice_data, m.name || ('#' + m.rank));
@@ -2671,9 +2667,10 @@ initNightSky({
     },
     onSelect: (match) => {
         if (match.voice_data) {
-            activeSyxVoiceData = match.voice_data;
-            activePianorollPatchId = match.name;
-            rebuildPianoDock();
+            const dock = document.getElementById('piano-dock');
+            if (dock._voiceBank) {
+                dock._voiceBank._addEntry(match.name || 'Untitled', match.voice_data, match.name);
+            }
         }
     },
     onEdit: (match) => {
