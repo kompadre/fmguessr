@@ -1716,7 +1716,9 @@ async function checkStatus(jobIndex) {
             appendLog(`[${job.fileName}] ${JSON.stringify(data, null, 2)}`);
             const wrapper = document.getElementById('progress-wrapper');
             if (wrapper) wrapper.style.display = 'none';
-            if (tabLabel) tabLabel.textContent = job.fileName;
+            if (tabLabel) tabLabel.textContent = job.fileName + ' (failed)';
+            const tabSpinner = job.tabEl ? job.tabEl.querySelector('.spinner') : null;
+            if (tabSpinner) tabSpinner.remove();
             advanceQueue();
         }
     } catch (err) {
