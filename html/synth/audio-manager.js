@@ -71,7 +71,6 @@ async function initAudio() {
             dx7Node.port.onmessage = (e) => {
                 if (e.data.type === 'ready') resolve();
                 if (e.data.type === 'error') reject(new Error(e.data.error));
-                if (e.data.type === 'debug') console.log('[DX7]', e.data.msg);
             };
             setTimeout(resolve, 2000);
         });
@@ -126,7 +125,6 @@ export function loadVoice(voiceData, slot) {
         channel: slot,
         data: patch.buffer,
     });
-    console.log(`[DX7-LOAD] loadVoice slot=${slot} ch=${slot} len=${patch.length} b64=${(b64Key || '').substring(0, 20)}...`);
 
     channelState[slot] = { voiceData: patch, b64Key };
     return slot;
@@ -167,7 +165,6 @@ export function loadPreviewPatch(voiceData) {
         channel: PREVIEW_CHANNEL,
         data: patch.buffer,
     });
-    console.log(`[DX7-LOAD] loadPreviewPatch slot=${PREVIEW_SLOT} ch=${PREVIEW_CHANNEL} len=${patch.length}`);
 }
 
 export function getPreviewChannel() {
@@ -193,12 +190,8 @@ export function playNoteOnChannel(channel, midi, velocity = 100) {
     }
 
     dx7Node.port.postMessage({ type: 'midi', data: [0x90 | channel, midi, velocity] });
-    console.log(`[DX7-PLAY] NOTE_ON ch=${channel} note=${midi} vel=${velocity}`);
     const stop = () => {
-        if (dx7Node) {
-            dx7Node.port.postMessage({ type: 'midi', data: [0x80 | channel, midi, 0] });
-            console.log(`[DX7-PLAY] NOTE_OFF ch=${channel} note=${midi}`);
-        }
+        if (dx7Node) dx7Node.port.postMessage({ type: 'midi', data: [0x80 | channel, midi, 0] });
         activeNotes.delete(key);
     };
     activeNotes.set(key, stop);

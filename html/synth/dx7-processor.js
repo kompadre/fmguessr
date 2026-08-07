@@ -20,8 +20,6 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       this.sr = sampleRate;
       this.ready = false;
       this.hasError = false;
-      this._renderCount = 0;
-      this._lastDebugTime = 0;
 
       this.port.onmessage = this.handleMessage.bind(this);
 
@@ -44,7 +42,6 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
 
         this.exp.init_engine(this.sr);
 
-        // Get static patch buffer address and create a view
         this.patchPtr = this.exp.get_patch_buffer();
         this.patchView = new Uint8Array(this.exp.memory.buffer, this.patchPtr, 128);
 
@@ -63,7 +60,6 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
     }
 
     refreshHeap() {
-      // Recreate views if memory grew
       if (this.heapI16.buffer !== this.exp.memory.buffer) {
         this.heapI16 = new Int16Array(this.exp.memory.buffer);
         this.patchView = new Uint8Array(this.exp.memory.buffer, this.patchPtr, 128);
@@ -84,12 +80,10 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
         case 'voice-channel':
           this.loadPatch(msg.data, msg.slot);
           this.exp.send_midi(0xC0 | msg.channel, msg.slot, 0);
-          this._debugMidi(0xC0 | msg.channel, msg.slot, 0, 'voice-channel');
           break;
         case 'midi':
         case 'raw-midi':
           this.exp.send_midi(msg.data[0], msg.data[1], msg.data[2]);
-          this._debugMidi(msg.data[0], msg.data[1], msg.data[2], msg.type);
           break;
       }
     }
@@ -98,30 +92,12 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       const voice = new Uint8Array(data);
       if (voice.length < 128) return;
       this.refreshHeap();
-      // Copy directly into static buffer — no malloc/free
       this.patchView.set(voice.subarray(0, 128));
       if (slot > 0 && this.exp.load_voice_channel_from_buffer) {
         this.exp.load_voice_channel_from_buffer(slot);
       } else {
         this.exp.load_voice_from_buffer();
       }
-    }
-
-    _debugMidi(status, d1, d2, source) {
-      const cmd = status & 0xf0;
-      const ch = status & 0x0f;
-      const NAMES = { 0x80: 'NOTE_OFF', 0x90: 'NOTE_ON', 0xA0: 'AFTERTOUCH', 0xB0: 'CC', 0xC0: 'PC', 0xD0: 'PRESSURE', 0xE0: 'PITCHBEND' };
-      const name = NAMES[cmd] || 'UNKNOWN';
-      let detail = '';
-      if (cmd === 0x90) detail = ` note=${d1} vel=${d2}`;
-      else if (cmd === 0x80) detail = ` note=${d1}`;
-      else if (cmd === 0xC0) detail = ` program=${d1}`;
-      else detail = ` d1=${d1} d2=${d2}`;
-      this.port.postMessage({
-        type: 'debug',
-        tag: 'MIDI',
-        msg: `[MIDI] ${name} ch=${ch}${detail} (0x${status.toString(16)} ${d1} ${d2}) [${source}]`,
-      });
     }
 
     process(inputs, outputs) {
@@ -133,30 +109,9 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       this.refreshHeap();
       const out = outputs[0][0];
       const i16base = ptr >> 1;
-
-      // Compute RMS and peak for this block
-      let sumSq = 0;
-      let peak = 0;
       for (let i = 0; i < this.bufsize; i++) {
-        const s = this.heapI16[i16base + i];
-        const absS = s < 0 ? -s : s;
-        if (absS > peak) peak = absS;
-        sumSq += s * s;
-        out[i] = s * (1.0 / 32768.0);
+        out[i] = this.heapI16[i16base + i] * (1.0 / 32768.0);
       }
-      const rms = Math.sqrt(sumSq / this.bufsize);
-
-      this._renderCount++;
-      // Post render debug every ~1s (every ~345 blocks at 128/44100)
-      if (this._renderCount % 345 === 1 || peak > 100) {
-        const now = currentTime;
-        this.port.postMessage({
-          type: 'debug',
-          tag: 'RENDER',
-          msg: `[RENDER] block=${this._renderCount} rms=${rms.toFixed(1)} peak=${peak} samples=${this.bufsize}`,
-        });
-      }
-
       return true;
     }
   }
