@@ -29,8 +29,8 @@ deploy: release
 	cp index.html deploy/app/
 	cp -r html/style.css html/app.js deploy/app/html/
 	cp -r html/components/*.js deploy/app/html/components/
-	cp -r html/synth/dx7-synth.js html/synth/dx7-processor.js deploy/app/html/synth/
-	cp -r html/synth/wasm/msfa.wasm html/synth/wasm/msfa.wasm.js deploy/app/html/synth/wasm/
+	cp -r html/synth/dx7-synth.js html/synth/dx7-processor.js html/synth/audio-manager.js deploy/app/html/synth/
+	cp -r html/synth/wasm/msfa.wasm deploy/app/html/synth/wasm/
 	cp lib/libonnxruntime.so deploy/app/lib/
 	test -f dx7_codebook.bin && cp dx7_codebook.bin deploy/app/ || echo "WARNING: dx7_codebook.bin not found"
 	test -f dx7_codebook_timbre.bin && cp dx7_codebook_timbre.bin deploy/app/ || echo "WARNING: dx7_codebook_timbre.bin not found"

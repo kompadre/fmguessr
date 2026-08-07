@@ -69,6 +69,7 @@ SynthUnit::SynthUnit(RingBuffer *ring_buffer) {
     active_note_[note].keydown = false;
     active_note_[note].sustained = false;
     active_note_[note].live = false;
+    active_note_[note].fadeSamplesRemaining = 0;
   }
   input_buffer_index_ = 0;
   memcpy(patch_data_, epiano, sizeof(epiano));
@@ -110,13 +111,21 @@ void SynthUnit::ConsumeInput(int n_input_bytes) {
 int SynthUnit::AllocateNote() {
   int note = current_note_;
   for (int i = 0; i < max_active_notes; i++) {
-    if (!active_note_[note].keydown) {
+    if (!active_note_[note].keydown && !active_note_[note].live) {
       current_note_ = (note + 1) % max_active_notes;
       return note;
     }
     note = (note + 1) % max_active_notes;
   }
-  return -1;
+  // All 16 busy — steal round-robin slot, fade out old voice
+  int steal = current_note_;
+  if (active_note_[steal].live) {
+    active_note_[steal].dx7_note->keyup();
+    active_note_[steal].keydown = false;
+    active_note_[steal].fadeSamplesRemaining = N;  // 64 samples
+  }
+  current_note_ = (steal + 1) % max_active_notes;
+  return steal;
 }
 
 void SynthUnit::ProgramChange(int p, int ch) {
@@ -139,7 +148,8 @@ int SynthUnit::ProcessMidiMessage(const uint8_t *buf, int buf_size) {
     if (buf_size >= 3) {
       // note off
       for (int note = 0; note < max_active_notes; ++note) {
-        if (active_note_[note].midi_note == buf[1] && 
+        if (active_note_[note].midi_note == buf[1] &&
+            active_note_[note].channel == cmd_ch &&
             active_note_[note].keydown) {
           if (sustain_) {
             active_note_[note].sustained = true;
@@ -147,6 +157,9 @@ int SynthUnit::ProcessMidiMessage(const uint8_t *buf, int buf_size) {
             active_note_[note].dx7_note->keyup();
           }
           active_note_[note].keydown = false;
+          if (active_note_[note].fadeSamplesRemaining == 0) {
+            active_note_[note].fadeSamplesRemaining = N;
+          }
         }
       }
       return 3;
@@ -163,6 +176,7 @@ int SynthUnit::ProcessMidiMessage(const uint8_t *buf, int buf_size) {
         active_note_[note_ix].sustained = sustain_;
         active_note_[note_ix].live = true;
         active_note_[note_ix].channel = cmd_ch;
+        active_note_[note_ix].fadeSamplesRemaining = 0;
         active_note_[note_ix].dx7_note->init(unpacked_patch_[cmd_ch], buf[1], buf[2]);
       }
       return 3;
@@ -319,10 +333,29 @@ void SynthUnit::GetSamples(int n_samples, int16_t *buffer) {
           lfovalues[active_note_[note].channel],
           lfodelays[active_note_[note].channel],
           &controllers_, SynthUnit::GetChannelVolume(active_note_[note].channel));
-        // Diff = this note's contribution -> accumulate into channel buffer
+        // Diff = this note's contribution, apply fade, accumulate into channel buffer
+        int fadeRemaining = active_note_[note].fadeSamplesRemaining;
         for (int j = 0; j < N; ++j) {
+          int32_t diff = audiobuf.get()[j] - saved[j];
+          // Apply per-voice fade envelope (linear ramp to zero)
+          if (fadeRemaining > 0) {
+            int sampleInBlock = N - fadeRemaining + j;
+            if (sampleInBlock < 0) sampleInBlock = 0;
+            if (sampleInBlock >= N) sampleInBlock = N - 1;
+            int32_t fadeGain = ((int32_t)(N - 1 - sampleInBlock) << 16) / (N - 1);
+            diff = (int32_t)(((int64_t)diff * fadeGain) >> 16);
+          }
+          // Re-mix with faded contribution so subsequent voices see correct mix
+          audiobuf.get()[j] = saved[j] + diff;
           if (blockOffset + j < max_channel_samples) {
-            channel_outputs_[ch][blockOffset + j] += audiobuf.get()[j] - saved[j];
+            channel_outputs_[ch][blockOffset + j] += diff;
+          }
+        }
+        // Decrement fade counter, kill voice when fade completes
+        if (fadeRemaining > 0) {
+          active_note_[note].fadeSamplesRemaining = fadeRemaining - N;
+          if (fadeRemaining - N <= 0 && !active_note_[note].keydown) {
+            active_note_[note].live = false;
           }
         }
       }

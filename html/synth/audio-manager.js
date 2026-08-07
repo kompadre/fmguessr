@@ -12,6 +12,9 @@ let initPromise = null;
 // Multi-channel state: channel → { voiceData (Uint8Array), b64Key (string) }
 const channelState = new Array(MAX_CHANNELS).fill(null);
 
+// Active note tracking: "channel:midi" → stopFn
+const activeNotes = new Map();
+
 let onStatusChange = null;
 
 function setState(state) {
@@ -45,23 +48,28 @@ async function initAudio() {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
         setState('loading');
 
-        // Load modules ONCE — static file paths, browser caches them
+        // Load processor module ONCE — static file path, browser caches it
         const base = new URL('./wasm/', import.meta.url).pathname;
-        await ctx.audioWorklet.addModule(base + 'msfa.wasm.js');
         await ctx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
 
-        // Create ONE persistent worklet node
+        // Fetch raw WASM binary on main thread (AudioWorklet has no fetch)
+        const wasmResp = await fetch(base + 'msfa.wasm');
+        const wasmBytes = await wasmResp.arrayBuffer();
+
+        // Create ONE persistent worklet node, pass WASM via processorOptions
         dx7Node = new AudioWorkletNode(ctx, 'dx7-synth', {
             numberOfInputs: 0,
             numberOfOutputs: 1,
             outputChannelCount: [1],
+            processorOptions: { wasmBytes },
         });
         dx7Node.connect(ctx.destination);
 
-        // Wait for WASM ready
-        await new Promise((resolve) => {
+        // Wait for WASM ready (or error)
+        await new Promise((resolve, reject) => {
             dx7Node.port.onmessage = (e) => {
                 if (e.data.type === 'ready') resolve();
+                if (e.data.type === 'error') reject(new Error(e.data.error));
             };
             setTimeout(resolve, 2000);
         });
@@ -144,16 +152,35 @@ export function updateVoice(voiceData, channel) {
 
 /**
  * Play a note on a specific MIDI channel (no patch load).
+ * Tracks active notes per channel:midi — re-triggering same pair sends note-off first.
  * @returns {function|null} stop function
  */
 export function playNoteOnChannel(channel, midi, velocity = 100) {
     if (!isReady() || !dx7Node) return null;
     if (channel < 0 || channel >= MAX_CHANNELS) return null;
 
+    const key = channel + ':' + midi;
+    const existing = activeNotes.get(key);
+    if (existing) {
+        existing();
+        activeNotes.delete(key);
+    }
+
     dx7Node.port.postMessage({ type: 'midi', data: [0x90 | channel, midi, velocity] });
-    return () => {
+    const stop = () => {
         if (dx7Node) dx7Node.port.postMessage({ type: 'midi', data: [0x80 | channel, midi, 0] });
+        activeNotes.delete(key);
     };
+    activeNotes.set(key, stop);
+    return stop;
+}
+
+/**
+ * Release all tracked active notes (for pianoroll stop / shutdown).
+ */
+export function releaseAllNotes() {
+    for (const stop of activeNotes.values()) stop();
+    activeNotes.clear();
 }
 
 /**
@@ -181,18 +208,23 @@ export async function renderOffline(voiceData, midi, durationMs) {
 
     try {
         const base = new URL('./wasm/', import.meta.url).pathname;
-        await offCtx.audioWorklet.addModule(base + 'msfa.wasm.js');
         await offCtx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
+
+        // Fetch raw WASM binary on main thread (AudioWorklet has no fetch)
+        const wasmResp = await fetch(base + 'msfa.wasm');
+        const wasmBytes = await wasmResp.arrayBuffer();
 
         const node = new AudioWorkletNode(offCtx, 'dx7-synth', {
             numberOfInputs: 0,
             numberOfOutputs: 1,
             outputChannelCount: [1],
+            processorOptions: { wasmBytes },
         });
 
-        await new Promise((resolve) => {
+        await new Promise((resolve, reject) => {
             node.port.onmessage = (e) => {
                 if (e.data.type === 'ready') resolve();
+                if (e.data.type === 'error') reject(new Error(e.data.error));
             };
             setTimeout(resolve, 2000);
         });
@@ -255,8 +287,15 @@ function samplesToWavBlob(samples, sr) {
 
 // --- Shutdown hooks (disabled for testing) ---
 
+let _pianorollStopFn = null;
+
 export function setPianorollStop(fn) {
-    // No-op
+    _pianorollStopFn = fn;
+}
+
+function stopPianorollAndRelease() {
+    if (_pianorollStopFn) _pianorollStopFn();
+    releaseAllNotes();
 }
 
 export async function shutdownAll() {

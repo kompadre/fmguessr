@@ -25,7 +25,7 @@ TARGET = msfa.wasm
 
 .PHONY: all clean
 
-all: $(TARGET) $(TARGET).js
+all: $(TARGET)
 
 $(TARGET): $(SRC)
 	zig c++ -target wasm32-wasi -O2 \
@@ -45,8 +45,5 @@ $(TARGET): $(SRC)
 		-Wl,--export=render_audio \
 		-o $(TARGET) $(SRC)
 
-$(TARGET).js: $(TARGET)
-	node encode-msfa-wasm.js $(TARGET)
-
 clean:
-	rm -f $(TARGET) $(TARGET).js
+	rm -f $(TARGET)

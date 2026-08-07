@@ -26,6 +26,7 @@ struct ActiveNote {
   bool sustained;
   bool live;
   int channel;
+  int fadeSamplesRemaining;
   Dx7Note *dx7_note;
 };
 

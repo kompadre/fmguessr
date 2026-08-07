@@ -1,4 +1,4 @@
-// DX7 AudioWorkletProcessor — standalone WASM via msfa_bridge
+// DX7 AudioWorkletProcessor — WASM via processorOptions
 // Based on MSFA by Google (Apache 2.0), patched for fmguessr
 
 if (!AudioWorkletGlobalScope._dx7Registered) {
@@ -11,35 +11,31 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
     fd_write: () => 0,
     poll_oneoff: () => 0,
     proc_exit: () => {},
-    clock_time_get: () => 0,
-  };
-
-  const envStub = {
-    emscripten_notify_memory_growth: () => {},
   };
 
   class DX7Processor extends AudioWorkletProcessor {
-    constructor() {
+    constructor(options) {
       super();
       this.bufsize = 128;
       this.sr = sampleRate;
       this.ready = false;
-
-      const binary = AudioWorkletGlobalScope._msfaWasmBinary;
-      if (!binary) {
-        console.error('[DX7] No WASM binary found');
-        return;
-      }
+      this.hasError = false;
 
       this.port.onmessage = this.handleMessage.bind(this);
-      this._init(binary);
+
+      const wasmBytes = options.processorOptions?.wasmBytes;
+      if (wasmBytes) {
+        this._init(wasmBytes);
+      } else {
+        this.hasError = true;
+        console.error('[DX7] No wasmBytes in processorOptions');
+      }
     }
 
-    async _init(binary) {
+    async _init(wasmBytes) {
       try {
-        const { instance } = await WebAssembly.instantiate(binary, {
+        const { instance } = await WebAssembly.instantiate(wasmBytes, {
           wasi_snapshot_preview1: wasiStub,
-          env: envStub,
         });
         this.exp = instance.exports;
         this.heapI16 = new Int16Array(this.exp.memory.buffer);
@@ -58,7 +54,9 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
           this._pending = null;
         }
       } catch (err) {
+        this.hasError = true;
         console.error('[DX7] WASM init failed:', err);
+        this.port.postMessage({ type: 'error', error: err.message });
       }
     }
 
@@ -86,8 +84,6 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
           this.exp.send_midi(0xC0 | msg.channel, msg.slot, 0);
           break;
         case 'midi':
-          this.exp.send_midi(msg.data[0], msg.data[1], msg.data[2]);
-          break;
         case 'raw-midi':
           this.exp.send_midi(msg.data[0], msg.data[1], msg.data[2]);
           break;
@@ -108,7 +104,7 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
     }
 
     process(inputs, outputs) {
-      if (!this.ready) return true;
+      if (!this.ready || this.hasError) return true;
 
       const ptr = this.exp.render_audio(this.bufsize);
       if (!ptr) return true;

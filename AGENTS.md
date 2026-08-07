@@ -89,6 +89,6 @@ go test -race ./pkg/match/...        # Race detector
 - `html/synth/audio-manager.js`: Singleton AudioContext + AudioWorklet. `acquire()` creates once, `initAudio()` loads modules once. Multi-channel: `loadVoice()`, `playNoteOnChannel()`. No malloc/free — uses static WASM buffers.
 - `html/synth/dx7-synth.js`: Batch waveform rendering only (main thread WASM). No realtime synth code.
 - `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine. Handles `voice-channel`, `midi`, `patch` messages.
-- WASM: `html/synth/wasm/msfa.wasm` (zig c++ build), `msfa.wasm.js` (encoded for AudioWorklet loading). Static buffers: `get_patch_buffer()`, `load_voice_from_buffer()`.
+- WASM: `html/synth/wasm/msfa.wasm` (zig c++ build). Binary fetched on main thread, passed to AudioWorklet via `processorOptions`. Static buffers: `get_patch_buffer()`, `load_voice_from_buffer()`. Voice stealing with 64-sample fade-out.
 
 **Deploy:** `make deploy` stages to `deploy/app/`. Docker via `deploy/Dockerfile` + `deploy/docker-compose.yml`.

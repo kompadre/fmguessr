@@ -3,7 +3,7 @@
 
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
 import { batchRenderWaveforms } from './synth/dx7-synth.js';
-import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, loadVoice, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
+import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, loadVoice, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
 import { patchStore, canvasStore, jobStore, createPatch } from './components/patch-model.js';
 import { initCanvas, addContainer, addPatchToContainer, refreshCanvas } from './components/canvas.js';
 import { createToolbar } from './components/toolbar.js';
