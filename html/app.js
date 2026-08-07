@@ -321,7 +321,13 @@ async function handleSyxUpload(file) {
 function getCanvasOpts() {
     return {
         onPlay: (patch) => {
-            if (patch.voice_data) activeSyxVoiceData = patch.voice_data;
+            if (patch.voice_data) {
+                activeSyxVoiceData = patch.voice_data;
+                // Also add to voice bank so pianoroll has a channel
+                if (pianoDockWrapper && pianoDockWrapper._voiceBank) {
+                    pianoDockWrapper._voiceBank._addEntry(patch.name || 'Untitled', patch.voice_data, patch.name);
+                }
+            }
             return playPatch(patch, activeKeyboardNote);
         },
         onSelect: (patch) => {

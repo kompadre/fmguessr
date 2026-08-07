@@ -2,7 +2,8 @@
 // AudioContext + AudioWorklet initialized once, live for page lifetime.
 // No repeated addModule(), no blob URLs, no re-initialization.
 
-const MAX_CHANNELS = 8;
+const VOICE_BANK_SLOTS = 8;   // Voice bank uses channels 0-7
+const MIDI_CHANNELS = 16;     // DX7 has 16 MIDI channels (0-15)
 
 let ctx = null;
 let dx7Node = null;
@@ -10,7 +11,7 @@ let initialized = false;
 let initPromise = null;
 
 // Multi-channel state: channel → { voiceData (Uint8Array), b64Key (string) }
-const channelState = new Array(MAX_CHANNELS).fill(null);
+const channelState = new Array(VOICE_BANK_SLOTS).fill(null);
 
 // Active note tracking: "channel:midi" → stopFn
 const activeNotes = new Map();
@@ -109,7 +110,7 @@ export function base64ToUint8Array(b64) {
  */
 export function loadVoice(voiceData, slot) {
     if (!isReady() || !dx7Node) return -1;
-    if (slot < 0 || slot >= MAX_CHANNELS) return -1;
+    if (slot < 0 || slot >= VOICE_BANK_SLOTS) return -1;
 
     const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
     const b64Key = typeof voiceData === 'string' ? voiceData : null;
@@ -136,7 +137,7 @@ export function loadVoice(voiceData, slot) {
  */
 export function loadAllVoices(entries) {
     if (!isReady() || !dx7Node) return;
-    for (let i = 0; i < Math.min(entries.length, MAX_CHANNELS); i++) {
+    for (let i = 0; i < Math.min(entries.length, VOICE_BANK_SLOTS); i++) {
         if (entries[i] && entries[i].voiceData) {
             loadVoice(entries[i].voiceData, i);
         }
@@ -182,7 +183,7 @@ export function getPreviewChannel() {
  */
 export function playNoteOnChannel(channel, midi, velocity = 100) {
     if (!isReady() || !dx7Node) return null;
-    if (channel < 0 || channel >= MAX_CHANNELS) return null;
+    if (channel < 0 || channel >= MIDI_CHANNELS) return null;
 
     const key = channel + ':' + midi;
     const existing = activeNotes.get(key);
