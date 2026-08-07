@@ -10,6 +10,9 @@ let dx7Node = null;
 let initialized = false;
 let initPromise = null;
 
+// Cached WASM binary (fetched once, shared by main + offline contexts)
+let cachedWasmBytes = null;
+
 // Multi-channel state: channel → { voiceData (Uint8Array), b64Key (string) }
 const channelState = new Array(VOICE_BANK_SLOTS).fill(null);
 
@@ -55,14 +58,14 @@ async function initAudio() {
 
         // Fetch raw WASM binary on main thread (AudioWorklet has no fetch)
         const wasmResp = await fetch(base + 'msfa.wasm');
-        const wasmBytes = await wasmResp.arrayBuffer();
+        cachedWasmBytes = await wasmResp.arrayBuffer();
 
         // Create ONE persistent worklet node, pass WASM via processorOptions
         dx7Node = new AudioWorkletNode(ctx, 'dx7-synth', {
             numberOfInputs: 0,
             numberOfOutputs: 1,
             outputChannelCount: [1],
-            processorOptions: { wasmBytes },
+            processorOptions: { wasmBytes: cachedWasmBytes },
         });
         dx7Node.connect(ctx.destination);
 
@@ -230,18 +233,20 @@ export async function renderOffline(voiceData, midi, durationMs) {
     const offCtx = new OfflineAudioContext(1, totalSamples, sr);
 
     try {
-        const base = new URL('./wasm/', import.meta.url).pathname;
         await offCtx.audioWorklet.addModule(new URL('./dx7-processor.js', import.meta.url));
 
-        // Fetch raw WASM binary on main thread (AudioWorklet has no fetch)
-        const wasmResp = await fetch(base + 'msfa.wasm');
-        const wasmBytes = await wasmResp.arrayBuffer();
+        // Use cached WASM bytes (fetched once in initAudio), or fetch if not yet cached
+        if (!cachedWasmBytes) {
+            const base = new URL('./wasm/', import.meta.url).pathname;
+            const wasmResp = await fetch(base + 'msfa.wasm');
+            cachedWasmBytes = await wasmResp.arrayBuffer();
+        }
 
         const node = new AudioWorkletNode(offCtx, 'dx7-synth', {
             numberOfInputs: 0,
             numberOfOutputs: 1,
             outputChannelCount: [1],
-            processorOptions: { wasmBytes },
+            processorOptions: { wasmBytes: cachedWasmBytes },
         });
 
         await new Promise((resolve, reject) => {
@@ -255,6 +260,7 @@ export async function renderOffline(voiceData, midi, durationMs) {
         const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
         node.port.postMessage({ type: 'patch', slot: 0, data: patch.buffer });
         node.port.postMessage({ type: 'midi', data: [0x90, midi, 100] });
+        console.log('[renderOffline] sent patch len=' + patch.length + ' note=' + midi + ' sr=' + sr);
 
         node.connect(offCtx.destination);
 
