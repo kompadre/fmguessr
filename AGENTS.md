@@ -15,6 +15,13 @@
 - VoiceBank assigns colors by slot index (PATCH_COLORS[8]). Pianoroll receives color via `setActivePatch(id, data, color)` — always pass `entry.color` from voicebank.
 - Verify JS changes with `node --check html/app.js`, `node --check html/components/*.js`.
 
+## Git & Version Control Rules
+
+- **NEVER alter Git history.** Under no circumstances should you run `git rebase`, `git commit --amend`, `git reset`, `git cherry-pick`, or perform any commit squashing/history modifications.
+- **Append-only commits:** All changes must strictly be committed as NEW, additive commits on top of the current branch.
+- **No speculative or broken commits:** Only commit when the code is verified, working, and builds/runs without errors.
+- **Clear commit messages:** Write short, descriptive commit messages summarizing the actual functional changes made.
+
 ## Commands
 
 ```bash
