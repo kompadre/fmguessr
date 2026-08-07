@@ -3,7 +3,7 @@
 
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
 import { batchRenderWaveforms } from './synth/dx7-synth.js';
-import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, loadVoice, loadPreviewPatch, getPreviewChannel, base64ToUint8Array, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
+import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, loadVoice, playSamplesInWorklet, base64ToUint8Array, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
 import { patchStore, canvasStore, jobStore, createPatch } from './components/patch-model.js';
 import { initCanvas, addContainer, addPatchToContainer, refreshCanvas } from './components/canvas.js';
 import { createToolbar } from './components/toolbar.js';
@@ -144,12 +144,13 @@ async function playPatch(patch, midi) {
         try {
             await acquire();
             if (isReady()) {
-                // Preview on dedicated channel/slot, never overwrites voice bank
-                loadPreviewPatch(patch.voice_data);
-                const stop = playNoteOnChannel(getPreviewChannel(), note);
-                if (stop) setTimeout(stop, 3000);
+                // Render offline on main thread (separate WASM instance)
                 const blob = await renderOffline(patch.voice_data, note, 3000);
-                return URL.createObjectURL(blob);
+                // Decode WAV → float samples → feed into live worklet
+                const audioCtx = await acquire();
+                const audioBuffer = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+                playSamplesInWorklet(audioBuffer.getChannelData(0));
+                return URL.createObjectURL(blob); // canvas draws waveform
             }
         } catch (err) {
             console.warn('DX7 synth unavailable:', err);

@@ -153,25 +153,13 @@ export function updateVoice(voiceData, channel) {
 }
 
 /**
- * Load a patch into a dedicated preview slot (separate from voice bank).
- * Uses a high slot index and channel that never overlap with voice bank (0-7).
+ * Send rendered samples to the live AudioWorklet for playback.
+ * Samples are mixed with synth output (pianoroll notes keep playing).
+ * Calling again overwrites any active preview (new preview replaces old).
  */
-const PREVIEW_SLOT = 16;
-const PREVIEW_CHANNEL = 15;
-
-export function loadPreviewPatch(voiceData) {
-    if (!isReady() || !dx7Node) return;
-    const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
-    dx7Node.port.postMessage({
-        type: 'voice-channel',
-        slot: PREVIEW_SLOT,
-        channel: PREVIEW_CHANNEL,
-        data: patch.buffer,
-    });
-}
-
-export function getPreviewChannel() {
-    return PREVIEW_CHANNEL;
+export function playSamplesInWorklet(samples) {
+    if (!dx7Node) return;
+    dx7Node.port.postMessage({ type: 'play-samples', samples });
 }
 
 // --- Channel-based playback ---
