@@ -58,6 +58,7 @@ let activePianorollPatchId = null; // patch name/id for pianoroll note coloring
 let activeKeyboardNote = 60; // last-clicked keyboard note (used for detached patch playback)
 let pianorollNotes = []; // [{midi, start, dur, patchId, color}]
 let pianorollInstance = null; // current pianoroll component instance
+let pianoDockWrapper = null; // inner piano-dock-inner element (holds _voiceBank/_pianoroll)
 let currentJob = null; // current job for pianoroll/keyboard playback
 
 const probeFields = ['attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'gate_ms', 'brightness', 'harmonicity'];
@@ -159,6 +160,12 @@ async function restoreSessions() {
         const idx = jobs.length - 1;
         addTab(idx);
         if (job.resultData) {
+            // Server WAVs are ephemeral — null out stale wav_urls on restore
+            for (const list of ['matches', 'timbral_matches', 'full_matches']) {
+                if (job.resultData[list]) {
+                    for (const m of job.resultData[list]) m.wav_url = null;
+                }
+            }
             upgradeTab(idx);
         } else if (job.statusUrl) {
             // Job was in-progress when page was unloaded — resume polling
@@ -270,6 +277,7 @@ function initPianoDock() {
         onNoteClick: (midi) => { activeKeyboardNote = midi; },
     });
     pianoDock.appendChild(dock);
+    pianoDockWrapper = dock;
     pianorollInstance = dock._pianoroll || null;
 }
 
@@ -1241,7 +1249,7 @@ function renderFavorites() {
             algorithm: fav.algorithm,
             feedback: fav.feedback,
             distance: fav.distance || 0,
-            wav_url: fav.wav_url,
+            wav_url: null,
         }, {
             onSelect: null,
             onStar: () => removeFavorite(fav.id),
@@ -1474,11 +1482,10 @@ function createSyxTabInner(tabId, name, patches) {
         }, {
             onSelect: () => {
                 if (patch.voice_data) {
-                    const dock = document.getElementById('piano-dock');
-                    if (dock._voiceBank) {
-                        dock._voiceBank._addEntry(displayName, patch.voice_data, displayName);
+                    if (pianoDockWrapper && pianoDockWrapper._voiceBank) {
+                        pianoDockWrapper._voiceBank._addEntry(displayName, patch.voice_data, displayName);
                     }
-                    dock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    if (pianoDockWrapper) pianoDockWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
             },
             onStar: () => {
@@ -2368,8 +2375,7 @@ function renderResults(index) {
         highlightPatchRow(timbralList, m);
         highlightPatchRow(fullList, m);
         if (m.voice_data) {
-            const dock = document.getElementById('piano-dock');
-            if (dock._voiceBank) dock._voiceBank._addEntry(m.name || ('#' + m.rank), m.voice_data, m.name || ('#' + m.rank));
+            if (pianoDockWrapper && pianoDockWrapper._voiceBank) pianoDockWrapper._voiceBank._addEntry(m.name || ('#' + m.rank), m.voice_data, m.name || ('#' + m.rank));
         }
     };
 
@@ -2569,8 +2575,7 @@ document.getElementById('menu-export-syx').addEventListener('click', () => {
 
 // History menu
 document.getElementById('menu-show-log').addEventListener('click', () => {
-    const dock = document.getElementById('piano-dock');
-    if (dock && dock._showLog) dock._showLog();
+    if (pianoDockWrapper && pianoDockWrapper._showLog) pianoDockWrapper._showLog();
 });
 document.getElementById('menu-clear-history').addEventListener('click', async () => {
     if (!confirm('Clear all session history?')) return;
@@ -2667,10 +2672,10 @@ initNightSky({
     },
     onSelect: (match) => {
         if (match.voice_data) {
-            const dock = document.getElementById('piano-dock');
-            if (dock._voiceBank) {
-                dock._voiceBank._addEntry(match.name || 'Untitled', match.voice_data, match.name);
+            if (pianoDockWrapper && pianoDockWrapper._voiceBank) {
+                pianoDockWrapper._voiceBank._addEntry(match.name || 'Untitled', match.voice_data, match.name);
             }
+            if (pianoDockWrapper) pianoDockWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     },
     onEdit: (match) => {

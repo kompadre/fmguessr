@@ -286,7 +286,7 @@ export function createPianoroll(opts) {
                 dur,
                 patchId: opts.activePatchId || null,
                 voiceData: opts.activeVoiceData || null,
-                color: colorForPatch(opts.activePatchId),
+                color: opts.activeColor || colorForPatch(opts.activePatchId),
             });
             draw();
             renderLegend();
@@ -389,13 +389,14 @@ export function createPianoroll(opts) {
         draw,
         stopPlayback,
         addNote(midi, start, dur, patchId) {
-            notes.push({ midi, start, dur, patchId, color: colorForPatch(patchId) });
+            notes.push({ midi, start, dur, patchId, color: opts.activeColor || colorForPatch(patchId) });
             draw();
             renderLegend();
         },
-        setActivePatch(patchId, voiceData) {
+        setActivePatch(patchId, voiceData, color) {
             opts.activePatchId = patchId;
             opts.activeVoiceData = voiceData;
+            opts.activeColor = color || null;
         },
         colorForPatch,
     };

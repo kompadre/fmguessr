@@ -1,3 +1,5 @@
+const wavSampleCache = new Map(); // url -> Float32Array samples (avoids re-fetch on re-render)
+
 function decodeWavSamples(arrayBuffer) {
     try {
         const view = new DataView(arrayBuffer);
@@ -224,11 +226,14 @@ function createMinifiedRow(match) {
     makeStarDraggable(star, row, match);
 
     // Click to expand
-    row.addEventListener('click', (e) => {
-        if (e.target === star) return;
+    function expandRow() {
         row.classList.remove('patch-row-minified');
         row.draggable = false;
-        row.removeEventListener('click', arguments.callee);
+        row.removeEventListener('click', expandRow);
+    }
+    row.addEventListener('click', (e) => {
+        if (e.target === star) return;
+        expandRow();
     });
 
     return row;
@@ -276,16 +281,24 @@ function createPatchRow(match, { onSelect, onStar, onPlay, onEdit, baseUrl, isSe
 
     row.appendChild(specWrap);
 
-    // Fetch and render waveform
+    // Fetch and render waveform (cached to avoid re-fetching on re-render)
     const wavUrl = (baseUrl || '') + match.wav_url;
     if (match.wav_url) {
-        fetch(wavUrl)
-            .then(r => r.arrayBuffer())
-            .then(buf => {
-                const samples = decodeWavSamples(buf);
-                if (samples && samples.length > 0) drawMiniWaveform(canvas, samples);
-            })
-            .catch(() => {});
+        const cached = wavSampleCache.get(wavUrl);
+        if (cached) {
+            if (cached.length > 0) drawMiniWaveform(canvas, cached);
+        } else {
+            fetch(wavUrl)
+                .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+                .then(buf => {
+                    const samples = decodeWavSamples(buf);
+                    if (samples && samples.length > 0) {
+                        wavSampleCache.set(wavUrl, samples);
+                        drawMiniWaveform(canvas, samples);
+                    }
+                })
+                .catch(() => {});
+        }
     }
 
     // Name

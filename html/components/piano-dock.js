@@ -164,7 +164,7 @@ export function createPianoDock(opts) {
     const voiceBank = createVoiceBank({
         onSelect: (entry) => {
             if (pianorollRef) {
-                pianorollRef.setActivePatch(entry.patchId, entry.voiceData);
+                pianorollRef.setActivePatch(entry.patchId, entry.voiceData, entry.color);
             }
         },
     });

@@ -10,7 +10,10 @@
 - Wrap errors: `fmt.Errorf("context: %w", err)`.
 - Match existing code style in each file. Don't introduce conventions that conflict with neighbors.
 - Never call `rebuildPianoDock()` — it was removed. Piano dock is static. Use `currentJob` mutable reference for playback context.
-- Verify JS changes with `node --check html/app.js`.
+- Use `pianoDockWrapper` (module-scoped in app.js) to access `_voiceBank`, `_pianoroll`, `_showLog` — NOT `document.getElementById('piano-dock')` which returns the outer container, not the inner wrapper.
+- Server WAVs are ephemeral. `wav_url` in session data is nulled on restore. `wavSampleCache` in patch.js avoids re-fetching the same URL on re-render.
+- VoiceBank assigns colors by slot index (PATCH_COLORS[8]). Pianoroll receives color via `setActivePatch(id, data, color)` — always pass `entry.color` from voicebank.
+- Verify JS changes with `node --check html/app.js`, `node --check html/components/*.js`.
 
 ## Commands
 
@@ -68,7 +71,7 @@ go test -race ./pkg/match/...        # Race detector
 - `html/components/piano-dock.js`: static dock — keyboard | pianoroll | voicebank | log tabs, created once at startup via `initPianoDock()`
 - `html/components/pianoroll.js`: sequencer, `draw()` is idempotent, uses `requestAnimationFrame` loop, exports `_pianoroll` with `setActivePatch()`/`stopPlayback()`
 - `html/components/voicebank.js`: voice palette, persists to localStorage (`fmguessr_voices`), calls `pianorollRef.setActivePatch()` on selection
-- `html/components/patch.js`: patch list rows, `.matched` class for active patch highlight
+- `html/components/patch.js`: patch list rows, `.matched` class for active patch highlight, `wavSampleCache` for deduped waveform fetches
 - `html/components/night-sky.js`: floating patch display with galactic core spinner
 - `html/synth/dx7-synth.js`: Web Audio API layer — `initDx7Synth()`, `playNoteRealtime()`, `renderOffline()`, batch waveforms via offline graph
 - `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine
