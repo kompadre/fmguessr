@@ -149,7 +149,6 @@ async function playPatch(patch, midi) {
                 const stop = playNoteOnChannel(getPreviewChannel(), note);
                 if (stop) setTimeout(stop, 3000);
                 const blob = await renderOffline(patch.voice_data, note, 3000);
-                console.log('[playPatch] rendered blob size:', blob.size, 'note:', note);
                 return URL.createObjectURL(blob);
             }
         } catch (err) {

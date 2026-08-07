@@ -113,4 +113,8 @@ class DX7Processor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('dx7-synth', DX7Processor);
+try {
+  registerProcessor('dx7-synth', DX7Processor);
+} catch (e) {
+  // Already registered in this scope (browser caches module execution across contexts)
+}
