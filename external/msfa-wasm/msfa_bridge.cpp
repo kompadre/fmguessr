@@ -24,6 +24,10 @@ void init_engine(int sample_rate) {
   Lfo::init(sample_rate);
   PitchEnv::init(sample_rate);
   synth = new SynthUnit(&rb);
+  // Default all channels to volume 100 (out of 127)
+  for (int ch = 0; ch < 16; ch++) {
+    SynthUnit::SetChannelVolume(ch, 100 * 256 / 127);
+  }
 }
 
 // --- Static patch buffer accessors ---
@@ -72,6 +76,15 @@ void note_on(int note, int velocity) {
 void note_off(int note) {
   uint8_t msg[3] = { 0x80, (uint8_t)note, 0 };
   rb.Write(msg, 3);
+}
+
+// --- Channel volume (0-127 MIDI range, mapped to 0-256 internal) ---
+
+void set_channel_volume(int channel, int volume) {
+  if (!synth || channel < 0 || channel >= 16) return;
+  if (volume < 0) volume = 0;
+  if (volume > 127) volume = 127;
+  SynthUnit::SetChannelVolume(channel, (int32_t)(volume * 256 / 127));
 }
 
 // --- Render ---

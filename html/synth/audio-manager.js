@@ -162,6 +162,14 @@ export function playSamplesInWorklet(samples) {
     dx7Node.port.postMessage({ type: 'play-samples', samples });
 }
 
+/**
+ * Set channel volume (0-127 MIDI range).
+ */
+export function setChannelVolume(channel, volume) {
+    if (!dx7Node) return;
+    dx7Node.port.postMessage({ type: 'channel-volume', channel, volume });
+}
+
 // --- Channel-based playback ---
 
 /**

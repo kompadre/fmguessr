@@ -181,6 +181,7 @@ export function createToolbar(opts) {
             }
         },
         onVoiceAdded: opts.onVoiceAdded || null,
+        onVolumeChange: opts.onVolumeChange || null,
     });
     pianorollRow.appendChild(voiceBank);
 

@@ -42,6 +42,7 @@ $(TARGET): $(SRC)
 		-Wl,--export=send_midi \
 		-Wl,--export=note_on \
 		-Wl,--export=note_off \
+		-Wl,--export=set_channel_volume \
 		-Wl,--export=render_audio \
 		-o $(TARGET) $(SRC)
 

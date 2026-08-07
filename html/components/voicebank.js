@@ -1,13 +1,15 @@
 // VoiceBank — patch selector for pianoroll
 // Each entry has a color that maps to pianoroll note colors.
+// Volume overlay: click+drag horizontally to adjust channel volume (0-127).
 
 const STORAGE_KEY = 'fmguessr_voicebank';
 const MAX_SLOTS = 8;
+const DEFAULT_VOLUME = 100;
 
 const PATCH_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b'];
 
 export function createVoiceBank(opts) {
-    const { onSelect, onVoiceAdded } = opts;
+    const { onSelect, onVoiceAdded, onVolumeChange } = opts;
     let entries = [];
     let activeId = null;
 
@@ -29,7 +31,6 @@ export function createVoiceBank(opts) {
         e.preventDefault();
         e.stopPropagation();
         container.classList.add('voicebank-drag-over');
-        // Highlight drop target slot
         const items = [...list.querySelectorAll('.voicebank-item')];
         items.forEach(i => i.classList.remove('voicebank-drop-target'));
         const afterItem = getInsertAfterItem(items, e.clientY);
@@ -59,7 +60,6 @@ export function createVoiceBank(opts) {
         const afterItem = getInsertAfterItem(items, e.clientY);
 
         if (afterItem) {
-            // Replace the entry at drop position
             const idx = parseInt(afterItem.dataset.vbIdx);
             if (entries[idx]) {
                 entries[idx].name = patch.name || entries[idx].name;
@@ -71,7 +71,6 @@ export function createVoiceBank(opts) {
                 saveState();
             }
         } else {
-            // Append to first empty slot
             addEntry(patch.name || 'Untitled', patch.voice_data || null, patch.name);
         }
 
@@ -100,6 +99,13 @@ export function createVoiceBank(opts) {
             item.dataset.vbIdx = i;
 
             if (entry) {
+                // Volume overlay (fills from left)
+                const overlay = document.createElement('div');
+                overlay.className = 'voicebank-volume-overlay';
+                overlay.style.background = entry.color;
+                overlay.style.width = ((entry.volume || DEFAULT_VOLUME) / 127 * 100) + '%';
+                item.appendChild(overlay);
+
                 const dot = document.createElement('span');
                 dot.className = 'voicebank-dot';
                 dot.style.background = entry.color;
@@ -110,11 +116,52 @@ export function createVoiceBank(opts) {
                 nameEl.textContent = entry.name;
                 item.appendChild(nameEl);
 
-                item.addEventListener('click', () => {
+                // Volume label
+                const volEl = document.createElement('span');
+                volEl.className = 'voicebank-vol';
+                volEl.textContent = entry.volume || DEFAULT_VOLUME;
+                item.appendChild(volEl);
+
+                // Click to select
+                item.addEventListener('click', (e) => {
+                    // Don't select if dragging volume
+                    if (item._dragging) return;
                     activeId = entry.id;
                     render();
                     fireSelect();
                     saveState();
+                });
+
+                // Volume drag: mousedown → track mousemove → mouseup
+                item.addEventListener('mousedown', (e) => {
+                    if (e.button !== 0) return;
+                    const rect = item.getBoundingClientRect();
+                    const startX = e.clientX;
+                    let didDrag = false;
+
+                    function onMove(ev) {
+                        const x = ev.clientX - rect.left;
+                        const pct = Math.max(0, Math.min(1, x / rect.width));
+                        const vol = Math.round(pct * 127);
+                        entry.volume = vol;
+                        overlay.style.width = (pct * 100) + '%';
+                        volEl.textContent = vol;
+                        didDrag = true;
+                        if (onVolumeChange) onVolumeChange(entry.channel, vol);
+                    }
+
+                    function onUp() {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                        if (didDrag) {
+                            item._dragging = true;
+                            setTimeout(() => { item._dragging = false; }, 50);
+                            saveState();
+                        }
+                    }
+
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
                 });
             } else {
                 item.classList.add('voicebank-empty');
@@ -129,7 +176,6 @@ export function createVoiceBank(opts) {
     }
 
     function addEntry(name, voiceData, patchId) {
-        // Dedup by voiceData
         const existing = entries.find(e => e.voiceData === voiceData);
         if (existing) {
             activeId = existing.id;
@@ -148,14 +194,14 @@ export function createVoiceBank(opts) {
             voiceData: voiceData || null,
             patchId: patchId || name,
             color,
-            channel: entries.length, // static channel assignment
+            channel: entries.length,
+            volume: DEFAULT_VOLUME,
         });
         activeId = entries[entries.length - 1].id;
         render();
         fireSelect();
         saveState();
 
-        // Load voice into channel if audio-manager is available
         if (onVoiceAdded && voiceData) {
             onVoiceAdded(voiceData, entries.length - 1);
         }
@@ -199,9 +245,12 @@ export function createVoiceBank(opts) {
             const data = JSON.parse(raw);
             entries = data.entries || [];
             activeId = data.activeId || null;
-            // Ensure activeId is valid
             if (activeId && !entries.find(e => e.id === activeId)) {
                 activeId = entries.length > 0 ? entries[0].id : null;
+            }
+            // Backfill volume for entries saved before volume feature
+            for (const entry of entries) {
+                if (entry.volume === undefined) entry.volume = DEFAULT_VOLUME;
             }
         } catch (e) {
             console.warn('VoiceBank load failed:', e);

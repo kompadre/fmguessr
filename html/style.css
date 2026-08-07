@@ -1578,6 +1578,9 @@ h1 {
     transition: background 0.1s;
     border-bottom: 1px solid #1e1e30;
     min-height: 24px;
+    position: relative;
+    overflow: hidden;
+    user-select: none;
 }
 
 .voicebank-item:hover {
@@ -1610,6 +1613,28 @@ h1 {
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    position: relative;
+    z-index: 1;
+}
+
+.voicebank-volume-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    opacity: 0.15;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.voicebank-vol {
+    margin-left: auto;
+    font-size: 0.6rem;
+    color: #555;
+    min-width: 1.5em;
+    text-align: right;
+    position: relative;
+    z-index: 1;
 }
 
 .voicebank-placeholder {

@@ -93,6 +93,11 @@ class DX7Processor extends AudioWorkletProcessor {
         this.previewPos = 0;
         this.previewRemaining = msg.samples.length;
         break;
+      case 'channel-volume':
+        if (this.exp.set_channel_volume) {
+          this.exp.set_channel_volume(msg.channel, msg.volume);
+        }
+        break;
     }
   }
 
