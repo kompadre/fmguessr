@@ -114,11 +114,22 @@ export function loadVoice(voiceData, slot) {
     if (!isReady() || !dx7Node) return -1;
     if (slot < 0 || slot >= VOICE_BANK_SLOTS) return -1;
 
-    const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
-    const b64Key = typeof voiceData === 'string' ? voiceData : null;
+    // Normalize voiceData to Uint8Array (handles base64 string, Uint8Array, or plain array from localStorage)
+    let patch;
+    let b64Key = null;
+    if (typeof voiceData === 'string') {
+        patch = base64ToUint8Array(voiceData);
+        b64Key = voiceData;
+    } else if (voiceData instanceof Uint8Array) {
+        patch = voiceData;
+    } else if (Array.isArray(voiceData)) {
+        patch = new Uint8Array(voiceData);
+    } else {
+        return -1;
+    }
 
-    // Skip if already loaded on this slot
-    if (channelState[slot] && channelState[slot].b64Key === b64Key) {
+    // Skip if already loaded on this slot (only for base64 strings)
+    if (b64Key && channelState[slot] && channelState[slot].b64Key === b64Key) {
         return slot;
     }
 

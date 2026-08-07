@@ -78,8 +78,6 @@ void note_off(int note) {
   rb.Write(msg, 3);
 }
 
-// --- Channel volume (0-127 MIDI range, mapped to 0-256 internal) ---
-
 void set_channel_volume(int channel, int volume) {
   if (!synth || channel < 0 || channel >= 16) return;
   if (volume < 0) volume = 0;
