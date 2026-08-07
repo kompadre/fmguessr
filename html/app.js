@@ -3,7 +3,7 @@
 
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
 import { batchRenderWaveforms } from './synth/dx7-synth.js';
-import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, loadVoice, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
+import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, loadVoice, loadPreviewPatch, getPreviewChannel, base64ToUint8Array, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
 import { patchStore, canvasStore, jobStore, createPatch } from './components/patch-model.js';
 import { initCanvas, addContainer, addPatchToContainer, refreshCanvas } from './components/canvas.js';
 import { createToolbar } from './components/toolbar.js';
@@ -144,7 +144,9 @@ async function playPatch(patch, midi) {
         try {
             await acquire();
             if (isReady()) {
-                const stop = playNoteRealtime(patch.voice_data, note);
+                // Preview on dedicated channel/slot, never overwrites voice bank
+                loadPreviewPatch(patch.voice_data);
+                const stop = playNoteOnChannel(getPreviewChannel(), note);
                 if (stop) setTimeout(stop, 3000);
                 const blob = await renderOffline(patch.voice_data, note, 3000);
                 return URL.createObjectURL(blob);
@@ -318,9 +320,13 @@ async function handleSyxUpload(file) {
 
 function getCanvasOpts() {
     return {
-        onPlay: (patch) => playPatch(patch, activeKeyboardNote),
+        onPlay: (patch) => {
+            if (patch.voice_data) activeSyxVoiceData = patch.voice_data;
+            return playPatch(patch, activeKeyboardNote);
+        },
         onSelect: (patch) => {
             if (patch.voice_data) {
+                activeSyxVoiceData = patch.voice_data;
                 if (pianoDockWrapper && pianoDockWrapper._voiceBank) {
                     pianoDockWrapper._voiceBank._addEntry(patch.name || 'Untitled', patch.voice_data, patch.name);
                 }

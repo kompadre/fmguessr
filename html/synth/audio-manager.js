@@ -95,7 +95,7 @@ export async function acquire() {
 
 // --- Voice loading ---
 
-function base64ToUint8Array(b64) {
+export function base64ToUint8Array(b64) {
     const bin = atob(b64);
     const arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
@@ -146,6 +146,28 @@ export function loadAllVoices(entries) {
  */
 export function updateVoice(voiceData, channel) {
     loadVoice(voiceData, channel);
+}
+
+/**
+ * Load a patch into a dedicated preview slot (separate from voice bank).
+ * Uses a high slot index and channel that never overlap with voice bank (0-7).
+ */
+const PREVIEW_SLOT = 16;
+const PREVIEW_CHANNEL = 15;
+
+export function loadPreviewPatch(voiceData) {
+    if (!isReady() || !dx7Node) return;
+    const patch = typeof voiceData === 'string' ? base64ToUint8Array(voiceData) : voiceData;
+    dx7Node.port.postMessage({
+        type: 'voice-channel',
+        slot: PREVIEW_SLOT,
+        channel: PREVIEW_CHANNEL,
+        data: patch.buffer,
+    });
+}
+
+export function getPreviewChannel() {
+    return PREVIEW_CHANNEL;
 }
 
 // --- Channel-based playback ---
