@@ -5,7 +5,7 @@
 - If Edit fails twice, stop and explain the issue.
 - Verify with `go build ./...`, `go vet ./...`, `go test` — not manual inspection.
 - When the user says a bug is recurring or similar to a past fix, offer a regression test first. Tag with `//go:build regression`.
-- Do not commit unless the user explicitly asks. Batch changes until told to commit.
+- Commit on task completion, once the user has verified the fix is correct.
 - Never call `LoadCodebook()` or `LoadTimbreCodebook()` directly — use `loadCodebooksOnce()` in `matcher.go`.
 - Wrap errors: `fmt.Errorf("context: %w", err)`.
 - Match existing code style in each file. Don't introduce conventions that conflict with neighbors.
