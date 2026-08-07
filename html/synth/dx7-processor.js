@@ -21,7 +21,7 @@ class DX7Processor extends AudioWorkletProcessor {
     // Preview playback state (fed from main-thread offline render)
     this.previewBuffer = null;
     this.previewPos = 0;
-    this.previewActive = false;
+    this.previewRemaining = 0;
 
     this.port.onmessage = this.handleMessage.bind(this);
 
@@ -91,7 +91,7 @@ class DX7Processor extends AudioWorkletProcessor {
         // Overwrite any active preview, reset position
         this.previewBuffer = msg.samples;
         this.previewPos = 0;
-        this.previewActive = true;
+        this.previewRemaining = msg.samples.length;
         break;
     }
   }
@@ -119,23 +119,19 @@ class DX7Processor extends AudioWorkletProcessor {
     const out = outputs[0][0];
     const i16base = ptr >> 1;
 
-    const hasPreview = this.previewActive && this.previewBuffer &&
-                       this.previewPos < this.previewBuffer.length;
-
     for (let i = 0; i < this.bufsize; i++) {
       let sample = this.heapI16[i16base + i] * (1.0 / 32768.0);
 
-      if (hasPreview) {
-        // Mix with 0.5 headroom on both sources
+      if (this.previewRemaining > 0) {
         sample = sample * 0.5 + this.previewBuffer[this.previewPos++] * 0.5;
+        this.previewRemaining--;
       }
 
       out[i] = sample;
     }
 
-    // Deactivate preview when buffer exhausted
-    if (this.previewActive && this.previewPos >= (this.previewBuffer ? this.previewBuffer.length : 0)) {
-      this.previewActive = false;
+    // Clean up references when the clip finishes
+    if (this.previewRemaining === 0 && this.previewBuffer) {
       this.previewBuffer = null;
     }
 
