@@ -48,6 +48,11 @@ type Config struct {
 	TrajectoryAlphaStart float64        // Trajectory blend weight at gen 0 (default 0.1)
 	TrajectoryAlphaEnd   float64        // Trajectory blend weight at final gen (default 0.8)
 	TrajectoryConfig     TrajectoryConfig // Phased weights, LFO params
+
+	// Optimization budget: skip expensive optimization on candidates
+	// whose distance exceeds bestKnown * (1 + OptMargin).
+	// Default 0.3 = allow optimization up to 30% worse than best.
+	OptMargin float64
 }
 
 // DefaultConfig returns sensible defaults.
@@ -57,6 +62,7 @@ func DefaultConfig() Config {
 		MIDINote:  60,
 		Verbose:   false,
 		GA:        DefaultGAConfig(),
+		OptMargin: 0.3,
 	}
 }
 
@@ -358,6 +364,14 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 		}
 	}
 
+	// Track global best distance across all pipeline stages for optimization budget
+	globalBestDist := bestCodebookDist
+	for _, fc := range nnCandidates {
+		if fc.Fitness < globalBestDist {
+			globalBestDist = fc.Fitness
+		}
+	}
+
 	// Phase 0: Extract timbre window from target
 	timbreSpec := ExtractTimbreWindow(target, RenderSampleRate)
 	logElapsed(cfg, "Extracted timbre window: %d bins\n", TimbreSpecBins)
@@ -436,55 +450,71 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 				}
 			}
 
-			// Quick live optimization & differential Jacobian steering on best NN result
-			var globalLiveOpt *LiveOptimizer
-			if cfg.Verbose {
-				fmt.Println("--- NN Pre-optimization (live optimizer & diff optimizer) ---")
-			}
-			// Prefer codebook best if it beats the NN prediction
-			initialPatch := scores[0].cand
-			if cfg.Verbose {
-				fmt.Printf("[debug] bestCodebookCand=%v bestCodebookDist=%.6f scores[0].dist=%.6f\n",
-					bestCodebookCand != nil, bestCodebookDist, scores[0].dist)
-			}
-			if bestCodebookCand != nil && bestCodebookDist < scores[0].dist {
-				initialPatch = bestCodebookCand
+			// Optimization budget: skip if NN candidate is worse than bestKnown * (1 + margin)
+			// NN prediction is fast; the expensive part is LiveOpt+DiffOpt optimization.
+			nnDist := scores[0].dist
+			optThreshold := globalBestDist * (1 + cfg.OptMargin)
+			if nnDist > optThreshold {
 				if cfg.Verbose {
-					fmt.Printf("Using codebook candidate as initial (dist=%.6f < NN dist=%.6f)\n",
-						bestCodebookDist, scores[0].dist)
+					fmt.Printf("Skipping NN pre-optimization: dist=%.6f > threshold=%.6f (best=%.6f, margin=%.0f%%)\n",
+						nnDist, optThreshold, globalBestDist, cfg.OptMargin*100)
 				}
-			}
-			globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
-			refined := globalLiveOpt.Run()
-
-			// Differential Jacobian steering on extended temporal timbre features
-			diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-			diffRefined := diffOpt.RunAlternating(2)
-			if diffOpt.bestDist < globalLiveOpt.bestDist {
-				refined = diffRefined
-			}
-
-			// Insert refined candidate into elite cohort
-			refinedDist := globalLiveOpt.bestDist
-			if diffOpt.bestDist < refinedDist {
-				refinedDist = diffOpt.bestDist
-			}
-			timbreCohort.TryInsert(refined, refinedDist)
-
-			if globalLiveOpt.bestDist < scores[0].dist || diffOpt.bestDist < scores[0].dist {
-				nnCandidates[0] = refined
-				bestNnDist := globalLiveOpt.bestDist
-				if diffOpt.bestDist < bestNnDist {
-					bestNnDist = diffOpt.bestDist
+				// Keep NN candidate in pool for GA diversity (unoptimized)
+			} else {
+				// Quick live optimization & differential Jacobian steering on best NN result
+				var globalLiveOpt *LiveOptimizer
+				if cfg.Verbose {
+					fmt.Println("--- NN Pre-optimization (live optimizer & diff optimizer) ---")
 				}
-				if bestNnDist <= 1e-4 {
-					logElapsed(cfg, "Exact match found during NN pre-optimization (dist=%.6f <= 0.0001). Returning early!\n", bestNnDist)
-					reportProgress(cfg, 100, "Completed (Exact NN Match)")
-					return Result{
-						Best:     refined,
-						BestDist: bestNnDist,
-						Iters:    32 + 500,
-						Top:      []*Candidate{refined},
+				// Prefer codebook best if it beats the NN prediction
+				initialPatch := scores[0].cand
+				if cfg.Verbose {
+					fmt.Printf("[debug] bestCodebookCand=%v bestCodebookDist=%.6f scores[0].dist=%.6f\n",
+						bestCodebookCand != nil, bestCodebookDist, scores[0].dist)
+				}
+				if bestCodebookCand != nil && bestCodebookDist < scores[0].dist {
+					initialPatch = bestCodebookCand
+					if cfg.Verbose {
+						fmt.Printf("Using codebook candidate as initial (dist=%.6f < NN dist=%.6f)\n",
+							bestCodebookDist, scores[0].dist)
+					}
+				}
+				globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
+				refined := globalLiveOpt.Run()
+
+				// Differential Jacobian steering on extended temporal timbre features
+				diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+				diffRefined := diffOpt.RunAlternating(2)
+				if diffOpt.bestDist < globalLiveOpt.bestDist {
+					refined = diffRefined
+				}
+
+				// Insert refined candidate into elite cohort
+				refinedDist := globalLiveOpt.bestDist
+				if diffOpt.bestDist < refinedDist {
+					refinedDist = diffOpt.bestDist
+				}
+				timbreCohort.TryInsert(refined, refinedDist)
+
+				if refinedDist < globalBestDist {
+					globalBestDist = refinedDist
+				}
+
+				if globalLiveOpt.bestDist < scores[0].dist || diffOpt.bestDist < scores[0].dist {
+					nnCandidates[0] = refined
+					bestNnDist := globalLiveOpt.bestDist
+					if diffOpt.bestDist < bestNnDist {
+						bestNnDist = diffOpt.bestDist
+					}
+					if bestNnDist <= 1e-4 {
+						logElapsed(cfg, "Exact match found during NN pre-optimization (dist=%.6f <= 0.0001). Returning early!\n", bestNnDist)
+						reportProgress(cfg, 100, "Completed (Exact NN Match)")
+						return Result{
+							Best:     refined,
+							BestDist: bestNnDist,
+							Iters:    32 + 500,
+							Top:      []*Candidate{refined},
+						}
 					}
 				}
 			}
@@ -761,45 +791,57 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	// Classifier pre-refinement: run LiveOptimizer on best classifier seed when no NN model ran
 	var globalLiveOpt *LiveOptimizer
 	if bestClassifierNNIdx >= 0 {
-		fmt.Println("Classifier pre-optimization: running LiveOptimizer on best seed...")
-		if cfg.Verbose {
-			fmt.Println("--- Classifier Pre-optimization (live optimizer & diff optimizer) ---")
-		}
-		initialPatch := nnCandidates[bestClassifierNNIdx].Copy()
-		if cfg.Verbose {
-			fmt.Printf("Classifier best seed: algo=%d fullDist=%.6f — running LiveOptimizer\n",
-				initialPatch.Algorithm+1, bestClassifierFullDist)
-		}
-		globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
-		refined := globalLiveOpt.Run()
-		fmt.Printf("Classifier pre-optimization: %.6f -> %.6f\n", bestClassifierFullDist, globalLiveOpt.bestDist)
+		// Optimization budget: skip if classifier seed is worse than bestKnown * (1 + margin)
+		optThreshold := globalBestDist * (1 + cfg.OptMargin)
+		if bestClassifierFullDist > optThreshold {
+			fmt.Printf("Skipping classifier pre-optimization: dist=%.6f > threshold=%.6f (best=%.6f, margin=%.0f%%)\n",
+				bestClassifierFullDist, optThreshold, globalBestDist, cfg.OptMargin*100)
+			// Keep classifier seed in pool for GA diversity (unoptimized)
+		} else {
+			fmt.Println("Classifier pre-optimization: running LiveOptimizer on best seed...")
+			if cfg.Verbose {
+				fmt.Println("--- Classifier Pre-optimization (live optimizer & diff optimizer) ---")
+			}
+			initialPatch := nnCandidates[bestClassifierNNIdx].Copy()
+			if cfg.Verbose {
+				fmt.Printf("Classifier best seed: algo=%d fullDist=%.6f — running LiveOptimizer\n",
+					initialPatch.Algorithm+1, bestClassifierFullDist)
+			}
+			globalLiveOpt = NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
+			refined := globalLiveOpt.Run()
+			fmt.Printf("Classifier pre-optimization: %.6f -> %.6f\n", bestClassifierFullDist, globalLiveOpt.bestDist)
 
-		// Differential Jacobian steering on temporal timbre features
-		diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-		diffRefined := diffOpt.RunAlternating(2)
-		if diffOpt.bestDist < globalLiveOpt.bestDist {
-			refined = diffRefined
-		}
+			// Differential Jacobian steering on temporal timbre features
+			diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+			diffRefined := diffOpt.RunAlternating(2)
+			if diffOpt.bestDist < globalLiveOpt.bestDist {
+				refined = diffRefined
+			}
 
-		// Insert refined candidate into elite cohorts
-		refinedDist := globalLiveOpt.bestDist
-		if diffOpt.bestDist < refinedDist {
-			refinedDist = diffOpt.bestDist
-		}
-		timbreCohort.TryInsert(refined, refinedDist)
-		fullCohort.TryInsert(refined, refinedDist)
+			// Insert refined candidate into elite cohorts
+			refinedDist := globalLiveOpt.bestDist
+			if diffOpt.bestDist < refinedDist {
+				refinedDist = diffOpt.bestDist
+			}
+			timbreCohort.TryInsert(refined, refinedDist)
+			fullCohort.TryInsert(refined, refinedDist)
 
-		if refinedDist < bestClassifierFullDist {
-			nnCandidates[bestClassifierNNIdx] = refined
-			logElapsed(cfg, "Classifier pre-optimization: improved from %.6f to %.6f\n", bestClassifierFullDist, refinedDist)
-			if refinedDist <= 1e-4 {
-				logElapsed(cfg, "Exact match found during classifier pre-optimization (dist=%.6f). Returning early!\n", refinedDist)
-				reportProgress(cfg, 100, "Completed (Exact Classifier Match)")
-				return Result{
-					Best:     refined,
-					BestDist: refinedDist,
-					Iters:    32 + 500,
-					Top:      []*Candidate{refined},
+			if refinedDist < globalBestDist {
+				globalBestDist = refinedDist
+			}
+
+			if refinedDist < bestClassifierFullDist {
+				nnCandidates[bestClassifierNNIdx] = refined
+				logElapsed(cfg, "Classifier pre-optimization: improved from %.6f to %.6f\n", bestClassifierFullDist, refinedDist)
+				if refinedDist <= 1e-4 {
+					logElapsed(cfg, "Exact match found during classifier pre-optimization (dist=%.6f). Returning early!\n", refinedDist)
+					reportProgress(cfg, 100, "Completed (Exact Classifier Match)")
+					return Result{
+						Best:     refined,
+						BestDist: refinedDist,
+						Iters:    32 + 500,
+						Top:      []*Candidate{refined},
+					}
 				}
 			}
 		}
@@ -1138,6 +1180,7 @@ nicheLoop:
 	settleActive := false      // true when in settle phase
 	settleGens := 0            // generations since settle started
 	settlePatience := 5        // settle phase patience
+	gaConverged := false       // true when Phase 2 converged early (settle or exact match)
 
 	gaLoop:
 	for gen := nicheGenerations; gen < cfg.GA.Generations; gen++ {
@@ -1148,6 +1191,7 @@ nicheLoop:
 				fmt.Printf("[%dms] [global gen %d/%d] CANCELLED (%.1fs elapsed) — stopping early\n", logMs(),
 					gen+1, cfg.GA.Generations, time.Since(gaStartTime).Seconds())
 			}
+			gaConverged = true
 			break gaLoop
 		default:
 		}
@@ -1286,6 +1330,7 @@ nicheLoop:
 				fmt.Printf("[%dms] [global gen %d/%d] EXACT MATCH FOUND (dist=%.6f <= 0.0001) — stopping early\n", logMs(),
 					gen+1, cfg.GA.Generations, globalGA.bestEverFit)
 			}
+			gaConverged = true
 			break
 		}
 
@@ -1318,6 +1363,7 @@ nicheLoop:
 				fmt.Printf("[%dms] [global gen %d/%d] CONVERGED (best=%.6f, settle confirmed) — stopping early\n", logMs(),
 					gen+1, cfg.GA.Generations, bestFit)
 			}
+			gaConverged = true
 			break
 		}
 
@@ -1328,40 +1374,50 @@ nicheLoop:
 					fmt.Printf("[%dms] [global gen %d/%d] SETTLE done (best=%.6f after %d quiet gens)\n", logMs(),
 						gen+1, cfg.GA.Generations, bestFit, settleGens)
 				}
+				gaConverged = true
 				break
 			}
 		}
 	}
 
 	// Final refinement: live optimizer & differential Jacobian steering with checkpoint backtracking
-	reportProgress(cfg, 85, "Phase 3: Multi-Stage Hill-Climbing Optimization")
-	if cfg.Verbose {
-		fmt.Println("--- Phase 3: Live Optimizer & Differential Jacobian Steering ---")
-	}
-
+	// Skip if Phase 2 already converged (settle or exact match) — redundant refinement.
 	best := globalGA.Best()
 	gaBestDist := globalGA.BestFitness()
-	liveOpt := NewLiveOptimizer(ctx, target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
-	finalPatch := liveOpt.Run()
-	finalDist := liveOpt.bestDist
 
-	// Differential Jacobian steering on extended temporal timbre features (alternating pass)
-	diffOpt := NewDiffOptimizer(ctx, target, finalPatch, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
-	diffPatch := diffOpt.RunAlternating(3)
-	if diffOpt.bestDist < finalDist {
-		finalPatch = diffPatch
-		finalDist = diffOpt.bestDist
-	}
+	if gaConverged {
+		if cfg.Verbose {
+			fmt.Printf("Phase 3 skipped: Phase 2 converged at %.6f\n", gaBestDist)
+		}
+		reportProgress(cfg, 85, "Phase 3: Skipped (converged)")
+	} else {
+		reportProgress(cfg, 85, "Phase 3: Multi-Stage Hill-Climbing Optimization")
+		if cfg.Verbose {
+			fmt.Println("--- Phase 3: Live Optimizer & Differential Jacobian Steering ---")
+		}
 
-	if cfg.Verbose {
-		fmt.Printf("[%dms] Phase 3 final distance: %.6f (GA was: %.6f, LiveOpt was: %.6f, DiffOpt was: %.6f)\n", logMs(),
-			finalDist, gaBestDist, liveOpt.bestDist, diffOpt.bestDist)
-	}
+		liveOpt := NewLiveOptimizer(ctx, target, best, 500, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(cachedTargetMel)
+		finalPatch := liveOpt.Run()
+		finalDist := liveOpt.bestDist
 
-	// Use refined result if it beat the GA
-	if finalDist < gaBestDist {
-		best = finalPatch
-		best.Fitness = finalDist
+		// Differential Jacobian steering on extended temporal timbre features (alternating pass)
+		diffOpt := NewDiffOptimizer(ctx, target, finalPatch, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
+		diffPatch := diffOpt.RunAlternating(3)
+		if diffOpt.bestDist < finalDist {
+			finalPatch = diffPatch
+			finalDist = diffOpt.bestDist
+		}
+
+		if cfg.Verbose {
+			fmt.Printf("[%dms] Phase 3 final distance: %.6f (GA was: %.6f, LiveOpt was: %.6f, DiffOpt was: %.6f)\n", logMs(),
+				finalDist, gaBestDist, liveOpt.bestDist, diffOpt.bestDist)
+		}
+
+		// Use refined result if it beat the GA
+		if finalDist < gaBestDist {
+			best = finalPatch
+			best.Fitness = finalDist
+		}
 	}
 
 	// Step 3.5: Formant-constrained refinement (experimental)

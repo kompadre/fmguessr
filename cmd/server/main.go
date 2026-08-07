@@ -38,6 +38,7 @@ type ServerConfig struct {
 	ExportDir      string
 	ModelData      []byte // Embedded ONNX model bytes (overrides ModelPath)
 	EncoderPath    string // Path to 1D ResNet ONNX encoder (optional)
+	OptMargin      float64 // Skip optimization on candidates worse than best * (1 + margin)
 }
 
 type MatchResult struct {
@@ -235,6 +236,7 @@ func (s *Server) processJob(job *Job) {
 		TrajectoryAlphaStart: 0.1,
 		TrajectoryAlphaEnd:   0.8,
 		TrajectoryConfig:     match.DefaultTrajectoryConfig(),
+		OptMargin:            s.cfg.OptMargin,
 		ProgressCallback: func(pct int, phase string) {
 			s.mu.Lock()
 			job.ProgressPercent = pct
@@ -975,6 +977,7 @@ func (s *Server) handleExportSyx(w http.ResponseWriter, r *http.Request) {
 			Name      string `json:"name"`
 			VoiceData string `json:"voice_data"` // base64-encoded 128-byte patch (alternative to syx_url)
 		} `json:"patches"`
+		Name string `json:"name"` // optional: export filename (without .syx)
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 80000)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -1040,14 +1043,18 @@ func (s *Server) handleExportSyx(w http.ResponseWriter, r *http.Request) {
 	exportID := fmt.Sprintf("export_%d", time.Now().UnixMilli())
 	exportDir := filepath.Join(s.exportDir, exportID)
 	_ = os.MkdirAll(exportDir, 0755)
-	syxPath := filepath.Join(exportDir, "favorites.syx")
+	exportName := "patches"
+	if req.Name != "" {
+		exportName = match.SanitizeVoiceName(req.Name)
+	}
+	syxPath := filepath.Join(exportDir, exportName+".syx")
 	if err := os.WriteFile(syxPath, syxData, 0644); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"write failed: %v"}`, err), http.StatusInternalServerError)
 		return
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"syx_url": fmt.Sprintf("/exports/%s/favorites.syx", exportID),
+		"syx_url": fmt.Sprintf("/exports/%s/%s.syx", exportID, exportName),
 		"count":   len(candidates),
 	})
 }
@@ -1069,6 +1076,7 @@ func main() {
 	budgetSeconds := flag.Float64("budget-seconds", 0, "stop matching after N seconds (0=unlimited)")
 	exportDir := flag.String("exports", "./exports", "path to export directory for static files")
 	encoderPath := flag.String("encoder", "", "path to 1D ResNet ONNX encoder model for trajectory distance (optional)")
+	optMargin := flag.Float64("opt-margin", 0.3, "skip optimization on candidates worse than best * (1 + margin)")
 
 	flag.Parse()
 
@@ -1117,6 +1125,7 @@ func main() {
 		ExportDir:      *exportDir,
 		ModelData:      modelData,
 		EncoderPath:    *encoderPath,
+		OptMargin:      *optMargin,
 	}
 
 	server := NewServer(cfg)

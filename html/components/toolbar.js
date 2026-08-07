@@ -1,5 +1,9 @@
+// Toolbar — bottom panel with tabs: Keyboard | Piano Roll | Edit | Log
+// Replaces piano-dock.js. Keyboard/Pianoroll/Log logic moved here; Edit tab delegates to edit-panel.js.
+
 import { createPianoroll } from './pianoroll.js';
 import { createVoiceBank } from './voicebank.js';
+import { createEditPanel } from './edit-panel.js';
 
 const PIANO_NOTES = [
     { midi: 36, name: 'C2',  white: true },
@@ -52,8 +56,8 @@ const PIANO_NOTES = [
     { midi: 83, name: 'B5',  white: true },
 ];
 
-export function createPianoDock(opts) {
-    const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, activeVoiceData, initialTab, onNoteClick } = opts;
+export function createToolbar(opts) {
+    const { matchedMidi, playNoteFn, pianorollNotes, activePatchId, activeVoiceData, initialTab, onNoteClick, editOpts } = opts;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'piano-dock-inner';
@@ -70,12 +74,17 @@ export function createPianoDock(opts) {
     tabPianoroll.className = 'dock-tab' + (initialTab === 'pianoroll' ? ' active' : '');
     tabPianoroll.textContent = 'Piano Roll';
 
+    const tabEdit = document.createElement('button');
+    tabEdit.className = 'dock-tab' + (initialTab === 'edit' ? ' active' : '');
+    tabEdit.textContent = 'Edit';
+
     const tabLog = document.createElement('button');
     tabLog.className = 'dock-tab' + (initialTab === 'log' ? ' active' : '');
     tabLog.textContent = 'Log';
 
     tabBar.appendChild(tabKeyboard);
     tabBar.appendChild(tabPianoroll);
+    tabBar.appendChild(tabEdit);
     tabBar.appendChild(tabLog);
     wrapper.appendChild(tabBar);
 
@@ -86,22 +95,27 @@ export function createPianoDock(opts) {
     const pianorollPanel = document.createElement('div');
     pianorollPanel.className = 'dock-panel' + (initialTab === 'pianoroll' ? ' active' : '');
 
+    const editPanel = document.createElement('div');
+    editPanel.className = 'dock-panel' + (initialTab === 'edit' ? ' active' : '');
+
     const logPanel = document.createElement('div');
     logPanel.className = 'dock-panel dock-panel-log' + (initialTab === 'log' ? ' active' : '');
 
     wrapper.appendChild(keyboardPanel);
     wrapper.appendChild(pianorollPanel);
+    wrapper.appendChild(editPanel);
     wrapper.appendChild(logPanel);
 
     function activateTab(tab, panel) {
-        [tabKeyboard, tabPianoroll, tabLog].forEach(t => t.classList.remove('active'));
-        [keyboardPanel, pianorollPanel, logPanel].forEach(p => p.classList.remove('active'));
+        [tabKeyboard, tabPianoroll, tabEdit, tabLog].forEach(t => t.classList.remove('active'));
+        [keyboardPanel, pianorollPanel, editPanel, logPanel].forEach(p => p.classList.remove('active'));
         tab.classList.add('active');
         panel.classList.add('active');
     }
 
     tabKeyboard.addEventListener('click', () => activateTab(tabKeyboard, keyboardPanel));
     tabPianoroll.addEventListener('click', () => activateTab(tabPianoroll, pianorollPanel));
+    tabEdit.addEventListener('click', () => activateTab(tabEdit, editPanel));
     tabLog.addEventListener('click', () => activateTab(tabLog, logPanel));
 
     // --- Keyboard panel ---
@@ -131,7 +145,6 @@ export function createPianoDock(opts) {
             key.classList.add('pressed');
             if (onNoteClick) {
                 onNoteClick(n.midi);
-                // Update matched highlight
                 kb.querySelectorAll('.key.matched').forEach(k => k.classList.remove('matched'));
                 key.classList.add('matched');
             }
@@ -164,9 +177,10 @@ export function createPianoDock(opts) {
     const voiceBank = createVoiceBank({
         onSelect: (entry) => {
             if (pianorollRef) {
-                pianorollRef.setActivePatch(entry.patchId, entry.voiceData, entry.color);
+                pianorollRef.setActivePatch(entry.patchId, entry.voiceData, entry.color, entry.channel);
             }
         },
+        onVoiceAdded: opts.onVoiceAdded || null,
     });
     pianorollRow.appendChild(voiceBank);
 
@@ -177,9 +191,14 @@ export function createPianoDock(opts) {
         onNotesChange: updateHighlights,
         activePatchId,
         activeVoiceData,
+        onClear: () => { if (voiceBank._clear) voiceBank._clear(); },
     });
     pianorollRow.appendChild(pianorollRef.element);
     pianorollPanel.appendChild(pianorollRow);
+
+    // --- Edit panel ---
+    const edit = createEditPanel(editOpts || {});
+    editPanel.appendChild(edit);
 
     // --- Log panel ---
     const logTextarea = document.createElement('textarea');
@@ -189,11 +208,13 @@ export function createPianoDock(opts) {
     logTextarea.className = 'dock-log';
     logPanel.appendChild(logTextarea);
 
+    // Expose internals
     wrapper._updateHighlights = updateHighlights;
     wrapper._pianoroll = pianorollRef;
     wrapper._voiceBank = voiceBank;
     wrapper._showKeyboard = () => activateTab(tabKeyboard, keyboardPanel);
     wrapper._showPianoroll = () => activateTab(tabPianoroll, pianorollPanel);
+    wrapper._showEdit = () => activateTab(tabEdit, editPanel);
     wrapper._showLog = () => activateTab(tabLog, logPanel);
     wrapper._logPanel = logPanel;
     return wrapper;

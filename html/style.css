@@ -492,69 +492,6 @@ h1 {
     padding-top: 1.5rem;
 }
 
-.imported-panel,
-.edit-panel {
-    position: relative;
-    z-index: 10;
-    margin-left: 1rem;
-    margin-right: 1rem;
-}
-
-/* Imported panel — minimizable, movable container */
-.imported-panel {
-    width: 100%;
-    min-width: 450px;
-    max-width: 500px;
-    background-color: #16213e;
-    border: 1px solid #333;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    display: none;
-}
-
-.imported-panel.visible {
-    display: block;
-}
-
-.imported-panel.minimized .imported-body {
-    display: none;
-}
-
-.imported-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.8rem;
-    cursor: move;
-    user-select: none;
-    border-bottom: 1px solid #2a2a3e;
-}
-
-.imported-header:hover {
-    background: rgba(233, 69, 96, 0.05);
-}
-
-.imported-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #ccc;
-    letter-spacing: 0.03em;
-}
-
-.imported-panel .config-arrow {
-    font-size: 0.7rem;
-    color: #666;
-    transition: transform 0.2s;
-}
-
-.imported-panel.minimized .config-arrow {
-    transform: rotate(-90deg);
-}
-
-.imported-body {
-    padding: 0;
-}
-
 .night-sky-canvas {
     position: absolute;
     top: 0;
@@ -564,7 +501,7 @@ h1 {
     height: 100%;
     border: 1px dashed #2a2a3e;
     border-radius: 8px;
-    background: radial-gradient(ellipse at center, #0d0d1a 0%, #080812 100%);
+    background: url('images/bg.png') center/cover no-repeat, radial-gradient(ellipse at center, #0d0d1a 0%, #080812 100%);
 }
 
 .sky-toolbar {
@@ -757,8 +694,9 @@ h1 {
     min-height: 80px;
     border: 1px dashed #333;
     border-radius: 8px;
-    background: rgba(22, 33, 62, 0.3);
+    background: none;
     z-index: 5;
+    height: auto;
 }
 
 .sky-container.drag-over-container {
@@ -776,6 +714,136 @@ h1 {
     color: #666;
     cursor: move;
     border-bottom: 1px dashed #2a2a3e;
+    background: #16213e;
+    border-radius: 8px 8px 0 0;
+}
+
+.sky-container-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    flex: 1;
+}
+
+.sky-container-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+}
+
+.sky-container-minimize {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.7rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    line-height: 1;
+    transition: color 0.15s;
+}
+
+.sky-container-minimize:hover {
+    color: #e94560;
+}
+
+.sky-container-assign {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    line-height: 1;
+    transition: color 0.15s;
+}
+
+.sky-container-assign:hover {
+    color: #4caf50;
+}
+
+.sky-container-sort {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    line-height: 1;
+    transition: color 0.15s;
+}
+
+.sky-container-sort:hover {
+    color: #2196f3;
+}
+
+.sky-container-export {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+    line-height: 1;
+    transition: color 0.15s;
+}
+
+.sky-container-export:hover {
+    color: #ff9800;
+}
+
+.sky-container-resize {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+    z-index: 10;
+}
+
+.sky-container-resize::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid #555;
+    border-bottom: 2px solid #555;
+    border-radius: 0 0 2px 0;
+}
+
+.sky-container:hover .sky-container-resize::after {
+    border-color: #999;
+}
+
+.sky-container-name {
+    cursor: text;
+    padding: 0.1rem 0.2rem;
+    border-radius: 3px;
+    min-width: 2rem;
+}
+
+.sky-container-name:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+.sky-container-name:focus {
+    outline: 1px solid #e94560;
+    background: rgba(255,255,255,0.08);
+    color: #ccc;
+}
+
+.sky-container-name-failed {
+    color: #e94560;
+    text-decoration: line-through;
+    cursor: default;
+}
+
+.sky-container-name-failed:hover {
+    background: none;
 }
 
 .sky-remove {
@@ -801,11 +869,43 @@ h1 {
 }
 
 .sky-container-body {
-    padding: 0.3rem;
+    padding: 5px;
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
+    flex-direction: column;
+    gap: 2px;
     min-height: 40px;
+    overflow: auto;
+    max-height: 400px;
+    background: rgba(22, 33, 62, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 0 0 8px 8px;
+}
+
+.sky-container-body .patch-row {
+    width: 100%;
+}
+
+.container-status {
+    padding: 1rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.8rem;
+    width: 100%;
+}
+
+.sky-container-body.container-body-probe {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    overflow-y: auto;
+    max-height: 400px;
+}
+
+.sky-container-body .probe-panel {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
 }
 
 .sky-container-body .patch-float {
@@ -1154,28 +1254,87 @@ h1 {
     min-width: 65px;
 }
 
-/* Minified row (dragged to another list) */
+/* Minified row (inside containers) */
 .patch-row-minified {
-    padding: 0.3rem 0.6rem;
-    gap: 0.4rem;
+    padding: 0.2rem 0.4rem;
+    gap: 0.3rem;
     background: #12121f;
     border-left: 2px solid #f5c542;
+    width: 100%;
+    box-sizing: border-box;
 }
 
-.patch-row-minified .patch-spec,
-.patch-row-minified .patch-col,
-.patch-row-minified .patch-assign,
-.patch-row-minified .patch-edit-btn {
+.patch-row-minified .patch-col {
     display: none;
+}
+
+.patch-row-minified .patch-spec {
+    display: none;
+}
+
+.patch-row-minified .patch-spec-mini {
+    display: flex;
+    flex-shrink: 0;
 }
 
 .patch-row-minified .patch-star {
     opacity: 1;
+    flex-shrink: 0;
 }
 
 .patch-row-minified .patch-name {
     color: #f5c542;
     font-size: 0.8rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.patch-row-minified .patch-assign {
+    opacity: 0.6;
+    flex-shrink: 0;
+}
+
+.patch-row-minified:hover .patch-assign,
+.patch-row-minified:hover .patch-edit-btn,
+.patch-row-minified:hover .sky-remove {
+    opacity: 1;
+}
+
+.patch-row-minified .patch-edit-btn {
+    flex-shrink: 0;
+}
+
+.patch-row-minified .sky-remove {
+    flex-shrink: 0;
+}
+
+/* Mini spectrogram */
+.patch-spec-mini {
+    display: none;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    border: none;
+    overflow: visible;
+}
+
+.patch-spec-mini .patch-canvas {
+    width: 120px;
+    height: 32px;
+    border-radius: 3px;
+    border: 1px solid #2a2a3e;
+}
+
+.patch-spec-mini .patch-play {
+    width: 20px;
+    height: 20px;
+    font-size: 0.55rem;
 }
 
 /* Drag states */
@@ -1688,138 +1847,11 @@ h1 {
 }
 
 /* ============================================================
-   10. Favorites panel
+   11. Edit panel (toolbar tab)
    ============================================================ */
 
-.favorites-panel {
-    width: 100%;
-    max-width: 500px;
-    display: none;
-}
-
-.favorites-panel.visible {
-    display: block;
-}
-
-.favorites-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    cursor: pointer;
-    user-select: none;
-    margin-bottom: 0.5rem;
-    font-size: 0.9rem;
-    color: #ccc;
-}
-
-.favorites-header:hover {
-    color: #fff;
-}
-
-.favorites-header .config-arrow {
-    font-size: 0.75rem;
-    transition: transform 0.2s;
-}
-
-.favorites-header.collapsed .config-arrow {
-    transform: rotate(-90deg);
-}
-
-.favorites-body {
-    overflow: hidden;
-    transition: max-height 0.25s ease;
-}
-
-.favorites-body.collapsed {
-    max-height: 0 !important;
-    margin: 0;
-}
-
-.favorites-body .patch-row {
-    padding: 0.35rem 0.6rem;
-}
-
-.favorites-body .patch-spec {
-    width: 120px;
-    min-width: 120px;
-    height: 36px;
-}
-
-.favorites-body .patch-canvas {
-    width: 120px;
-    height: 36px;
-}
-
-.favorites-body .patch-play {
-    width: 22px;
-    height: 22px;
-    font-size: 0.6rem;
-}
-
-.favorites-body .patch-row .fav-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-shrink: 0;
-}
-
-.favorites-body .fav-del {
-    background: none;
-    border: none;
-    color: #666;
-    cursor: pointer;
-    font-size: 0.85rem;
-    padding: 0.1rem 0.2rem;
-    line-height: 1;
-}
-
-.favorites-body .fav-del:hover {
-    color: #e94560;
-}
-
-/* ============================================================
-   11. Edit panel
-   ============================================================ */
-
-.edit-panel {
-    width: 100%;
-    max-width: 500px;
-    background-color: #16213e;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 1rem;
-    display: none;
-}
-
-.edit-panel.visible {
-    display: block;
-}
-
-.edit-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-}
-
-.edit-header h3 {
-    font-size: 0.95rem;
-    color: #fff;
-    margin: 0;
-}
-
-.edit-close-btn {
-    background: none;
-    border: none;
-    color: #888;
-    cursor: pointer;
-    font-size: 1.1rem;
-    padding: 0;
-    line-height: 1;
-}
-
-.edit-close-btn:hover {
-    color: #fff;
+.edit-panel-inner {
+    padding: 0.5rem;
 }
 
 /* Mode tabs */
@@ -2110,8 +2142,7 @@ h1 {
     line-height: 1;
 }
 
-.patch-row:hover .patch-edit-btn,
-.fav-row:hover .patch-edit-btn {
+.patch-row:hover .patch-edit-btn {
     opacity: 1;
 }
 
@@ -2137,6 +2168,18 @@ footer {
     z-index: 2;
     background-color: #1a1a2e;
 }
+
+.audio-status {
+    float: right;
+    font-size: 0.8rem;
+    cursor: default;
+    margin-left: 0.5rem;
+}
+
+.audio-ready { color: #4caf50; }
+.audio-error { color: #e94560; }
+.audio-loading { color: #ff9800; }
+.audio-closed { color: #555; }
 
 #log-details {
     width: 100%;
@@ -2227,100 +2270,140 @@ footer {
 }
 
 /* ============================================================
-   15. Patch Cards (uploaded .syx)
+   15. Probe floating panel
    ============================================================ */
 
-.patch-card {
-    border: 1px solid #2a2a3e;
-    border-radius: 6px;
-    padding: 0.5rem 0.6rem;
-    margin-bottom: 0.4rem;
-    background-color: #0f0f23;
-    cursor: pointer;
-    transition: background-color 0.12s;
+.probe-floating-panel {
+    position: absolute;
+    z-index: 200;
+    background: #16213e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    min-width: 300px;
+    max-width: 400px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
 }
 
-.patch-card:hover {
-    background-color: #16162a;
-}
-
-.patch-card-header {
+.probe-floating-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid #2a2a3e;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #ccc;
+    cursor: move;
+}
+
+.probe-floating-body {
+    padding: 0.8rem;
+}
+
+.probe-panel {
+    padding: 0.5rem;
+}
+
+.probe-panel .probe-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+
+.probe-panel .probe-form {
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.3rem;
+    align-items: flex-end;
+}
+
+.probe-panel .probe-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.probe-panel .probe-field label {
+    font-size: 0.65rem;
+    color: #888;
+    text-transform: capitalize;
+}
+
+.probe-panel .probe-field input,
+.probe-panel .probe-field select {
+    background: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #e0e0e0;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.75rem;
+    width: 80px;
+}
+
+.probe-panel .probe-field input:disabled,
+.probe-panel .probe-field select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #0a0a18;
+}
+
+.probe-panel .tuning-fork-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.probe-panel .note-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.probe-panel .probe-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.probe-panel .btn-match {
+    background: #e94560;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
     font-size: 0.8rem;
 }
 
-.patch-card-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: #e0e0e0;
-    font-weight: 500;
+.probe-panel .btn-match:hover {
+    background: #d63851;
 }
 
-.patch-card .patch-spec {
-    width: 220px;
-    height: 56px;
-}
-
-.patch-card .patch-canvas {
-    width: 220px;
-    height: 56px;
-}
-
-.patch-card .patch-spec.loaded {
-    border-color: #333;
-}
-
-.patch-card .patch-play {
-    opacity: 0.7;
-}
-
-.patch-card:hover .patch-play {
-    opacity: 1;
-}
-
-.upload-tab-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid #2a2a3e;
-}
-
-.upload-tab-header h2 {
-    margin: 0;
-    font-size: 1rem;
-    color: #e0e0e0;
-    flex: 1;
-}
-
-.upload-tab-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 0.5rem;
-}
-
-/* Favorites export button */
-.fav-export-btn {
+.probe-panel .btn-reset {
     background: none;
-    border: 1px solid #444;
+    color: #888;
+    border: 1px solid #333;
     border-radius: 4px;
-    color: #aaa;
+    padding: 0.4rem 0.8rem;
     cursor: pointer;
-    font-size: 0.75rem;
-    padding: 0.2rem 0.5rem;
-    transition: color 0.15s, border-color 0.15s;
+    font-size: 0.8rem;
 }
 
-.fav-export-btn:hover {
-    color: #4caf50;
-    border-color: #4caf50;
+.probe-panel .btn-reset:hover {
+    color: #ccc;
+    border-color: #555;
+}
+
+.container-spectrogram {
+    height: 36px;
+    border-radius: 4px;
+    margin-left: 0.5rem;
+}
+
+/* ============================================================
+   16. Footer / log
+   ============================================================ */
 }
 
 /* Upload button in header area */

@@ -22,5 +22,5 @@ SOFTWARE.
 
 ---
 
-This project includes webdx7 (MIT License) by Jari Kleimola (webaudiomodules.org).
 This project includes MSFA synth engine (Apache 2.0 License) by Raph Levien.
+This project includes webdx7 build tooling (MIT License) by Jari Kleimola.

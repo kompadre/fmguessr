@@ -22,6 +22,15 @@ var epiano = []byte{
 	69, 46, 80, 73, 65, 78, 79, 32, 49, 32,
 }
 
+// initVoice is a blank DX7 patch with name "INIT VOICE" (10 chars, padded with spaces)
+var initVoice = func() []byte {
+	v := make([]byte, 128)
+	// All operators silent (output level 0), algorithm 5, feedback 0
+	// Name at bytes 118-127: "INIT VOICE" (10 chars)
+	copy(v[118:128], []byte("INIT VOICE "))
+	return v
+}()
+
 // OpParams holds the tunable parameters for a single DX7 operator.
 type OpParams struct {
 	Mode        uint8 // 0=ratio, 1=fixed
@@ -458,13 +467,13 @@ func (c *Candidate) SysexBulkDump() []byte {
 }
 
 // SysexBulkDumpMultiple creates a DX7 SysEx bulk dump with multiple candidates
-// in sequential voice slots. Remaining slots are filled with epiano defaults.
+// in sequential voice slots. Remaining slots are filled with INIT VOICE.
 func SysexBulkDumpMultiple(candidates []*Candidate) []byte {
 	bank := make([]byte, 4096)
 
-	// Copy epiano defaults for all32 slots
+	// Copy INIT VOICE defaults for all 32 slots
 	for i := 0; i < 32; i++ {
-		copy(bank[i*128:], epiano)
+		copy(bank[i*128:], initVoice)
 	}
 
 	// Overwrite slots with candidates and set custom names

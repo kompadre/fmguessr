@@ -7,7 +7,7 @@ const MAX_SLOTS = 8;
 const PATCH_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b'];
 
 export function createVoiceBank(opts) {
-    const { onSelect } = opts;
+    const { onSelect, onVoiceAdded } = opts;
     let entries = [];
     let activeId = null;
 
@@ -23,9 +23,9 @@ export function createVoiceBank(opts) {
     list.className = 'voicebank-list';
     container.appendChild(list);
 
-    // Drop target for night sky patches
+    // Drop target for canvas patches
     container.addEventListener('dragover', (e) => {
-        if (!window._draggedMatch) return;
+        if (!window._draggedPatch) return;
         e.preventDefault();
         e.stopPropagation();
         container.classList.add('voicebank-drag-over');
@@ -52,9 +52,9 @@ export function createVoiceBank(opts) {
         e.stopPropagation();
         container.classList.remove('voicebank-drag-over');
         list.querySelectorAll('.voicebank-drop-target').forEach(i => i.classList.remove('voicebank-drop-target'));
-        if (!window._draggedMatch) return;
+        if (!window._draggedPatch) return;
 
-        const match = window._draggedMatch;
+        const patch = window._draggedPatch;
         const items = [...list.querySelectorAll('.voicebank-item')];
         const afterItem = getInsertAfterItem(items, e.clientY);
 
@@ -62,9 +62,9 @@ export function createVoiceBank(opts) {
             // Replace the entry at drop position
             const idx = parseInt(afterItem.dataset.vbIdx);
             if (entries[idx]) {
-                entries[idx].name = match.name || entries[idx].name;
-                entries[idx].voiceData = match.voice_data || entries[idx].voiceData;
-                entries[idx].patchId = match.name || entries[idx].patchId;
+                entries[idx].name = patch.name || entries[idx].name;
+                entries[idx].voiceData = patch.voice_data || entries[idx].voiceData;
+                entries[idx].patchId = patch.name || entries[idx].patchId;
                 activeId = entries[idx].id;
                 render();
                 fireSelect();
@@ -72,11 +72,10 @@ export function createVoiceBank(opts) {
             }
         } else {
             // Append to first empty slot
-            addEntry(match.name || 'Untitled', match.voice_data || null, match.name);
+            addEntry(patch.name || 'Untitled', patch.voice_data || null, patch.name);
         }
 
-        window._draggedRow = null;
-        window._draggedMatch = null;
+        window._draggedPatch = null;
     });
 
     function getInsertAfterItem(items, clientY) {
@@ -149,11 +148,17 @@ export function createVoiceBank(opts) {
             voiceData: voiceData || null,
             patchId: patchId || name,
             color,
+            channel: entries.length, // static channel assignment
         });
         activeId = entries[entries.length - 1].id;
         render();
         fireSelect();
         saveState();
+
+        // Load voice into channel if audio-manager is available
+        if (onVoiceAdded && voiceData) {
+            onVoiceAdded(voiceData, entries.length - 1);
+        }
     }
 
     function removeEntry(id) {
@@ -209,9 +214,18 @@ export function createVoiceBank(opts) {
 
     container._addEntry = addEntry;
     container._removeEntry = removeEntry;
+    container._clear = () => { entries = []; activeId = null; render(); saveState(); };
     container._getActive = getActive;
     container._setActive = setActive;
     container._getEntries = () => entries;
+    container._loadAllVoices = (loadVoiceFn) => {
+        for (let i = 0; i < entries.length; i++) {
+            if (entries[i] && entries[i].voiceData) {
+                entries[i].channel = i;
+                loadVoiceFn(entries[i].voiceData, i);
+            }
+        }
+    };
 
     return container;
 }

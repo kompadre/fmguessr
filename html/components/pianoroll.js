@@ -51,7 +51,7 @@ const CANVAS_H = NOTES.length * ROW_H;
 const PATCH_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4'];
 
 export function createPianoroll(opts) {
-    const { notes, playNoteFn, onNotesChange } = opts;
+    const { notes, playNoteFn, onNotesChange, onClear } = opts;
 
     const container = document.createElement('div');
     container.className = 'pianoroll-container';
@@ -245,7 +245,7 @@ export function createPianoroll(opts) {
         lastClickCol = col;
 
         if (existing) {
-            playNoteFn(existing.midi, existing.dur * 250, existing.voiceData || null);
+            playNoteFn(existing.midi, existing.dur * 250, existing.voiceData || null, existing.channel);
             return;
         }
 
@@ -284,6 +284,7 @@ export function createPianoroll(opts) {
                 midi,
                 start: minC,
                 dur,
+                channel: opts.activeChannel ?? null,
                 patchId: opts.activePatchId || null,
                 voiceData: opts.activeVoiceData || null,
                 color: opts.activeColor || colorForPatch(opts.activePatchId),
@@ -309,12 +310,16 @@ export function createPianoroll(opts) {
     });
 
     // Sequencer
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 3;
+
     function startPlayback() {
         if (playing) stopPlayback();
         if (notes.length === 0) return;
 
         playing = true;
         playCol = 0;
+        consecutiveErrors = 0;
         playBtn.disabled = true;
         stopBtn.disabled = false;
 
@@ -325,7 +330,18 @@ export function createPianoroll(opts) {
 
             for (const n of notes) {
                 if (n.start === playCol) {
-                    playNoteFn(n.midi, n.dur * 250, n.voiceData || null);
+                    try {
+                        playNoteFn(n.midi, n.dur * 250, n.voiceData || null, n.channel);
+                        consecutiveErrors = 0;
+                    } catch (e) {
+                        consecutiveErrors++;
+                        console.warn(`[pianoroll] Note error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, e);
+                        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                            console.warn('[pianoroll] Too many errors, stopping playback');
+                            stopPlayback();
+                            return;
+                        }
+                    }
                 }
             }
 
@@ -358,6 +374,7 @@ export function createPianoroll(opts) {
         draw();
         renderLegend();
         onNotesChange();
+        if (onClear) onClear();
     });
 
     function renderLegend() {
@@ -393,10 +410,11 @@ export function createPianoroll(opts) {
             draw();
             renderLegend();
         },
-        setActivePatch(patchId, voiceData, color) {
+        setActivePatch(patchId, voiceData, color, channel) {
             opts.activePatchId = patchId;
             opts.activeVoiceData = voiceData;
             opts.activeColor = color || null;
+            opts.activeChannel = channel ?? null;
         },
         colorForPatch,
     };

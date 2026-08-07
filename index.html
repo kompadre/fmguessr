@@ -16,7 +16,8 @@
                 <span class="menu-label">File</span>
                 <div class="menu-dropdown">
                     <button id="menu-import-wav">Import .WAV</button>
-                    <button id="menu-import-syx">Import .SYX</button>
+                    <button id="menu-import-syx">Load .SYX</button>
+                    <button id="menu-load-demo">Load DEMO.SYX</button>
                     <hr>
                     <button id="menu-export-syx">Export .SYX</button>
                 </div>
@@ -54,59 +55,6 @@
 
     <div id="night-sky"></div>
 
-    <div id="imported-panel" class="imported-panel">
-        <div class="imported-header" id="imported-header">
-            <span class="imported-title">Imported</span>
-            <span class="config-arrow" id="imported-arrow">▼</span>
-        </div>
-        <div class="imported-body" id="imported-body">
-            <div id="tabs"></div>
-            <div id="tab-content"></div>
-        </div>
-    </div>
-
-    <div id="favorites-panel" class="favorites-panel" style="display:none;">
-        <div class="favorites-header" id="fav-header">
-            <span>Favorites (<span id="fav-count">0</span>)</span>
-            <span class="config-arrow">▼</span>
-        </div>
-        <div class="favorites-body" id="fav-body"></div>
-    </div>
-
-    <div id="edit-panel" class="edit-panel">
-        <div class="edit-header">
-            <h3>Edit Patch</h3>
-            <button class="edit-close-btn" id="edit-close" title="Close">×</button>
-        </div>
-
-        <div class="edit-modes">
-            <button class="edit-mode-btn active" data-mode="morph">Morph</button>
-            <button class="edit-mode-btn" data-mode="params">Params</button>
-            <button class="edit-mode-btn" data-mode="random">Random</button>
-        </div>
-
-        <div id="edit-slot-area"></div>
-
-        <div class="edit-slider-row" id="edit-slider-row">
-            <label class="edit-slider-label" id="edit-slider-label">
-                Distance: <span id="edit-slider-val">0.50</span>
-            </label>
-            <input type="range" id="edit-slider" min="-1" max="1" step="0.01" value="0.5" class="edit-slider">
-            <div class="edit-slider-ticks">
-                <span>−1</span><span>0</span><span>1</span>
-            </div>
-        </div>
-
-        <div id="edit-params-area" style="display:none"></div>
-
-        <div class="edit-actions">
-            <button class="btn-edit-clear" id="edit-clear">Clear</button>
-            <button class="btn-edit-primary" id="edit-go" disabled>Morph</button>
-        </div>
-
-        <div class="edit-status" id="edit-status"></div>
-    </div>
-
     <!-- Credits Modal -->
     <div id="credits-modal" class="modal-overlay" style="display:none;">
         <div class="modal-dialog">
@@ -116,7 +64,7 @@
             </div>
             <div class="modal-body">
                 <p><strong>Raph Levien</strong> and MSFA contributors — <a href="https://github.com/google/music-synthesizer-for-android" target="_blank">github.com/google/music-synthesizer-for-android</a></p>
-                <p><strong>asb2m10</strong> and the Dexed team — <a href="https://github.com/asb2m10/dexed" target="_blank">github.com/asb2m10/dexed</a></p>
+                <p><strong>Jari Kleimola</strong> — webdx7 build tooling — <a href="https://github.com/jariseon/webdx7" target="_blank">github.com/jariseon/webdx7</a></p>
                 <p><strong>Alexey S. Kompaniets</strong> — <a href="https://github.com/kompadre" target="_blank">github.com/kompadre</a></p>
             </div>
         </div>
@@ -146,12 +94,12 @@
                 <button class="modal-close" id="help-close">×</button>
             </div>
             <div class="modal-body">
-                <p><strong>Import a .WAV</strong> — Upload an audio recording. The server analyzes it and returns the closest DX7 patches. Click patches to preview, drag stars to the night sky to organize.</p>
-                <p><strong>Import a .SYX</strong> — Load a DX7 sysex bank (32 voices). All patches are shown in a list. Click to play, drag to the night sky to collect favorites.</p>
-                <p><strong>Night Sky</strong> — A free canvas where patches live as floating cards. Drag stars from any list to place them. Click to expand/collapse. Create containers to group patches.</p>
-                <p><strong>Piano Dock</strong> — Bottom panel with Keyboard (click to play), Piano Roll (draw note sequences), and Log (activity history).</p>
+                <p><strong>Import a .WAV</strong> — Upload an audio recording. The server analyzes it and returns the closest DX7 patches. Patches appear in containers on the canvas.</p>
+                <p><strong>Load a .SYX</strong> — Load a DX7 sysex bank (32 voices). All patches appear in a container on the canvas. Click to play, drag to reorganize.</p>
+                <p><strong>Canvas</strong> — The main area where patches and containers live. Drag patches by their star. Create containers to group patches. Containers are resizable.</p>
+                <p><strong>Toolbar</strong> — Bottom panel with Keyboard (click to play), Piano Roll (draw note sequences), Edit (morph/params/random), and Log.</p>
                 <p><strong>Edit</strong> — Morph between two patches, tweak individual parameters, or generate random mutations.</p>
-                <p><strong>Export .SYX</strong> — Save your collected patches as a standard DX7 sysex file.</p>
+                <p><strong>Export .SYX</strong> — Export patches from a container as a standard DX7 sysex file.</p>
             </div>
         </div>
     </div>
@@ -167,8 +115,7 @@
                 <p>WavToFM is licensed under the <strong>MIT License</strong>.</p>
                 <p>This project includes:</p>
                 <p>• <strong>MSFA</strong> (Apache 2.0) — Music Synthesizer for Android by Raph Levien and contributors</p>
-                <p>• <strong>Dexed</strong> (GPL-3.0) — FM Plugin Synth by asb2m10 and contributors</p>
-                <p>• <strong>webdx7</strong> (MIT) — Web Audio DX7 by Jari Kleimola</p>
+                <p>• <strong>webdx7</strong> (MIT) — Build tooling for WASM encoding by Jari Kleimola</p>
                 <p>DYNA MUSIC TOP is a trademark of its respective owner. DX7 is a product of Yamaha Corporation.</p>
             </div>
         </div>
@@ -176,7 +123,7 @@
 
     <div id="piano-dock"></div>
 
-    <footer>&copy; Alexey S. Kompaniets 2026</footer>
+    <footer>&copy; Alexey S. Kompaniets 2026 <span id="audio-status" class="audio-status audio-closed" title="Audio: inactive">●</span></footer>
 
     <script type="module" src="html/app.js"></script>
 </body>

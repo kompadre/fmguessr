@@ -20,6 +20,7 @@ void *malloc_aligned(size_t alignment, size_t nbytes);
 // Abstract class
 template <typename T, typename U> class FirFilter {
  public:
+  virtual ~FirFilter() = default;
   // preconditions:
   // in + (nk - 1) is aligned to 128 bits
   // out is aligned to 128 bits

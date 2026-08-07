@@ -9,11 +9,13 @@
 - Never call `LoadCodebook()` or `LoadTimbreCodebook()` directly — use `loadCodebooksOnce()` in `matcher.go`.
 - Wrap errors: `fmt.Errorf("context: %w", err)`.
 - Match existing code style in each file. Don't introduce conventions that conflict with neighbors.
-- Never call `rebuildPianoDock()` — it was removed. Piano dock is static. Use `currentJob` mutable reference for playback context.
 - Use `pianoDockWrapper` (module-scoped in app.js) to access `_voiceBank`, `_pianoroll`, `_showLog` — NOT `document.getElementById('piano-dock')` which returns the outer container, not the inner wrapper.
-- Server WAVs are ephemeral. `wav_url` in session data is nulled on restore. `wavSampleCache` in patch.js avoids re-fetching the same URL on re-render.
-- VoiceBank assigns colors by slot index (PATCH_COLORS[8]). Pianoroll receives color via `setActivePatch(id, data, color)` — always pass `entry.color` from voicebank.
-- Verify JS changes with `node --check html/app.js`, `node --check html/components/*.js`.
+- VoiceBank assigns colors by slot index (PATCH_COLORS[8]). Pianoroll receives color via `setActivePatch(id, data, color, channel)` — always pass `entry.color` from voicebank.
+- Verify JS changes with `node --check html/app.js`, `node --check html/components/*.js`, `node --check html/synth/*.js`.
+- WASM build: `make -f Makefile.msfa` in `html/synth/wasm/` (uses `zig c++ -target wasm32-wasi`). Do NOT use emscripten.
+- Never export `malloc`/`free` from WASM. Use static pre-allocated buffers (`get_patch_buffer()`, `load_voice_from_buffer()`).
+- AudioManager is a singleton — `initAudio()` runs once. Never re-call `addModule()` after initial setup.
+- Shutdown is disabled for testing — `shutdownAll()`, `setPianorollStop()`, `extendIdle()` are no-ops.
 
 ## Git & Version Control Rules
 
@@ -74,16 +76,19 @@ go test -race ./pkg/match/...        # Race detector
 - Session files: `exports/sessions/<hash>.bin`, atomic write, pruned after 1h.
 
 **Frontend (Vanilla JS, no framework):**
-- `html/app.js`: main orchestrator, tab management, polling, patch rows, batch rendering
-- `html/components/piano-dock.js`: static dock — keyboard | pianoroll | voicebank | log tabs, created once at startup via `initPianoDock()`
-- `html/components/pianoroll.js`: sequencer, `draw()` is idempotent, uses `requestAnimationFrame` loop, exports `_pianoroll` with `setActivePatch()`/`stopPlayback()`
-- `html/components/voicebank.js`: voice palette, persists to localStorage (`fmguessr_voices`), calls `pianorollRef.setActivePatch()` on selection
-- `html/components/patch.js`: patch list rows, `.matched` class for active patch highlight, `wavSampleCache` for deduped waveform fetches
-- `html/components/night-sky.js`: floating patch display with galactic core spinner
-- `html/synth/dx7-synth.js`: Web Audio API layer — `initDx7Synth()`, `playNoteRealtime()`, `renderOffline()`, batch waveforms via offline graph
-- `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine
-- Mutable globals: `activeSyxVoiceData`, `activePianorollPatchId`, `activeKeyboardNote`, `currentJob`
-- Pianoroll notes store per-note `voiceData` (patch that was active when drawn)
-- Night sky patches use `activeKeyboardNote` for playback; imported match results use `job.probeData.midi_note`
+- `html/app.js`: main orchestrator (~600 lines). Wires file input, menu bar, canvas, toolbar. PlayNote/playPatch with multi-channel support.
+- `html/components/canvas.js`: Canvas — patches + PatchContainers on night-sky. Drag-to-reposition, snap-into-container, resize containers. State derived from linked Job.
+- `html/components/toolbar.js`: Bottom toolbar — Keyboard | Piano Roll | Edit | Log tabs. Replaces old piano-dock.js.
+- `html/components/edit-panel.js`: Morph / Params / Random editing. Extracted from old app.js.
+- `html/components/job.js`: Job class — steering object for WAV import lifecycle. Owns: probe → match → poll → complete/fail. Renders probe form inside its container.
+- `html/components/patch-model.js`: Unified data model + stores (localStorage). `patchStore`, `canvasStore`, `jobStore`.
+- `html/components/patch-row.js`: Unified patch row rendering with star drag handle, mini spectrogram, assign/edit/remove buttons.
+- `html/components/patch.js`: Waveform helpers only — `decodeWavSamples`, `drawMiniWaveform`, `wavSampleCache`.
+- `html/components/voicebank.js`: Voice palette (8 slots). Persists to localStorage. Each entry has static channel assignment (0-7).
+- `html/components/pianoroll.js`: Sequencer. Notes store per-note `voiceData` and `channel`. Error counter stops after 3 failures.
+- `html/synth/audio-manager.js`: Singleton AudioContext + AudioWorklet. `acquire()` creates once, `initAudio()` loads modules once. Multi-channel: `loadVoice()`, `playNoteOnChannel()`. No malloc/free — uses static WASM buffers.
+- `html/synth/dx7-synth.js`: Batch waveform rendering only (main thread WASM). No realtime synth code.
+- `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine. Handles `voice-channel`, `midi`, `patch` messages.
+- WASM: `html/synth/wasm/msfa.wasm` (zig c++ build), `msfa.wasm.js` (encoded for AudioWorklet loading). Static buffers: `get_patch_buffer()`, `load_voice_from_buffer()`.
 
 **Deploy:** `make deploy` stages to `deploy/app/`. Docker via `deploy/Dockerfile` + `deploy/docker-compose.yml`.

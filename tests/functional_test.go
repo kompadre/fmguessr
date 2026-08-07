@@ -27,7 +27,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	parentDir := filepath.Dir(workDir)
 	binMatch := filepath.Join(parentDir, "match")
 	binIndex := filepath.Join(parentDir, "index")
-	syxFile := filepath.Join(parentDir, "Dexed_01.syx")
+	syxFile := filepath.Join(parentDir, "test_bank.syx")
 	targetWav := filepath.Join(parentDir, "bla3.wav")
 	codebookFile := filepath.Join(parentDir, "test_codebook.bin")
 	resultSyx := filepath.Join(parentDir, "test_out.syx")
@@ -96,7 +96,7 @@ func TestEndToEndPipeline(t *testing.T) {
 			t.Fatalf("Invalid result sysex: %v", err)
 		}
 
-		// Verify LAURIE recovery (Slot 1 in Dexed_01 is Alg 15)
+		// Verify LAURIE recovery (Slot 1 in test_bank is Alg 15)
 		// We expect the GA to keep Alg 15 (index 14) as the best
 		if !strings.Contains(string(out), "algo=14") {
 			// Note: result.Best.String() prints index 0-31, so Algo 15 is "algo=14"

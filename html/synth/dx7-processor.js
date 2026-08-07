@@ -11,6 +11,11 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
     fd_write: () => 0,
     poll_oneoff: () => 0,
     proc_exit: () => {},
+    clock_time_get: () => 0,
+  };
+
+  const envStub = {
+    emscripten_notify_memory_growth: () => {},
   };
 
   class DX7Processor extends AudioWorkletProcessor {
@@ -34,11 +39,17 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       try {
         const { instance } = await WebAssembly.instantiate(binary, {
           wasi_snapshot_preview1: wasiStub,
+          env: envStub,
         });
         this.exp = instance.exports;
         this.heapI16 = new Int16Array(this.exp.memory.buffer);
 
         this.exp.init_engine(this.sr);
+
+        // Get static patch buffer address and create a view
+        this.patchPtr = this.exp.get_patch_buffer();
+        this.patchView = new Uint8Array(this.exp.memory.buffer, this.patchPtr, 128);
+
         this.ready = true;
         this.port.postMessage({ type: 'ready' });
 
@@ -51,6 +62,14 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       }
     }
 
+    refreshHeap() {
+      // Recreate views if memory grew
+      if (this.heapI16.buffer !== this.exp.memory.buffer) {
+        this.heapI16 = new Int16Array(this.exp.memory.buffer);
+        this.patchView = new Uint8Array(this.exp.memory.buffer, this.patchPtr, 128);
+      }
+    }
+
     handleMessage(e) {
       if (!this.ready) {
         if (!this._pending) this._pending = [];
@@ -59,37 +78,46 @@ if (!AudioWorkletGlobalScope._dx7Registered) {
       }
       const msg = e.data;
       switch (msg.type) {
-        case 'patch': this.loadPatch(msg.data); break;
+        case 'patch':
+          this.loadPatch(msg.data, msg.slot || 0);
+          break;
+        case 'voice-channel':
+          this.loadPatch(msg.data, msg.slot);
+          this.exp.send_midi(0xC0 | msg.channel, msg.slot, 0);
+          break;
         case 'midi':
-          if (msg.data[0] === 0x90) this.exp.note_on(msg.data[1], msg.data[2]);
-          else if (msg.data[0] === 0x80) this.exp.note_off(msg.data[1]);
+          this.exp.send_midi(msg.data[0], msg.data[1], msg.data[2]);
+          break;
+        case 'raw-midi':
+          this.exp.send_midi(msg.data[0], msg.data[1], msg.data[2]);
           break;
       }
     }
 
-    loadPatch(data) {
+    loadPatch(data, slot) {
       const voice = new Uint8Array(data);
       if (voice.length < 128) return;
-      // Allocate temp buffer in WASM heap, copy voice, load, free
-      const ptr = this.exp._Znam(128);
-      new Uint8Array(this.exp.memory.buffer).set(voice.subarray(0, 128), ptr);
-      this.exp.load_voice(ptr);
-      this.exp._ZdaPv(ptr);
+      this.refreshHeap();
+      // Copy directly into static buffer — no malloc/free
+      this.patchView.set(voice.subarray(0, 128));
+      if (slot > 0 && this.exp.load_voice_channel_from_buffer) {
+        this.exp.load_voice_channel_from_buffer(slot);
+      } else {
+        this.exp.load_voice_from_buffer();
+      }
     }
 
     process(inputs, outputs) {
       if (!this.ready) return true;
 
-      // render_audio returns pointer to int16 buffer
       const ptr = this.exp.render_audio(this.bufsize);
       if (!ptr) return true;
 
-      // Update heap view (memory may have grown)
-      const heapI16 = new Int16Array(this.exp.memory.buffer);
+      this.refreshHeap();
       const out = outputs[0][0];
       const i16base = ptr >> 1;
       for (let i = 0; i < this.bufsize; i++) {
-        out[i] = heapI16[i16base + i] * (1.0 / 32768.0);
+        out[i] = this.heapI16[i16base + i] * (1.0 / 32768.0);
       }
       return true;
     }

@@ -31,6 +31,7 @@ func main() {
 	classifierOnly := flag.Bool("classifier-only", false, "skip GA, return best classifier predictions only")
 	budgetSeconds := flag.Float64("budget-seconds", 0, "stop matching after N seconds (0=unlimited)")
 	encoderPath := flag.String("encoder", "", "path to 1D ResNet ONNX encoder model for trajectory distance (optional)")
+	optMargin := flag.Float64("opt-margin", 0.3, "skip optimization on candidates worse than best * (1 + margin)")
 	sessionOut := flag.String("session-out", "", "save trajectory session to file (optional, for debugging/reuse)")
 	sessionIn := flag.String("session-in", "", "load trajectory session from file (skip recomputation)")
 	flag.Usage = func() {
@@ -231,6 +232,7 @@ func main() {
 		TrajectoryAlphaStart: 0.1,
 		TrajectoryAlphaEnd:   0.8,
 		TrajectoryConfig:     match.DefaultTrajectoryConfig(),
+		OptMargin:            *optMargin,
 	}
 
 	fmt.Printf("\nStarting GA: %d generations × %d population = %d evaluations max\n",
