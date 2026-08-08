@@ -139,36 +139,52 @@ function showStep(index) {
             highlightTarget = document.querySelector(step.fallbackHighlight);
             usedFallback = true;
         }
-        if (highlightTarget) {
-            highlightTarget.classList.add('tutorial-highlight');
-        }
+    }
+
+    // Cut a hole in the overlay around the highlighted element
+    if (highlightTarget) {
+        var rect = highlightTarget.getBoundingClientRect();
+        var pad = 6;
+        var lx = ((rect.left - pad) / window.innerWidth * 100).toFixed(2);
+        var ly = ((rect.top - pad) / window.innerHeight * 100).toFixed(2);
+        var rx = ((rect.right + pad) / window.innerWidth * 100).toFixed(2);
+        var ry = ((rect.bottom + pad) / window.innerHeight * 100).toFixed(2);
+
+        // Polygon: outer rectangle (clockwise) + inner hole (counter-clockwise)
+        var clip = 'polygon(' +
+            '0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, ' +
+            lx + '% ' + ly + '%, ' +
+            lx + '% ' + ry + '%, ' +
+            rx + '% ' + ry + '%, ' +
+            rx + '% ' + ly + '%, ' +
+            lx + '% ' + ly + '%)';
+        modal.style.clipPath = clip;
+
+        // Also add a glow border around the cutout
+        highlightTarget.classList.add('tutorial-highlight');
+    } else {
+        modal.style.clipPath = '';
     }
 
     // Position modal relative to highlight target
     var dialog = modal.querySelector('.tutorial-dialog');
     if (dialog) {
-        // Reset position classes/styles
         dialog.classList.remove('tutorial-centered');
         dialog.style.margin = '';
 
         if (usedFallback) {
-            // No container found — center the modal
             dialog.classList.add('tutorial-centered');
         } else if (highlightTarget && highlightTarget.classList.contains('sky-container')) {
-            // Position modal to the left or right of the container
             var rect = highlightTarget.getBoundingClientRect();
             var screenCenter = window.innerWidth / 2;
             var containerCenter = rect.left + rect.width / 2;
 
             if (containerCenter < screenCenter) {
-                // Container on the left — modal to the right
                 dialog.style.margin = '48px 0 0 ' + (rect.right + 16) + 'px';
             } else {
-                // Container on the right — modal to the left
                 dialog.style.margin = '48px 0 0 ' + Math.max(8, rect.left - 436) + 'px';
             }
         }
-        // else: default positioning (near File menu) — no changes needed
     }
 
     // Update nav buttons
@@ -186,6 +202,10 @@ function hide() {
 }
 
 function clearHighlights() {
+    // Reset overlay clip-path
+    var modal = document.getElementById('tutorial-modal');
+    if (modal) modal.style.clipPath = '';
+
     // Remove blur from page content
     var pageContent = document.getElementById('page-content');
     if (pageContent) pageContent.classList.remove('page-blurred');
