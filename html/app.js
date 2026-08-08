@@ -615,6 +615,7 @@ document.getElementById('menu-donate').addEventListener('click', () => {
     window.open('https://github.com/sponsors/kompadre', '_blank');
 });
 document.getElementById('menu-restart-tutorial').addEventListener('click', () => {
+    document.querySelectorAll('.menu-item.open').forEach(i => i.classList.remove('open'));
     restartTutorial();
 });
 
