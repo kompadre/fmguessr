@@ -1540,6 +1540,8 @@ h1 {
     display: flex;
     gap: 0.5rem;
     align-items: flex-start;
+    max-width: 95vw;
+    overflow: auto;
 }
 
 /* VoiceBank */
