@@ -242,6 +242,11 @@ function clearHighlights() {
     var menuBar = document.querySelector('.menu-bar');
     if (menuBar) menuBar.classList.remove('tutorial-highlight');
 
+    // Remove highlight from all highlighted elements
+    document.querySelectorAll('.tutorial-highlight').forEach(function(el) {
+        el.classList.remove('tutorial-highlight');
+    });
+
     // Close menus we opened (but not ones the user opened manually)
     document.querySelectorAll('.menu-item').forEach(function(el) {
         if (el.dataset.tutorialOpen) {
