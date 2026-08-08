@@ -52,8 +52,24 @@ const STEPS = [
             '• Drag the <strong>header</strong> to move a container, drag the <strong>bottom-right corner</strong> to resize<br><br>' +
             'Your DEMO container is a good starting point — try clicking some patches!',
     },
+    {
+        id: 'pianoroll',
+        title: 'Piano Roll',
+        highlight: '#piano-dock',
+        noBlur: true,
+        illustration: null,
+        description:
+            'The <strong>Piano Roll</strong> lets you draw note sequences using the voices from your voice bank.<br><br>' +
+            '<strong>Getting started:</strong><br>' +
+            '1. Assign patches from a container using the <strong>♫</strong> button (up to 8 voices)<br>' +
+            '2. Select a voice in the voice bank on the left — its notes are fully opaque<br>' +
+            '3. <strong>Click+drag</strong> on the grid to draw notes (snaps to pitch and timing)<br>' +
+            '4. <strong>Double-click</strong> a note to remove it<br>' +
+            '5. <strong>Drag</strong> a note to move it<br>' +
+            '6. Press <strong>▶ Play</strong> to hear the sequence<br><br>' +
+            'Notes from other voices appear dimmed. Only the selected voice\'s notes can be edited.',
+    },
     // Future steps:
-    // { id: 'pianoroll', title: 'Piano Roll', ... },
     // { id: 'edit', title: 'Edit Patches', ... },
     // { id: 'export', title: 'Export .SYX', openMenu: 'file', ... },
 ];
