@@ -2462,25 +2462,36 @@ footer {
    Tutorial
    ============================================================ */
 
+/* Blur applied to page content directly (not overlay) to avoid
+   stacking context issues with menu bar z-index */
+#page-content.page-blurred {
+    filter: blur(6px);
+    pointer-events: none;
+    user-select: none;
+}
+
 .tutorial-overlay {
     z-index: 500;
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(0, 0, 0, 0.45);
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 0;
 }
 
-.tutorial-highlight {
-    position: relative;
-    z-index: 501 !important;
+/* Menu bar pops above the overlay */
+.menu-bar.tutorial-highlight {
+    z-index: 501;
 }
 
+/* Modal positioned below menu bar, left-aligned near File menu */
 .tutorial-dialog {
-    max-width: 480px;
+    max-width: 420px;
+    margin: 48px 0 0 8px;
 }
 
 .tutorial-illustration {
     width: 100%;
-    height: 180px;
+    height: 160px;
     background: #0f0f23;
     border: 1px dashed #333;
     border-radius: 6px;

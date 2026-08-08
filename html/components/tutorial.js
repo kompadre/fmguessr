@@ -8,7 +8,6 @@ const STEPS = [
     {
         id: 'import-wav',
         title: 'Import a .WAV file',
-        highlight: '#menu-import-wav',
         openMenu: 'file',
         illustration: null,
         description:
@@ -22,11 +21,11 @@ const STEPS = [
             'Each patch is a 128-byte DX7 voice that reproduces the original sound using FM synthesis.',
     },
     // Future steps:
-    // { id: 'load-syx', title: 'Load .SYX', highlight: '#menu-import-syx', openMenu: 'file', ... },
+    // { id: 'load-syx', title: 'Load .SYX', openMenu: 'file', ... },
     // { id: 'canvas', title: 'The Canvas', highlight: '#night-sky', ... },
-    // { id: 'pianoroll', title: 'Piano Roll', highlight: '#piano-dock', ... },
-    // { id: 'edit', title: 'Edit Patches', highlight: '.dock-tab:nth-child(3)', ... },
-    // { id: 'export', title: 'Export .SYX', highlight: '#menu-export-syx', openMenu: 'file', ... },
+    // { id: 'pianoroll', title: 'Piano Roll', ... },
+    // { id: 'edit', title: 'Edit Patches', ... },
+    // { id: 'export', title: 'Export .SYX', openMenu: 'file', ... },
 ];
 
 let currentStep = 0;
@@ -38,7 +37,7 @@ export function isTutorialActive() {
 
 export function startTutorial() {
     if (localStorage.getItem(STORAGE_KEY)) return;
-    if (document.querySelectorAll('.menu-item.open').length > 0) return; // don't interrupt open menus
+    if (document.querySelectorAll('.menu-item.open').length > 0) return;
     currentStep = 0;
     active = true;
     showStep(currentStep);
@@ -70,29 +69,32 @@ function showStep(index) {
         illust.innerHTML = step.illustration;
         illust.style.display = '';
     } else {
-        illust.innerHTML = '<div class="tutorial-illustration-placeholder">📊</div>';
+        illust.innerHTML = '<div class="tutorial-illustration-placeholder">\uD83D\uDCCA</div>';
         illust.style.display = '';
     }
 
-    // Clear previous highlights
+    // Clear previous state
     clearHighlights();
 
-    // Highlight target element
-    if (step.highlight) {
-        const el = document.querySelector(step.highlight);
-        if (el) el.classList.add('tutorial-highlight');
-    }
+    // Blur page content
+    var pageContent = document.getElementById('page-content');
+    if (pageContent) pageContent.classList.add('page-blurred');
+
+    // Lift menu bar above the overlay
+    var menuBar = document.querySelector('.menu-bar');
+    if (menuBar) menuBar.classList.add('tutorial-highlight');
 
     // Open menu if specified
     if (step.openMenu) {
-        const menuItem = document.querySelector('.menu-item[data-menu="' + step.openMenu + '"]');
+        var menuItem = document.querySelector('.menu-item[data-menu="' + step.openMenu + '"]');
         if (menuItem) {
-            menuItem.classList.add('open', 'tutorial-highlight');
+            menuItem.classList.add('open');
+            menuItem.dataset.tutorialOpen = '1';
         }
     }
 
     // Update nav buttons
-    const nextBtn = document.getElementById('tutorial-next');
+    var nextBtn = document.getElementById('tutorial-next');
     nextBtn.textContent = index < STEPS.length - 1 ? 'Next \u2192' : 'Got it!';
 
     modal.style.display = '';
@@ -100,20 +102,25 @@ function showStep(index) {
 
 function hide() {
     active = false;
-    const modal = document.getElementById('tutorial-modal');
+    var modal = document.getElementById('tutorial-modal');
     modal.style.display = 'none';
     clearHighlights();
 }
 
 function clearHighlights() {
-    document.querySelectorAll('.tutorial-highlight').forEach(function(el) {
-        el.classList.remove('tutorial-highlight');
-    });
-    // Also close any menus we opened (unless user opened them manually)
-    document.querySelectorAll('.menu-item.open').forEach(function(el) {
-        if (el.dataset.tutorialOpened) {
+    // Remove blur from page content
+    var pageContent = document.getElementById('page-content');
+    if (pageContent) pageContent.classList.remove('page-blurred');
+
+    // Remove menu bar highlight
+    var menuBar = document.querySelector('.menu-bar');
+    if (menuBar) menuBar.classList.remove('tutorial-highlight');
+
+    // Close menus we opened (but not ones the user opened manually)
+    document.querySelectorAll('.menu-item').forEach(function(el) {
+        if (el.dataset.tutorialOpen) {
             el.classList.remove('open');
-            delete el.dataset.tutorialOpened;
+            delete el.dataset.tutorialOpen;
         }
     });
 }

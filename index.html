@@ -44,18 +44,19 @@
         <div class="menu-status" id="menu-status"></div>
     </nav>
 
-    <input type="file" id="wav-input" accept=".wav,.syx" style="display:none;">
+    <div id="page-content">
+        <input type="file" id="wav-input" accept=".wav,.syx" style="display:none;">
 
-    <div id="progress-wrapper" style="display:none;">
-        <div id="progress-bar">
-            <div id="progress-fill"></div>
+        <div id="progress-wrapper" style="display:none;">
+            <div id="progress-bar">
+                <div id="progress-fill"></div>
+            </div>
+            <div id="progress-label"></div>
         </div>
-        <div id="progress-label"></div>
-    </div>
 
-    <div id="night-sky"></div>
+        <div id="night-sky"></div>
 
-    <!-- Credits Modal -->
+        <!-- Credits Modal -->
     <div id="credits-modal" class="modal-overlay" style="display:none;">
         <div class="modal-dialog">
             <div class="modal-header">
@@ -121,7 +122,11 @@
         </div>
     </div>
 
-    <!-- Tutorial Modal -->
+    <div id="piano-dock"></div>
+
+    </div> <!-- /page-content -->
+
+    <!-- Tutorial Modal (outside #page-content so it's not blurred) -->
     <div id="tutorial-modal" class="modal-overlay tutorial-overlay" style="display:none;">
         <div class="modal-dialog tutorial-dialog">
             <div class="modal-header">
@@ -143,8 +148,6 @@
             </div>
         </div>
     </div>
-
-    <div id="piano-dock"></div>
 
     <footer>&copy; Alexey S. Kompaniets 2026 <span id="audio-status" class="audio-status audio-closed" title="Audio: inactive">●</span></footer>
 
