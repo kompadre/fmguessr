@@ -4,6 +4,8 @@
 
 const VOICE_BANK_SLOTS = 8;   // Voice bank uses channels 0-7
 const MIDI_CHANNELS = 16;     // DX7 has 16 MIDI channels (0-15)
+const PREVIEW_SLOT = 15;      // Dedicated WASM patch slot for preview
+const PREVIEW_CHANNEL = 15;   // Dedicated MIDI channel for preview
 
 let ctx = null;
 let dx7Node = null;
@@ -128,6 +130,20 @@ export function sendVoiceSnapshot(entries) {
     if (voices.length > 0) {
         dx7Node.port.postMessage({ type: 'voice-snapshot', voices });
     }
+}
+
+/**
+ * Load a patch into the preview slot (slot 15, channel 15).
+ * Must be called before playNoteOnChannel(15, ...) for correct timbre.
+ */
+export function loadPreviewPatch(voiceData) {
+    if (!isReady() || !dx7Node) return;
+    const patch = normalizeVoiceData(voiceData);
+    if (!patch) return;
+    dx7Node.port.postMessage({
+        type: 'voice-snapshot',
+        voices: [{ slot: PREVIEW_SLOT, channel: PREVIEW_CHANNEL, data: patch.buffer }],
+    });
 }
 
 /**

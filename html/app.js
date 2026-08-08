@@ -76,21 +76,7 @@ async function playNote(midi, voiceData, durationMs, channel) {
     const dur = Math.round(durationMs || 0);
     const effDur = dur > 0 ? dur : 600; // enforce minimum 600ms
 
-    // Multi-channel path: if channel provided, use it directly
-    if (channel != null) {
-        try {
-            await acquire();
-            if (isReady()) {
-                const stop = playNoteOnChannel(channel, midi);
-                if (stop) setTimeout(stop, effDur * 0.6);
-                return;
-            }
-        } catch (err) {
-            console.warn('DX7 synth unavailable:', err);
-        }
-        // Fall through to voiceData path if channel fails
-    }
-
+    // Preview always uses offline render + sample injection (no patch pre-loading needed)
     if (voiceData) {
         try {
             await acquire();

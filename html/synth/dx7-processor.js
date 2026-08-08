@@ -23,6 +23,9 @@ class DX7Processor extends AudioWorkletProcessor {
     this.previewPos = 0;
     this.previewRemaining = 0;
 
+    // Channel → patch slot mapping
+    this.channelPatch = new Uint8Array(16);
+
     this.port.onmessage = this.handleMessage.bind(this);
 
     const wasmBytes = options.processorOptions?.wasmBytes;
