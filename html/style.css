@@ -1637,6 +1637,40 @@ h1 {
     z-index: 1;
 }
 
+.voicebank-play {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 0.6rem;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.voicebank-play:hover {
+    color: #4caf50;
+}
+
+.voicebank-remove {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.7rem;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.voicebank-remove:hover {
+    color: #e94560;
+}
+
 .voicebank-placeholder {
     color: #333;
     font-size: 0.65rem;

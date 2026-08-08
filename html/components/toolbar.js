@@ -174,6 +174,7 @@ export function createToolbar(opts) {
     const pianorollRow = document.createElement('div');
     pianorollRow.className = 'pianoroll-row';
 
+    const pianorollPlayFn = playNoteFn || (() => {});
     const voiceBank = createVoiceBank({
         onSelect: (entry) => {
             if (pianorollRef) {
@@ -182,10 +183,10 @@ export function createToolbar(opts) {
         },
         onVoiceAdded: opts.onVoiceAdded || null,
         onVolumeChange: opts.onVolumeChange || null,
+        onPreview: (entry) => {
+            pianorollPlayFn(60, 600, entry.voiceData, entry.channel);
+        },
     });
-    pianorollRow.appendChild(voiceBank);
-
-    const pianorollPlayFn = playNoteFn || (() => {});
     const pianorollRef = createPianoroll({
         playNoteFn: pianorollPlayFn,
         onNotesChange: updateHighlights,

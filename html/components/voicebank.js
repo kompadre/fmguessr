@@ -9,7 +9,7 @@ const DEFAULT_VOLUME = 100;
 const PATCH_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b'];
 
 export function createVoiceBank(opts) {
-    const { onSelect, onVoiceAdded, onVolumeChange } = opts;
+    const { onSelect, onVoiceAdded, onVolumeChange, onPreview } = opts;
     let entries = [];
     let activeId = null;
 
@@ -106,6 +106,16 @@ export function createVoiceBank(opts) {
                 overlay.style.width = ((entry.volume || DEFAULT_VOLUME) / 127 * 100) + '%';
                 item.appendChild(overlay);
 
+                const playBtn = document.createElement('button');
+                playBtn.className = 'voicebank-play';
+                playBtn.textContent = '\u25B6';
+                playBtn.title = 'Preview';
+                playBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (onPreview) onPreview(entry);
+                });
+                item.appendChild(playBtn);
+
                 const dot = document.createElement('span');
                 dot.className = 'voicebank-dot';
                 dot.style.background = entry.color;
@@ -121,6 +131,16 @@ export function createVoiceBank(opts) {
                 volEl.className = 'voicebank-vol';
                 volEl.textContent = entry.volume || DEFAULT_VOLUME;
                 item.appendChild(volEl);
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'voicebank-remove';
+                removeBtn.textContent = '\u00D7';
+                removeBtn.title = 'Remove';
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    removeEntry(entry.id);
+                });
+                item.appendChild(removeBtn);
 
                 // Click to select
                 item.addEventListener('click', (e) => {
