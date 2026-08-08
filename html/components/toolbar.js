@@ -181,11 +181,11 @@ export function createToolbar(opts) {
                 pianorollRef.setActiveSlot(slot);
             }
         },
-        onVoiceAdded: opts.onVoiceAdded || null,
         onVolumeChange: opts.onVolumeChange || null,
         onPreview: (entry, slot) => {
             pianorollPlayFn(60, 600, entry.voiceData, slot);
         },
+        onSnapshot: opts.onSnapshot || null,
     });
     pianorollRow.appendChild(voiceBank);
     const pianorollRef = createPianoroll({

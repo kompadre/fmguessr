@@ -264,11 +264,7 @@ void SynthUnit::SetBank(const uint8_t *patch_data) {
 void SynthUnit::SetVoice(int slot, const uint8_t *voice_data) {
   if (slot < 0 || slot >= 32) return;
   memcpy(patch_data_ + (slot * 128), voice_data, 128);
-  for (int ch = 0; ch < 16; ch++) {
-    if (current_patch_[ch] == slot) {
-      ProgramChange(slot, ch);
-    }
-  }
+  // No auto-ProgramChange — explicit PC from JS handles channel mapping
 }
 
 void SynthUnit::GetSamples(int n_samples, int16_t *buffer) {

@@ -9,9 +9,13 @@ const DEFAULT_VOLUME = 100;
 const PATCH_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b'];
 
 export function createVoiceBank(opts) {
-    const { onSelect, onVoiceAdded, onVolumeChange, onPreview } = opts;
+    const { onSelect, onVolumeChange, onPreview, onSnapshot } = opts;
     let entries = [];
     let activeId = null;
+
+    function notifySnapshot() {
+        if (onSnapshot) onSnapshot(entries);
+    }
 
     const container = document.createElement('div');
     container.className = 'voicebank';
@@ -246,10 +250,7 @@ export function createVoiceBank(opts) {
         render();
         fireSelect();
         saveState();
-
-        if (onVoiceAdded) {
-            onVoiceAdded(voiceCopy, entries.length - 1);
-        }
+        notifySnapshot();
     }
 
     function removeEntry(id) {
@@ -260,6 +261,7 @@ export function createVoiceBank(opts) {
         }
         render();
         saveState();
+        notifySnapshot();
     }
 
     function getActive() {
@@ -305,20 +307,15 @@ export function createVoiceBank(opts) {
     // Init
     loadState();
     render();
+    // Send snapshot of restored entries to synth
+    if (entries.length > 0) notifySnapshot();
 
     container._addEntry = addEntry;
     container._removeEntry = removeEntry;
-    container._clear = () => { entries = []; activeId = null; render(); saveState(); };
+    container._clear = () => { entries = []; activeId = null; render(); saveState(); notifySnapshot(); };
     container._getActive = getActive;
     container._setActive = setActive;
     container._getEntries = () => entries;
-    container._loadAllVoices = (loadVoiceFn) => {
-        for (let i = 0; i < entries.length; i++) {
-            if (entries[i] && entries[i].voiceData) {
-                loadVoiceFn(entries[i].voiceData, i);
-            }
-        }
-    };
 
     return container;
 }

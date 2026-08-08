@@ -103,55 +103,31 @@ export function base64ToUint8Array(b64) {
     return arr;
 }
 
-/**
- * Load a voice into a bank slot and assign to a channel.
- * @returns {number} channel number (same as slot), or -1 if failed
- */
-export function loadVoice(voiceData, slot) {
-    if (!isReady() || !dx7Node) return -1;
-    if (slot < 0 || slot >= VOICE_BANK_SLOTS) return -1;
-
-    // Normalize voiceData to Uint8Array (handles base64 string, Uint8Array, or plain array from localStorage)
-    let patch;
-    if (typeof voiceData === 'string') {
-        patch = base64ToUint8Array(voiceData);
-    } else if (voiceData instanceof Uint8Array) {
-        patch = voiceData;
-    } else if (Array.isArray(voiceData)) {
-        patch = new Uint8Array(voiceData);
-    } else {
-        return -1;
-    }
-
-    // Always send — no dedup (voice bank entries are independent deep copies)
-    console.log('[loadVoice] slot=' + slot + ' patchLen=' + patch.length + ' type=' + typeof voiceData);
-    dx7Node.port.postMessage({
-        type: 'voice-channel',
-        slot: slot,
-        channel: slot,
-        data: patch.buffer,
-    });
-
-    return slot;
+function normalizeVoiceData(voiceData) {
+    if (typeof voiceData === 'string') return base64ToUint8Array(voiceData);
+    if (voiceData instanceof Uint8Array) return voiceData;
+    if (Array.isArray(voiceData)) return new Uint8Array(voiceData);
+    return null;
 }
 
 /**
- * Load all VoiceBank entries into channels.
+ * Send full VoiceBank snapshot to the synth.
+ * Each entry loads into its slot (array index) and maps channel = slot.
+ * Idempotent — overwrites whatever was loaded before.
  */
-export function loadAllVoices(entries) {
+export function sendVoiceSnapshot(entries) {
     if (!isReady() || !dx7Node) return;
+    const voices = [];
     for (let i = 0; i < Math.min(entries.length, VOICE_BANK_SLOTS); i++) {
-        if (entries[i] && entries[i].voiceData) {
-            loadVoice(entries[i].voiceData, i);
-        }
+        const entry = entries[i];
+        if (!entry || !entry.voiceData) continue;
+        const patch = normalizeVoiceData(entry.voiceData);
+        if (!patch) continue;
+        voices.push({ slot: i, channel: i, data: patch.buffer });
     }
-}
-
-/**
- * Hot-swap a voice on a channel.
- */
-export function updateVoice(voiceData, channel) {
-    loadVoice(voiceData, channel);
+    if (voices.length > 0) {
+        dx7Node.port.postMessage({ type: 'voice-snapshot', voices });
+    }
 }
 
 /**
@@ -191,7 +167,6 @@ export function playNoteOnChannel(channel, midi, velocity = 100) {
     }
 
     dx7Node.port.postMessage({ type: 'midi', data: [0x90 | channel, midi, velocity] });
-    console.log('[playNoteOnChannel] ch=' + channel + ' note=' + midi + ' vel=' + velocity);
     const stop = () => {
         if (dx7Node) dx7Node.port.postMessage({ type: 'midi', data: [0x80 | channel, midi, 0] });
         activeNotes.delete(key);

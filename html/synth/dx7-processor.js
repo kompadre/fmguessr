@@ -79,15 +79,18 @@ class DX7Processor extends AudioWorkletProcessor {
       case 'patch':
         this.loadPatch(msg.data, msg.slot || 0);
         break;
-      case 'voice-channel':
-        this.loadPatch(msg.data, msg.slot);
-        this.exp.send_midi(0xC0 | msg.channel, msg.slot, 0);
-        console.log('[worklet] voice-channel slot=' + msg.slot + ' ch=' + msg.channel + ' dataLen=' + (msg.data ? msg.data.byteLength : 0));
+      case 'voice-snapshot':
+        // Load all voices from VoiceBank: [{slot, channel, data}]
+        if (Array.isArray(msg.voices)) {
+          for (const v of msg.voices) {
+            this.loadPatch(v.data, v.slot);
+            this.exp.send_midi(0xC0 | v.channel, v.slot, 0);
+          }
+        }
         break;
       case 'midi':
       case 'raw-midi':
         this.exp.send_midi(msg.data[0], msg.data[1], msg.data[2]);
-        console.log('[worklet] midi 0x' + msg.data[0].toString(16) + ' ' + msg.data[1] + ' ' + msg.data[2]);
         break;
       case 'play-samples':
         // Overwrite any active preview, reset position
@@ -105,10 +108,7 @@ class DX7Processor extends AudioWorkletProcessor {
 
   loadPatch(data, slot) {
     const voice = new Uint8Array(data);
-    if (voice.length < 128) {
-      console.warn('[worklet] loadPatch: voice too short (' + voice.length + ') for slot=' + slot);
-      return;
-    }
+    if (voice.length < 128) return;
     this.refreshHeap();
     this.patchView.set(voice.subarray(0, 128));
     if (slot > 0 && this.exp.load_voice_channel_from_buffer) {
@@ -116,7 +116,6 @@ class DX7Processor extends AudioWorkletProcessor {
     } else {
       this.exp.load_voice_from_buffer();
     }
-    console.log('[worklet] loadPatch slot=' + slot + ' bytes=' + voice.length + ' first4=' + voice[0] + ',' + voice[1] + ',' + voice[2] + ',' + voice[3]);
   }
 
   process(inputs, outputs) {

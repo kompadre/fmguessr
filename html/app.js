@@ -3,7 +3,7 @@
 
 import { parseSyxFile, voiceRawToBase64 } from './components/syx-parser.js';
 import { batchRenderWaveforms } from './synth/dx7-synth.js';
-import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, loadVoice, playSamplesInWorklet, setChannelVolume, base64ToUint8Array, loadAllVoices, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
+import { acquire, shutdownAll, extendIdle, playNoteRealtime, playNoteOnChannel, releaseAllNotes, sendVoiceSnapshot, playSamplesInWorklet, setChannelVolume, base64ToUint8Array, renderOffline, isReady, getState, setOnStatusChange, setPianorollStop } from './synth/audio-manager.js';
 import { patchStore, canvasStore, jobStore, createPatch } from './components/patch-model.js';
 import { initCanvas, addContainer, addPatchToContainer, refreshCanvas } from './components/canvas.js';
 import { createToolbar } from './components/toolbar.js';
@@ -49,9 +49,9 @@ async function dbGet(key) {
     });
 }
 
-// --- Audio status indicator + auto-load voices ---
+// --- Audio status indicator ---
 
-let voicesLoaded = false;
+let pendingSnapshot = null;
 
 setOnStatusChange((state) => {
     const el = document.getElementById('audio-status');
@@ -59,10 +59,10 @@ setOnStatusChange((state) => {
     el.className = 'audio-status audio-' + state;
     el.title = 'Audio: ' + state;
 
-    // Auto-load VoiceBank voices when synth becomes ready
-    if (state === 'ready' && !voicesLoaded && pianoDockWrapper && pianoDockWrapper._voiceBank) {
-        pianoDockWrapper._voiceBank._loadAllVoices(loadVoice);
-        voicesLoaded = true;
+    // Send pending snapshot when synth becomes ready
+    if (state === 'ready' && pendingSnapshot) {
+        sendVoiceSnapshot(pendingSnapshot);
+        pendingSnapshot = null;
     }
 });
 
@@ -428,10 +428,11 @@ function initToolbar() {
         playNoteFn: playFn,
         initialTab: 'pianoroll',
         onNoteClick: (midi) => { activeKeyboardNote = midi; },
-        onVoiceAdded: (voiceData, channel) => {
-            // Load voice into synth channel when added to VoiceBank
+        onSnapshot: (entries) => {
             if (isReady()) {
-                loadVoice(voiceData, channel);
+                sendVoiceSnapshot(entries);
+            } else {
+                pendingSnapshot = entries;
             }
         },
         onVolumeChange: (channel, volume) => {
