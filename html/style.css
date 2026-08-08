@@ -1540,8 +1540,6 @@ h1 {
     display: flex;
     gap: 0.5rem;
     align-items: flex-start;
-    max-width: 95vw;
-    overflow: auto;
 }
 
 /* VoiceBank */
@@ -1895,6 +1893,8 @@ h1 {
     display: none;
     flex-direction: column;
     align-items: center;
+    max-width: 95vw;
+    overflow: auto;
 }
 
 .dock-panel.active {
