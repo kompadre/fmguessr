@@ -2483,6 +2483,14 @@ footer {
     z-index: 501;
 }
 
+/* Container highlight glow during tutorial */
+.sky-container.tutorial-highlight {
+    box-shadow: 0 0 20px rgba(76, 175, 80, 0.4), 0 0 40px rgba(76, 175, 80, 0.15);
+    border-color: #4caf50;
+    z-index: 501;
+    position: relative;
+}
+
 /* Modal positioned below menu bar, left-aligned near File menu */
 .tutorial-dialog {
     max-width: 420px;

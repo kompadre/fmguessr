@@ -34,8 +34,25 @@ const STEPS = [
             '4. Use the <strong>♫</strong> button to assign patches to the voice bank for use in the piano roll<br><br>' +
             'Try loading the built-in <strong>DEMO.SYX</strong> if you haven\'t already!',
     },
+    {
+        id: 'containers',
+        title: 'Patch Containers',
+        highlight: '.sky-container',
+        fallbackHighlight: '#night-sky',
+        noBlur: true,
+        illustration: null,
+        description:
+            'Patches live inside <strong>containers</strong> on the canvas — the dark starfield area.<br><br>' +
+            '<strong>Interactions:</strong><br>' +
+            '• <strong>Click</strong> a patch to preview its sound<br>' +
+            '• <strong>♫</strong> assigns patches to the voice bank (up to 8) for the piano roll<br>' +
+            '• <strong>★</strong> drag handle — drag patches between containers or onto the canvas<br>' +
+            '• <strong>↕</strong> sorts patches by algorithm number<br>' +
+            '• <strong>💾</strong> exports the container as a .SYX file<br>' +
+            '• Drag the <strong>header</strong> to move a container, drag the <strong>bottom-right corner</strong> to resize<br><br>' +
+            'Your DEMO container is a good starting point — try clicking some patches!',
+    },
     // Future steps:
-    // { id: 'canvas', title: 'The Canvas', highlight: '#night-sky', ... },
     // { id: 'pianoroll', title: 'Piano Roll', ... },
     // { id: 'edit', title: 'Edit Patches', ... },
     // { id: 'export', title: 'Export .SYX', openMenu: 'file', ... },
@@ -89,9 +106,9 @@ function showStep(index) {
     // Clear previous state
     clearHighlights();
 
-    // Blur page content
+    // Blur page content (unless step opts out — e.g. canvas steps)
     var pageContent = document.getElementById('page-content');
-    if (pageContent) pageContent.classList.add('page-blurred');
+    if (pageContent && !step.noBlur) pageContent.classList.add('page-blurred');
 
     // Lift menu bar above the overlay
     var menuBar = document.querySelector('.menu-bar');
@@ -103,6 +120,18 @@ function showStep(index) {
         if (menuItem) {
             menuItem.classList.add('open');
             menuItem.dataset.tutorialOpen = '1';
+        }
+    }
+
+    // Highlight target element (with fallback)
+    var highlightTarget = null;
+    if (step.highlight) {
+        highlightTarget = document.querySelector(step.highlight);
+        if (!highlightTarget && step.fallbackHighlight) {
+            highlightTarget = document.querySelector(step.fallbackHighlight);
+        }
+        if (highlightTarget) {
+            highlightTarget.classList.add('tutorial-highlight');
         }
     }
 
