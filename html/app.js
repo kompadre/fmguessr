@@ -9,6 +9,7 @@ import { initCanvas, addContainer, addPatchToContainer, refreshCanvas } from './
 import { createToolbar } from './components/toolbar.js';
 import { openEdit } from './components/edit-panel.js';
 import { Job, jobManager } from './components/job.js';
+import { initTutorial, startTutorial, isTutorialActive } from './components/tutorial.js';
 
 const fileInput = document.getElementById('wav-input');
 
@@ -543,6 +544,10 @@ async function restore() {
     }
 
     refreshCanvas();
+
+    // Start tutorial after DOM settles
+    initTutorial();
+    setTimeout(() => startTutorial(), 600);
 }
 
 // --- Menu bar ---
@@ -556,6 +561,8 @@ document.querySelectorAll('.menu-item').forEach(item => {
     });
 });
 document.addEventListener('click', () => {
+    // Don't close menus while tutorial is active (it opens them programmatically)
+    if (isTutorialActive()) return;
     document.querySelectorAll('.menu-item.open').forEach(i => i.classList.remove('open'));
 });
 

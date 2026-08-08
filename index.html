@@ -121,6 +121,29 @@
         </div>
     </div>
 
+    <!-- Tutorial Modal -->
+    <div id="tutorial-modal" class="modal-overlay tutorial-overlay" style="display:none;">
+        <div class="modal-dialog tutorial-dialog">
+            <div class="modal-header">
+                <h3 id="tutorial-title"></h3>
+                <button class="modal-close" id="tutorial-close">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="tutorial-illustration" class="tutorial-illustration">
+                    <div class="tutorial-illustration-placeholder">📊</div>
+                </div>
+                <p id="tutorial-description"></p>
+            </div>
+            <div class="tutorial-footer">
+                <span id="tutorial-step-indicator" class="tutorial-step-indicator"></span>
+                <div class="tutorial-nav">
+                    <button id="tutorial-skip" class="tutorial-btn tutorial-btn-skip">Skip tour</button>
+                    <button id="tutorial-next" class="tutorial-btn tutorial-btn-next">Next →</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="piano-dock"></div>
 
     <footer>&copy; Alexey S. Kompaniets 2026 <span id="audio-status" class="audio-status audio-closed" title="Audio: inactive">●</span></footer>
