@@ -35,13 +35,14 @@
 #include "aligned_buf.h"
 
 // Modified from original: L3 raised from 0 to 70 for better sustain behavior
-char epiano[] = {
-  95, 29, 20, 50, 99, 95, 70, 0, 41, 0, 19, 0, 115, 24, 79, 2, 0,
-  95, 20, 20, 50, 99, 95, 70, 0, 0, 0, 0, 0, 3, 0, 99, 2, 0,
-  95, 29, 20, 50, 99, 95, 70, 0, 0, 0, 0, 0, 59, 24, 89, 2, 0,
-  95, 20, 20, 50, 99, 95, 70, 0, 0, 0, 0, 0, 59, 8, 99, 2, 0,
-  95, 50, 35, 78, 99, 75, 70, 0, 0, 0, 0, 0, 59, 28, 58, 28, 0,
-  96, 25, 25, 67, 99, 75, 70, 0, 0, 0, 0, 0, 83, 8, 99, 2, 0,
+// Silent INIT patch — all operator output levels at 0
+char init_patch[] = {
+  99, 99, 99, 99, 99, 99,  0, 0,  0, 0,  0, 0,  0, 0,  0, 0, 0,
+  99, 99, 99, 99, 99, 99,  0, 0,  0, 0,  0, 0,  0, 0,  0, 0, 0,
+  99, 99, 99, 99, 99, 99,  0, 0,  0, 0,  0, 0,  0, 0,  0, 0, 0,
+  99, 99, 99, 99, 99, 99,  0, 0,  0, 0,  0, 0,  0, 0,  0, 0, 0,
+  99, 99, 99, 99, 99, 99,  0, 0,  0, 0,  0, 0,  0, 0,  0, 0, 0,
+  99, 99, 99, 99, 99, 99,  0, 0,  0, 0,  0, 0,  0, 0,  0, 0, 0,
 
   94, 67, 95, 60, 50, 50, 50, 50, 4, 6, 34, 33, 0, 0, 56, 24,
   69, 46, 80, 73, 65, 78, 79, 32, 49, 32
@@ -72,9 +73,11 @@ SynthUnit::SynthUnit(RingBuffer *ring_buffer) {
     active_note_[note].fadeSamplesRemaining = 0;
   }
   input_buffer_index_ = 0;
-  memcpy(patch_data_, epiano, sizeof(epiano));
+  for (int s = 0; s < 32; s++) {
+    memcpy(patch_data_ + s * 128, init_patch, 128);
+  }
   for (int ch=0;ch<16;ch++) {
-    ProgramChange(0, ch);
+    ProgramChange(ch, ch);
   }
   current_note_ = 0;
   filter_control_[0] = 258847126;
@@ -264,7 +267,10 @@ void SynthUnit::SetBank(const uint8_t *patch_data) {
 void SynthUnit::SetVoice(int slot, const uint8_t *voice_data) {
   if (slot < 0 || slot >= 32) return;
   memcpy(patch_data_ + (slot * 128), voice_data, 128);
-  // No auto-ProgramChange — explicit PC from JS handles channel mapping
+  if (slot < 16) {
+    UnpackPatch((const char *)(patch_data_ + slot * 128), unpacked_patch_[slot]);
+    lfo_[slot].reset(unpacked_patch_[slot] + 137);
+  }
 }
 
 void SynthUnit::GetSamples(int n_samples, int16_t *buffer) {

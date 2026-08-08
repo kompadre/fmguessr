@@ -125,7 +125,7 @@ export function sendVoiceSnapshot(entries) {
         if (!entry || !entry.voiceData) continue;
         const patch = normalizeVoiceData(entry.voiceData);
         if (!patch) continue;
-        voices.push({ slot: i, channel: i, data: patch.buffer });
+        voices.push({ slot: i, data: patch.buffer });
     }
     if (voices.length > 0) {
         dx7Node.port.postMessage({ type: 'voice-snapshot', voices });

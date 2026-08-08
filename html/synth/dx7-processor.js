@@ -23,9 +23,6 @@ class DX7Processor extends AudioWorkletProcessor {
     this.previewPos = 0;
     this.previewRemaining = 0;
 
-    // Channel → patch slot mapping
-    this.channelPatch = new Uint8Array(16);
-
     this.port.onmessage = this.handleMessage.bind(this);
 
     const wasmBytes = options.processorOptions?.wasmBytes;
@@ -83,12 +80,11 @@ class DX7Processor extends AudioWorkletProcessor {
         this.loadPatch(msg.data, msg.slot || 0);
         break;
       case 'voice-snapshot':
-        // Load all voices from VoiceBank: [{slot, channel, data}]
+        // Load all voices from VoiceBank: [{slot, data}]
+        // Channel N always maps to slot N — no ProgramChange needed
         if (Array.isArray(msg.voices)) {
           for (const v of msg.voices) {
             this.loadPatch(v.data, v.slot);
-            this.exp.send_midi(0xC0 | v.channel, v.slot, 0);
-            this.channelPatch[v.channel] = v.slot;
           }
         }
         break;
