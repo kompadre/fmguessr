@@ -174,7 +174,7 @@ export function createVoiceBank(opts) {
                         overlay.style.width = (pct * 100) + '%';
                         volEl.textContent = vol;
                         didDrag = true;
-                        if (onVolumeChange) onVolumeChange(entry.channel, vol);
+                        if (onVolumeChange) onVolumeChange(i, vol);
                     }
 
                     function onUp() {
