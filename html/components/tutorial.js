@@ -20,8 +20,21 @@ const STEPS = [
             '5. Results appear as patches in a container on the canvas<br><br>' +
             'Each patch is a 128-byte DX7 voice that reproduces the original sound using FM synthesis.',
     },
+    {
+        id: 'load-syx',
+        title: 'Load a .SYX bank',
+        openMenu: 'file',
+        illustration: null,
+        description:
+            'Load a standard DX7 SysEx file (.SYX) containing up to <strong>32 voices</strong>.<br><br>' +
+            '<strong>What happens:</strong><br>' +
+            '1. The .SYX file is parsed into individual 128-byte patches<br>' +
+            '2. All non-empty voices appear in a new <strong>container</strong> on the canvas<br>' +
+            '3. Click any patch to preview its sound<br>' +
+            '4. Use the <strong>♫</strong> button to assign patches to the voice bank for use in the piano roll<br><br>' +
+            'Try loading the built-in <strong>DEMO.SYX</strong> if you haven\'t already!',
+    },
     // Future steps:
-    // { id: 'load-syx', title: 'Load .SYX', openMenu: 'file', ... },
     // { id: 'canvas', title: 'The Canvas', highlight: '#night-sky', ... },
     // { id: 'pianoroll', title: 'Piano Roll', ... },
     // { id: 'edit', title: 'Edit Patches', ... },
