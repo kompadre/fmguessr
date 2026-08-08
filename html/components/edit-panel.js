@@ -163,10 +163,14 @@ function renderEditPanel() {
 
 function renderEditSlot(container, patch, slotIdx, showRemove) {
     container.innerHTML = '';
+    // Remove any existing sibling remove button
+    const existingBtn = container.parentNode?.querySelector('.edit-slot-remove');
+    if (existingBtn) existingBtn.remove();
+
     if (!patch) {
         container.innerHTML = '<span class="edit-slot-empty">Click 🔧 on any patch</span>';
         container.classList.remove('filled');
-        return null;
+        return;
     }
     container.classList.add('filled');
 
@@ -189,9 +193,8 @@ function renderEditSlot(container, patch, slotIdx, showRemove) {
             if (slotIdx === 0) { editSlot = null; } else { editSlotB = null; }
             renderEditPanel();
         });
-        return removeBtn;
+        container.parentNode.insertBefore(removeBtn, container.nextSibling);
     }
-    return null;
 }
 
 // --- Morph Mode ---
@@ -220,8 +223,7 @@ function renderMorphMode(slotArea, sliderRow, paramsArea, goBtn, status) {
     contentA.className = 'edit-slot-content';
     slotA.appendChild(labelA);
     slotA.appendChild(contentA);
-    const removeA = renderEditSlot(contentA, editSlot, 0, true);
-    if (removeA) slotA.appendChild(removeA);
+    renderEditSlot(contentA, editSlot, 0, true);
 
     const swapBtn = document.createElement('button');
     swapBtn.className = 'edit-swap-btn';
@@ -243,8 +245,7 @@ function renderMorphMode(slotArea, sliderRow, paramsArea, goBtn, status) {
     contentB.className = 'edit-slot-content';
     slotB.appendChild(labelB);
     slotB.appendChild(contentB);
-    const removeB = renderEditSlot(contentB, editSlotB, 1, true);
-    if (removeB) slotB.appendChild(removeB);
+    renderEditSlot(contentB, editSlotB, 1, true);
 
     slotsDiv.appendChild(slotA);
     slotsDiv.appendChild(swapBtn);
@@ -282,8 +283,7 @@ function renderParamsMode(slotArea, sliderRow, paramsArea, goBtn, status) {
     contentA.className = 'edit-slot-content';
     slotA.appendChild(labelA);
     slotA.appendChild(contentA);
-    const removeA = renderEditSlot(contentA, editSlot, 0, true);
-    if (removeA) slotA.appendChild(removeA);
+    renderEditSlot(contentA, editSlot, 0, true);
     slotsDiv.appendChild(slotA);
     slotArea.appendChild(slotsDiv);
 
@@ -427,8 +427,7 @@ function renderRandomMode(slotArea, sliderRow, paramsArea, goBtn, status) {
     contentA.className = 'edit-slot-content';
     slotA.appendChild(labelA);
     slotA.appendChild(contentA);
-    const removeA = renderEditSlot(contentA, editSlot, 0, true);
-    if (removeA) slotA.appendChild(removeA);
+    renderEditSlot(contentA, editSlot, 0, true);
     slotsDiv.appendChild(slotA);
     slotArea.appendChild(slotsDiv);
 
