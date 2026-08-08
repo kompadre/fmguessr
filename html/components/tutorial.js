@@ -69,8 +69,20 @@ const STEPS = [
             '6. Press <strong>▶ Play</strong> to hear the sequence<br><br>' +
             'Notes from other voices appear dimmed. Only the selected voice\'s notes can be edited.',
     },
+    {
+        id: 'edit',
+        title: 'Edit Patches',
+        highlight: '#piano-dock .dock-tab:nth-child(3)',
+        noBlur: true,
+        illustration: null,
+        description:
+            'The <strong>Edit</strong> tab lets you morph, tweak, and mutate patches.<br><br>' +
+            '<strong>Morph</strong> — Blend two patches together. Assign patch <strong>A</strong> and <strong>B</strong> from the canvas (🔧 button), then slide the morph distance to find the sweet spot.<br><br>' +
+            '<strong>Params</strong> — View and modify individual DX7 parameters of a single patch.<br><br>' +
+            '<strong>Random</strong> — Generate mutations of a patch with adjustable mutation strength. Great for exploring new sounds near a known good patch.<br><br>' +
+            'Use the <strong>🔧</strong> button on any canvas patch to load it into the Edit tab.',
+    },
     // Future steps:
-    // { id: 'edit', title: 'Edit Patches', ... },
     // { id: 'export', title: 'Export .SYX', openMenu: 'file', ... },
 ];
 
