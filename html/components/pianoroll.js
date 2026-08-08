@@ -85,8 +85,8 @@ export function createPianoroll(opts) {
     bpmInput.type = 'number';
     bpmInput.className = 'pianoroll-bpm';
     bpmInput.value = '120';
-    bpmInput.min = '60';
-    bpmInput.max = '178';
+    bpmInput.min = '32';
+    bpmInput.max = '255';
     bpmInput.step = '1';
     controls.appendChild(bpmInput);
 
@@ -437,7 +437,7 @@ export function createPianoroll(opts) {
         playBtn.disabled = true;
         stopBtn.disabled = false;
 
-        const bpm = Math.max(60, Math.min(178, parseInt(bpmInput.value) || 120));
+        const bpm = Math.max(32, Math.min(255, parseInt(bpmInput.value) || 120));
         const msPerSixteenth = 60000 / bpm / 4;
 
         function tick() {
