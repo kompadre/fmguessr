@@ -82,7 +82,7 @@ async function playNote(midi, voiceData, durationMs, channel) {
             await acquire();
             if (isReady()) {
                 const stop = playNoteOnChannel(channel, midi);
-                if (stop) setTimeout(stop, durMs * 0.6);
+                if (stop) setTimeout(stop, durMs);
                 return;
             }
         } catch (err) {
