@@ -952,6 +952,7 @@ func (s *Server) handleMorph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"voice_data":   base64.StdEncoding.EncodeToString(result.Morphed.Encode()),
 		"syx_url":      fmt.Sprintf("/exports/%s/morphed.syx", morphID),
 		"wav_url":      fmt.Sprintf("/exports/%s/morphed.wav", morphID),
 		"source_dist":  result.SourceDist,
