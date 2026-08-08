@@ -260,6 +260,8 @@ export function createVoiceBank(opts) {
     // Init
     loadState();
     render();
+    // If entries were restored, fire onSelect to initialize pianoroll's activeSlot
+    if (entries.length > 0 && activeId) fireSelect();
 
     container._addEntry = addEntry;
     container._removeEntry = removeEntry;
