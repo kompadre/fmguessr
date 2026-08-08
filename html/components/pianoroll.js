@@ -106,6 +106,12 @@ export function createPianoroll(opts) {
     let dragging = false;
     let dragStart = null; // { row, col }
 
+    // Note move state
+    let movingNote = null;      // note being moved
+    let moveStartPos = null;    // { x, y } mouse position at mousedown
+    let moveOriginal = null;    // { start, midi } — original position for cancel
+    let moveCommitted = false;  // true once mouse has moved enough to be a drag
+
     function colorForPatch(patchId) {
         if (!patchId) return PATCH_COLORS[0];
         let hash = 0;
@@ -176,6 +182,25 @@ export function createPianoroll(opts) {
             }
         }
 
+        // Ghost note at original position during move
+        if (movingNote && moveCommitted && moveOriginal) {
+            const origRow = NOTES.findIndex(nn => nn.midi === moveOriginal.midi);
+            if (origRow >= 0) {
+                const gx = LABEL_W + moveOriginal.start * COL_W;
+                const gy = origRow * ROW_H;
+                const gw = movingNote.dur * COL_W - 1;
+                ctx.fillStyle = movingNote.color || PATCH_COLORS[0];
+                ctx.globalAlpha = 0.12;
+                ctx.fillRect(gx + 1, gy + 1, gw, ROW_H - 2);
+                ctx.globalAlpha = 1.0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 0.5;
+                ctx.setLineDash([3, 3]);
+                ctx.strokeRect(gx + 1, gy + 1, gw, ROW_H - 2);
+                ctx.setLineDash([]);
+            }
+        }
+
         // Playback cursor
         if (playCol >= 0) {
             const x = LABEL_W + playCol * COL_W;
@@ -225,6 +250,8 @@ export function createPianoroll(opts) {
     let lastClickRow = -1;
     let lastClickCol = -1;
 
+    const MOVE_THRESHOLD = 5; // pixels before a click becomes a drag
+
     canvas.addEventListener('mousedown', (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -254,7 +281,11 @@ export function createPianoroll(opts) {
         lastClickCol = col;
 
         if (existing) {
-            playNoteFn(existing.midi, existing.dur * 250, existing.voiceData || null, existing.channel);
+            // Prepare for potential move (or click-to-preview)
+            movingNote = existing;
+            moveStartPos = { x, y };
+            moveOriginal = { start: existing.start, midi: existing.midi };
+            moveCommitted = false;
             return;
         }
 
@@ -267,11 +298,61 @@ export function createPianoroll(opts) {
 
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
-        lastMousePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        lastMousePos = { x, y };
+
+        // Handle note move
+        if (movingNote && moveStartPos) {
+            const dx = x - moveStartPos.x;
+            const dy = y - moveStartPos.y;
+            if (!moveCommitted && Math.abs(dx) < MOVE_THRESHOLD && Math.abs(dy) < MOVE_THRESHOLD) {
+                return; // not yet a drag
+            }
+            if (!moveCommitted) {
+                canvas.style.cursor = 'grabbing';
+            }
+            moveCommitted = true;
+
+            // Snap to grid: column offset from original position
+            const colOffset = Math.round(dx / COL_W);
+            const rowOffset = Math.round(dy / ROW_H);
+
+            const newStart = Math.max(0, Math.min(COLS - movingNote.dur, moveOriginal.start + colOffset));
+            const newRow = Math.max(0, Math.min(NOTES.length - 1, NOTES.findIndex(nn => nn.midi === moveOriginal.midi) + rowOffset));
+            const newMidi = NOTES[newRow].midi;
+
+            movingNote.start = newStart;
+            movingNote.midi = newMidi;
+            draw();
+            return;
+        }
+
         if (dragging) draw();
     });
 
     canvas.addEventListener('mouseup', (e) => {
+        canvas.style.cursor = '';
+
+        // Finalize note move
+        if (movingNote) {
+            if (moveCommitted) {
+                // Move was committed — update note data
+                movingNote.channel = opts.activeChannel ?? movingNote.channel;
+                draw();
+                renderLegend();
+                onNotesChange();
+            } else {
+                // Was just a click — play preview
+                playNoteFn(movingNote.midi, movingNote.dur * 250, movingNote.voiceData || null, movingNote.channel);
+            }
+            movingNote = null;
+            moveStartPos = null;
+            moveOriginal = null;
+            moveCommitted = false;
+            return;
+        }
+
         if (!dragging || !dragStart) {
             dragging = false;
             return;
@@ -310,6 +391,16 @@ export function createPianoroll(opts) {
     });
 
     canvas.addEventListener('mouseleave', () => {
+        canvas.style.cursor = '';
+        // Cancel note move
+        if (movingNote && moveOriginal) {
+            movingNote.start = moveOriginal.start;
+            movingNote.midi = moveOriginal.midi;
+            movingNote = null;
+            moveStartPos = null;
+            moveOriginal = null;
+            moveCommitted = false;
+        }
         if (dragging) {
             dragging = false;
             dragStart = null;
