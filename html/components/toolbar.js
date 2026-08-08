@@ -185,7 +185,10 @@ export function createToolbar(opts) {
         onPreview: (entry, slot) => {
             pianorollPlayFn(60, 600, entry.voiceData, slot);
         },
-        onSnapshot: opts.onSnapshot || null,
+        onSnapshot: (entries) => {
+            if (opts.onSnapshot) opts.onSnapshot(entries);
+            if (pianorollRef) pianorollRef.renderLegend();
+        },
     });
     // Fire initial snapshot after onSnapshot callback is wired
     if (voiceBank._notifySnapshot) voiceBank._notifySnapshot();
