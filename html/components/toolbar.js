@@ -187,13 +187,14 @@ export function createToolbar(opts) {
         },
         onSnapshot: (entries) => {
             if (opts.onSnapshot) opts.onSnapshot(entries);
-            if (pianorollRef) pianorollRef.renderLegend();
+            if (pianorollRef && pianorollRef.renderLegend) pianorollRef.renderLegend();
         },
     });
     // Fire initial snapshot after onSnapshot callback is wired
     if (voiceBank._notifySnapshot) voiceBank._notifySnapshot();
     pianorollRow.appendChild(voiceBank);
-    const pianorollRef = createPianoroll({
+    let pianorollRef = null;
+    pianorollRef = createPianoroll({
         playNoteFn: pianorollPlayFn,
         onNotesChange: updateHighlights,
         activeSlot: null,
