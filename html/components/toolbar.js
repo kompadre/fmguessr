@@ -197,6 +197,10 @@ export function createToolbar(opts) {
         onClear: () => { if (voiceBank._clear) voiceBank._clear(); },
     });
     pianorollRow.appendChild(pianorollRef.element);
+
+    // Initialize active slot from voice bank's restored active entry
+    const initActive = voiceBank._getActive ? voiceBank._getActive() : null;
+    if (initActive) pianorollRef.setActiveSlot(initActive.channel);
     pianorollPanel.appendChild(pianorollRow);
 
     // --- Edit panel ---
