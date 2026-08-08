@@ -74,15 +74,29 @@ function noteToFreq(note, octave) {
 
 async function playNote(midi, voiceData, durationMs, channel) {
     const dur = Math.round(durationMs || 0);
-    const effDur = dur > 0 ? dur : 600; // enforce minimum 600ms
+    const durMs = dur > 0 ? dur : 600;
 
-    // Preview always uses offline render + sample injection (no patch pre-loading needed)
+    // Pianoroll path: channel provided → play on that channel in worklet
+    if (channel != null) {
+        try {
+            await acquire();
+            if (isReady()) {
+                const stop = playNoteOnChannel(channel, midi);
+                if (stop) setTimeout(stop, durMs * 0.6);
+                return;
+            }
+        } catch (err) {
+            console.warn('DX7 synth unavailable:', err);
+        }
+    }
+
+    // Preview path: offline render + sample injection (no channel needed)
     if (voiceData) {
         try {
             await acquire();
             if (isReady()) {
                 const stop = playNoteRealtime(voiceData, midi);
-                if (stop) setTimeout(stop, effDur * 0.6);
+                if (stop) setTimeout(stop, durMs * 0.6);
                 return;
             }
         } catch (err) {
@@ -91,7 +105,7 @@ async function playNote(midi, voiceData, durationMs, channel) {
 
         try {
             const body = { voice_data: voiceData, note: midi };
-            body.duration_ms = effDur;
+            body.duration_ms = durMs;
             const resp = await fetch(baseUrl + '/api/play', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
