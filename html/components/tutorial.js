@@ -78,6 +78,13 @@ export function skipTutorial() {
     hide();
 }
 
+export function restartTutorial() {
+    localStorage.removeItem(STORAGE_KEY);
+    currentStep = 0;
+    active = true;
+    showStep(currentStep);
+}
+
 function completeTutorial() {
     localStorage.setItem(STORAGE_KEY, 'completed');
     hide();
@@ -125,15 +132,21 @@ function showStep(index) {
 
     // Highlight target element (with fallback)
     var highlightTarget = null;
+    var usedFallback = false;
     if (step.highlight) {
         highlightTarget = document.querySelector(step.highlight);
         if (!highlightTarget && step.fallbackHighlight) {
             highlightTarget = document.querySelector(step.fallbackHighlight);
+            usedFallback = true;
         }
         if (highlightTarget) {
             highlightTarget.classList.add('tutorial-highlight');
         }
     }
+
+    // Center modal if primary highlight wasn't found (e.g. no container yet)
+    var dialog = modal.querySelector('.tutorial-dialog');
+    if (dialog) dialog.classList.toggle('tutorial-centered', usedFallback);
 
     // Update nav buttons
     var nextBtn = document.getElementById('tutorial-next');

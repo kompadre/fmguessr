@@ -9,7 +9,7 @@ import { initCanvas, addContainer, addPatchToContainer, refreshCanvas } from './
 import { createToolbar } from './components/toolbar.js';
 import { openEdit } from './components/edit-panel.js';
 import { Job, jobManager } from './components/job.js';
-import { initTutorial, startTutorial, isTutorialActive } from './components/tutorial.js';
+import { initTutorial, startTutorial, restartTutorial, isTutorialActive } from './components/tutorial.js';
 
 const fileInput = document.getElementById('wav-input');
 
@@ -613,6 +613,9 @@ document.getElementById('menu-legal').addEventListener('click', () => {
 });
 document.getElementById('menu-donate').addEventListener('click', () => {
     window.open('https://github.com/sponsors/kompadre', '_blank');
+});
+document.getElementById('menu-restart-tutorial').addEventListener('click', () => {
+    restartTutorial();
 });
 
 ['credits', 'about', 'help', 'legal'].forEach(id => {

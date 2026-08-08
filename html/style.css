@@ -2497,6 +2497,11 @@ footer {
     margin: 48px 0 0 8px;
 }
 
+/* Centered variant when primary highlight isn't found */
+.tutorial-dialog.tutorial-centered {
+    margin: auto;
+}
+
 .tutorial-illustration {
     width: 100%;
     height: 160px;
