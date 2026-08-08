@@ -426,6 +426,7 @@ function initToolbar() {
         pianorollNotes: [],
         activePatchId: activePianorollPatchId,
         activeVoiceData: activeSyxVoiceData,
+        initialTab: 'pianoroll',
         onNoteClick: (midi) => { activeKeyboardNote = midi; },
         onVoiceAdded: (voiceData, channel) => {
             // Load voice into synth channel when added to VoiceBank
