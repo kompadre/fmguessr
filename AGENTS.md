@@ -11,6 +11,7 @@
 - Match existing code style in each file. Don't introduce conventions that conflict with neighbors.
 - Use `pianoDockWrapper` (module-scoped in app.js) to access `_voiceBank`, `_pianoroll`, `_showLog` — NOT `document.getElementById('piano-dock')` which returns the outer container, not the inner wrapper.
 - VoiceBank assigns colors by slot index (PATCH_COLORS[8]). Pianoroll receives color via `setActivePatch(id, data, color, channel)` — always pass `entry.color` from voicebank.
+- VoiceBank channel = array index. Entries have no `channel` property. Slot IS the channel.
 - Verify JS changes with `node --check html/app.js`, `node --check html/components/*.js`, `node --check html/synth/*.js`.
 - WASM build: `make -f Makefile.msfa` in `html/synth/wasm/` (uses `zig c++ -target wasm32-wasi`). Do NOT use emscripten.
 - Never export `malloc`/`free` from WASM. Use static pre-allocated buffers (`get_patch_buffer()`, `load_voice_from_buffer()`).
@@ -51,6 +52,17 @@ go test -race ./pkg/match/...        # Race detector
 - Render duration capped at 3.0s. Target WAV truncated on load.
 - REST API: single-worker queue, 5 jobs max, 800KB upload limit.
 
+**MSFA DX7 synth architecture (multitimbral):**
+- 16 MIDI channels, 32 patch slots, 16 polyphonic voices, 16 LFOs.
+- Fixed channel→slot mapping: channel N always reads from slot N. Set at init via `ProgramChange(ch, ch)`.
+- `SetVoice(slot, data)` → `memcpy` into `patch_data_[slot*128]` + `UnpackPatch` into `unpacked_patch_[slot]` + LFO reset. Channel uses new patch immediately on next note-on.
+- `ProgramChange(p, ch)` → sets `current_patch_[ch] = p`, unpacks `patch_data_[p*128]`, resets LFO.
+- Default patch: silent INIT (all output levels 0). All 32 slots initialized with it.
+- Note-on reads `unpacked_patch_[cmd_ch]` where `cmd_ch = MIDI_status & 0x0f`.
+- VoiceBank → synth via `sendVoiceSnapshot(entries)`: worklet receives `voice-snapshot` message, loops `loadPatch(data, slot)` per entry. No ProgramChange needed.
+- Preview: offline render on main thread (`offlineWasm`) + sample injection into worklet (`play-samples` message). Uses slot 0 / channel 0.
+- Pianoroll playback: `playNoteOnChannel(channel, midi)` via worklet `send_midi(0x90 | ch, ...)`. Channel = VoiceBank array index.
+
 **Distance metrics:**
 - Primary: `MelCosineDistanceCached` — cosine on 128×128 mel spectrogram (16384-dim).
 - Formant: spectral envelope peak matching (greedy nearest-neighbor, freq+amp). Used for candidate generation and post-GA refinement.
@@ -88,7 +100,7 @@ go test -race ./pkg/match/...        # Race detector
 - `html/components/pianoroll.js`: Sequencer. Notes store per-note `voiceData` and `channel`. Error counter stops after 3 failures.
 - `html/synth/audio-manager.js`: Singleton AudioContext + AudioWorklet. `acquire()` creates once, `initAudio()` loads modules once. Multi-channel: `loadVoice()`, `playNoteOnChannel()`. No malloc/free — uses static WASM buffers.
 - `html/synth/dx7-synth.js`: Batch waveform rendering only (main thread WASM). No realtime synth code.
-- `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine. Handles `voice-channel`, `midi`, `patch` messages.
+- `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine. Handles `voice-snapshot`, `midi`, `patch`, `play-samples`, `channel-volume` messages.
 - WASM: `html/synth/wasm/msfa.wasm` (zig c++ build). Binary fetched on main thread, passed to AudioWorklet via `processorOptions`. Static buffers: `get_patch_buffer()`, `load_voice_from_buffer()`. Voice stealing with 64-sample fade-out.
 
 **Deploy:** `make deploy` stages to `deploy/app/`. Docker via `deploy/Dockerfile` + `deploy/docker-compose.yml`.
