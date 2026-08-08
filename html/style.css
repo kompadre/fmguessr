@@ -1806,7 +1806,7 @@ h1 {
 .pianoroll-scroll {
     height: 160px;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;
     border-radius: 4px;
 }
 

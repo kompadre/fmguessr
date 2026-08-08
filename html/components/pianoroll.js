@@ -42,12 +42,10 @@ const NOTES = [
     { midi: 48, name: 'C3',  white: true },
 ];
 
-const COLS = 16; // 16 sixteenth notes = 1 measure of 4/4
+const COLS_PER_MEASURE = 16; // 16 sixteenth notes = 1 measure of 4/4
 const ROW_H = 20;
 const COL_W = 30;
 const LABEL_W = 36;
-const CANVAS_W = LABEL_W + COLS * COL_W;
-const CANVAS_H = NOTES.length * ROW_H;
 
 const STORAGE_KEY = 'fmguessr_pianoroll';
 const DEFAULT_BPM = 120;
@@ -56,6 +54,11 @@ const DEFAULT_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '
 export function createPianoroll(opts) {
     const { playNoteFn, onNotesChange, onClear } = opts;
     const notes = [];
+    let measures = 1;
+    const CANVAS_H = NOTES.length * ROW_H;
+
+    function totalCols() { return measures * COLS_PER_MEASURE; }
+    function canvasWidth() { return LABEL_W + totalCols() * COL_W; }
 
     // --- Helpers to look up voice bank data by slot ---
     function getSlotData(slot) {
@@ -97,6 +100,29 @@ export function createPianoroll(opts) {
     clearBtn.textContent = 'Clear';
     controls.appendChild(clearBtn);
 
+    const addMeasureBtn = document.createElement('button');
+    addMeasureBtn.className = 'pianoroll-btn';
+    addMeasureBtn.textContent = '+ Msr';
+    addMeasureBtn.title = 'Add measure';
+    controls.appendChild(addMeasureBtn);
+
+    const cloneMeasureBtn = document.createElement('button');
+    cloneMeasureBtn.className = 'pianoroll-btn';
+    cloneMeasureBtn.textContent = '\u29C9 Clone';
+    cloneMeasureBtn.title = 'Clone last measure to new';
+    controls.appendChild(cloneMeasureBtn);
+
+    const removeMeasureBtn = document.createElement('button');
+    removeMeasureBtn.className = 'pianoroll-btn';
+    removeMeasureBtn.textContent = '\u2715 Msr';
+    removeMeasureBtn.title = 'Remove last measure';
+    removeMeasureBtn.disabled = true;
+    controls.appendChild(removeMeasureBtn);
+
+    function updateMeasureButtons() {
+        removeMeasureBtn.disabled = measures <= 1;
+    }
+
     const bpmLabel = document.createElement('span');
     bpmLabel.className = 'pianoroll-bpm-label';
     bpmLabel.textContent = 'BPM';
@@ -116,6 +142,42 @@ export function createPianoroll(opts) {
     hint.textContent = 'Click+drag to add notes \u00B7 Double-click to remove';
     controls.appendChild(hint);
 
+    // --- Measure management ---
+    addMeasureBtn.addEventListener('click', () => {
+        measures++;
+        updateMeasureButtons();
+        draw();
+        saveState();
+    });
+
+    cloneMeasureBtn.addEventListener('click', () => {
+        const offset = (measures - 1) * COLS_PER_MEASURE;
+        const cloned = notes
+            .filter(n => n.start >= offset && n.start < offset + COLS_PER_MEASURE)
+            .map(n => ({ midi: n.midi, start: n.start + COLS_PER_MEASURE, dur: n.dur, slot: n.slot }));
+        measures++;
+        notes.push(...cloned);
+        updateMeasureButtons();
+        draw();
+        renderLegend();
+        onNotesChange();
+        saveState();
+    });
+
+    removeMeasureBtn.addEventListener('click', () => {
+        if (measures <= 1) return;
+        const cutoff = (measures - 1) * COLS_PER_MEASURE;
+        for (let i = notes.length - 1; i >= 0; i--) {
+            if (notes[i].start >= cutoff) notes.splice(i, 1);
+        }
+        measures--;
+        updateMeasureButtons();
+        draw();
+        renderLegend();
+        onNotesChange();
+        saveState();
+    });
+
     container.appendChild(controls);
 
     // Scrollable canvas area
@@ -123,7 +185,7 @@ export function createPianoroll(opts) {
     scroll.className = 'pianoroll-scroll';
 
     const canvas = document.createElement('canvas');
-    canvas.width = CANVAS_W;
+    canvas.width = canvasWidth();
     canvas.height = CANVAS_H;
     canvas.className = 'pianoroll-canvas';
     scroll.appendChild(canvas);
@@ -153,6 +215,7 @@ export function createPianoroll(opts) {
             const data = {
                 notes: notes.map(n => ({ midi: n.midi, start: n.start, dur: n.dur, slot: n.slot })),
                 bpm: parseInt(bpmInput.value) || DEFAULT_BPM,
+                measures,
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         } catch (e) { /* ignore */ }
@@ -163,6 +226,9 @@ export function createPianoroll(opts) {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (!raw) return;
             const data = JSON.parse(raw);
+            if (data.measures && typeof data.measures === 'number' && data.measures >= 1) {
+                measures = data.measures;
+            }
             if (data.notes && Array.isArray(data.notes)) {
                 for (const n of data.notes) {
                     if (typeof n.midi === 'number' && typeof n.start === 'number' && typeof n.dur === 'number') {
@@ -171,22 +237,28 @@ export function createPianoroll(opts) {
                 }
             }
             if (data.bpm) bpmInput.value = String(Math.max(32, Math.min(255, data.bpm)));
+            updateMeasureButtons();
         } catch (e) { /* ignore */ }
     }
 
     // --- Drawing ---
+    function resizeCanvas() {
+        canvas.width = canvasWidth();
+    }
+
     function draw() {
-        ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+        resizeCanvas();
+        ctx.clearRect(0, 0, canvasWidth(), CANVAS_H);
 
         // Row backgrounds
         for (let r = 0; r < NOTES.length; r++) {
             const y = r * ROW_H;
             ctx.fillStyle = NOTES[r].white ? '#1a1a2e' : '#12121f';
-            ctx.fillRect(LABEL_W, y, COLS * COL_W, ROW_H);
+            ctx.fillRect(LABEL_W, y, totalCols() * COL_W, ROW_H);
         }
 
         // Column lines (beat boundaries thicker)
-        for (let c = 0; c <= COLS; c++) {
+        for (let c = 0; c <= totalCols(); c++) {
             const x = LABEL_W + c * COL_W;
             ctx.strokeStyle = c % 4 === 0 ? '#444' : '#2a2a3a';
             ctx.lineWidth = c % 4 === 0 ? 1.5 : 0.5;
@@ -203,7 +275,7 @@ export function createPianoroll(opts) {
             ctx.lineWidth = 0.5;
             ctx.beginPath();
             ctx.moveTo(LABEL_W, y);
-            ctx.lineTo(CANVAS_W, y);
+            ctx.lineTo(canvasWidth(), y);
             ctx.stroke();
         }
 
@@ -282,7 +354,7 @@ export function createPianoroll(opts) {
     }
 
     function pixelToCol(px) {
-        return Math.max(0, Math.min(COLS - 1, Math.floor((px - LABEL_W) / COL_W)));
+        return Math.max(0, Math.min(totalCols() - 1, Math.floor((px - LABEL_W) / COL_W)));
     }
 
     function pixelToRow(py) {
@@ -370,7 +442,7 @@ export function createPianoroll(opts) {
             const colOffset = Math.round(dx / COL_W);
             const rowOffset = Math.round(dy / ROW_H);
 
-            const newStart = Math.max(0, Math.min(COLS - movingNote.dur, moveOriginal.start + colOffset));
+            const newStart = Math.max(0, Math.min(totalCols() - movingNote.dur, moveOriginal.start + colOffset));
             const newRow = Math.max(0, Math.min(NOTES.length - 1, NOTES.findIndex(nn => nn.midi === moveOriginal.midi) + rowOffset));
             const newMidi = NOTES[newRow].midi;
 
@@ -503,7 +575,7 @@ export function createPianoroll(opts) {
             draw();
 
             const current = playCol;
-            playCol = (current + 1) % COLS;
+            playCol = (current + 1) % totalCols();
 
             playTimer = setTimeout(tick, msPerSixteenth);
         }
