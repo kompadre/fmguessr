@@ -133,8 +133,6 @@ export function loadVoice(voiceData, slot) {
 
     return slot;
 }
-    return slot;
-}
 
 /**
  * Load all VoiceBank entries into channels.
