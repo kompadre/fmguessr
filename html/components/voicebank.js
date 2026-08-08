@@ -314,6 +314,7 @@ export function createVoiceBank(opts) {
     container._getActive = getActive;
     container._setActive = setActive;
     container._getEntries = () => entries;
+    container._notifySnapshot = notifySnapshot;
 
     return container;
 }

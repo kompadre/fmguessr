@@ -187,6 +187,8 @@ export function createToolbar(opts) {
         },
         onSnapshot: opts.onSnapshot || null,
     });
+    // Fire initial snapshot after onSnapshot callback is wired
+    if (voiceBank._notifySnapshot) voiceBank._notifySnapshot();
     pianorollRow.appendChild(voiceBank);
     const pianorollRef = createPianoroll({
         playNoteFn: pianorollPlayFn,
