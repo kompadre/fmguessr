@@ -73,6 +73,7 @@ const STEPS = [
         id: 'edit',
         title: 'Edit Patches',
         highlight: '#piano-dock .dock-tab:nth-child(3)',
+        selectTab: '#piano-dock .dock-tab:nth-child(3)',
         noBlur: true,
         illustration: null,
         description:
@@ -156,6 +157,12 @@ function showStep(index) {
             menuItem.classList.add('open');
             menuItem.dataset.tutorialOpen = '1';
         }
+    }
+
+    // Select tab if specified (e.g. activate Edit tab in toolbar)
+    if (step.selectTab) {
+        var tab = document.querySelector(step.selectTab);
+        if (tab) tab.click();
     }
 
     // Highlight target element (with fallback)
