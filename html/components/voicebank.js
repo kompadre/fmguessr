@@ -87,7 +87,10 @@ export function createVoiceBank(opts) {
 
     function fireSelect() {
         const active = entries.find(e => e.id === activeId);
-        if (onSelect && active) onSelect(active);
+        if (onSelect && active) {
+            const slot = entries.indexOf(active);
+            onSelect(active, slot);
+        }
     }
 
     function render() {
@@ -112,7 +115,7 @@ export function createVoiceBank(opts) {
                 playBtn.title = 'Preview';
                 playBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    if (onPreview) onPreview(entry);
+                    if (onPreview) onPreview(entry, i);
                 });
                 item.appendChild(playBtn);
 
@@ -237,7 +240,6 @@ export function createVoiceBank(opts) {
             voiceData: voiceCopy,
             patchId: patchId || name,
             color,
-            channel: entries.length,
             volume: DEFAULT_VOLUME,
         });
         activeId = entries[entries.length - 1].id;
@@ -313,7 +315,6 @@ export function createVoiceBank(opts) {
     container._loadAllVoices = (loadVoiceFn) => {
         for (let i = 0; i < entries.length; i++) {
             if (entries[i] && entries[i].voiceData) {
-                entries[i].channel = i;
                 loadVoiceFn(entries[i].voiceData, i);
             }
         }

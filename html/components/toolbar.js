@@ -176,15 +176,15 @@ export function createToolbar(opts) {
 
     const pianorollPlayFn = playNoteFn || (() => {});
     const voiceBank = createVoiceBank({
-        onSelect: (entry) => {
+        onSelect: (entry, slot) => {
             if (pianorollRef) {
-                pianorollRef.setActiveSlot(entry.channel);
+                pianorollRef.setActiveSlot(slot);
             }
         },
         onVoiceAdded: opts.onVoiceAdded || null,
         onVolumeChange: opts.onVolumeChange || null,
-        onPreview: (entry) => {
-            pianorollPlayFn(60, 600, entry.voiceData, entry.channel);
+        onPreview: (entry, slot) => {
+            pianorollPlayFn(60, 600, entry.voiceData, slot);
         },
     });
     pianorollRow.appendChild(voiceBank);
@@ -194,7 +194,7 @@ export function createToolbar(opts) {
         activeSlot: null,
         getSlotData: (slot) => {
             const entries = voiceBank._getEntries ? voiceBank._getEntries() : [];
-            return entries.find(e => e.channel === slot) || null;
+            return entries[slot] || null;
         },
         onClear: () => { if (voiceBank._clear) voiceBank._clear(); },
     });
@@ -202,7 +202,11 @@ export function createToolbar(opts) {
 
     // Initialize active slot from voice bank's restored active entry
     const initActive = voiceBank._getActive ? voiceBank._getActive() : null;
-    if (initActive) pianorollRef.setActiveSlot(initActive.channel);
+    if (initActive) {
+        const entries = voiceBank._getEntries ? voiceBank._getEntries() : [];
+        const initSlot = entries.indexOf(initActive);
+        if (initSlot >= 0) pianorollRef.setActiveSlot(initSlot);
+    }
     pianorollPanel.appendChild(pianorollRow);
 
     // --- Edit panel ---

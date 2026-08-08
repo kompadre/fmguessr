@@ -13,9 +13,6 @@ let initPromise = null;
 // Cached WASM binary (fetched once, shared by main + offline contexts)
 let cachedWasmBytes = null;
 
-// Multi-channel state: channel → { voiceData (Uint8Array), b64Key (string) }
-const channelState = new Array(VOICE_BANK_SLOTS).fill(null);
-
 // Active note tracking: "channel:midi" → stopFn
 const activeNotes = new Map();
 
@@ -116,10 +113,8 @@ export function loadVoice(voiceData, slot) {
 
     // Normalize voiceData to Uint8Array (handles base64 string, Uint8Array, or plain array from localStorage)
     let patch;
-    let contentKey = null;
     if (typeof voiceData === 'string') {
         patch = base64ToUint8Array(voiceData);
-        contentKey = voiceData; // base64 string IS the content key
     } else if (voiceData instanceof Uint8Array) {
         patch = voiceData;
     } else if (Array.isArray(voiceData)) {
@@ -128,17 +123,7 @@ export function loadVoice(voiceData, slot) {
         return -1;
     }
 
-    // Generate content key for non-string data (first 16 bytes as fingerprint)
-    if (!contentKey && patch.length >= 16) {
-        contentKey = '';
-        for (let i = 0; i < 16; i++) contentKey += String.fromCharCode(patch[i]);
-    }
-
-    // Skip if already loaded on this slot with same content
-    if (contentKey && channelState[slot] && channelState[slot].contentKey === contentKey) {
-        return slot;
-    }
-
+    // Always send — no dedup (voice bank entries are independent deep copies)
     dx7Node.port.postMessage({
         type: 'voice-channel',
         slot: slot,
@@ -146,7 +131,8 @@ export function loadVoice(voiceData, slot) {
         data: patch.buffer,
     });
 
-    channelState[slot] = { voiceData: patch, contentKey };
+    return slot;
+}
     return slot;
 }
 
