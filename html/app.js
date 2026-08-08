@@ -459,8 +459,63 @@ function initToolbar() {
 
 // --- Restore on load ---
 
+const DEMO_OFFERED_KEY = 'fmguessr_demo_offered';
+
+async function offerDemoData() {
+    // Skip if already offered or if there's existing data
+    if (localStorage.getItem(DEMO_OFFERED_KEY)) return;
+    const hasPatches = localStorage.getItem('fmguessr_patches');
+    const hasCanvas = localStorage.getItem('fmguessr_canvas');
+    if (hasPatches || hasCanvas) return;
+
+    if (!confirm('Load demo patches? This will add 32 DX7 voices to get started.')) {
+        localStorage.setItem(DEMO_OFFERED_KEY, '1');
+        return;
+    }
+
+    try {
+        const resp = await fetch(baseUrl + '/html/DEMO.syx');
+        const arrayBuffer = await resp.arrayBuffer();
+        const patches = parseSyxFile(arrayBuffer);
+        if (!patches || patches.length === 0) {
+            appendLog('Failed to parse DEMO.syx');
+            return;
+        }
+
+        const created = [];
+        for (const p of patches) {
+            if (p.name === 'INIT VOICE' || p.name.trim() === '') continue;
+            if (!p.voice_data && p.raw) p.voice_data = voiceRawToBase64(p.raw);
+            const patch = createPatch({
+                name: p.name,
+                algorithm: p.algorithm,
+                feedback: p.feedback,
+                voice_data: p.voice_data || null,
+                source: 'demo',
+            });
+            patchStore.put(patch);
+            created.push(patch);
+        }
+
+        if (created.length > 0) {
+            const jobId = 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            jobStore.put({ id: jobId, type: 'demo_import', status: 'completed', fileName: 'DEMO.syx', containerId: null });
+            const ctr = addContainer('DEMO', { jobId, patchIds: created.map(p => p.id) });
+            const updatedCtr = canvasStore.getContainer(ctr.id);
+            if (updatedCtr) { updatedCtr.patchIds = created.map(p => p.id); canvasStore.putContainer(updatedCtr); }
+            initCanvas(getCanvasOpts());
+            appendLog(`Loaded DEMO.syx: ${created.length} voices`);
+        }
+    } catch (err) {
+        appendLog('Failed to load demo: ' + err.message);
+    }
+}
+
 async function restore() {
     initCanvas(getCanvasOpts());
+
+    // Offer demo data if no existing data
+    await offerDemoData();
 
     // Restore jobs: resume polling, handle completed/failed
     const jobs = jobStore.getAll();
@@ -528,6 +583,8 @@ document.getElementById('menu-clear-history').addEventListener('click', async ()
     localStorage.removeItem('fmguessr_patches');
     localStorage.removeItem('fmguessr_canvas');
     localStorage.removeItem('fmguessr_jobs');
+    localStorage.removeItem('fmguessr_voicebank');
+    // Note: demoWasOffered (fmguessr_demo_offered) is intentionally preserved
     canvasStore.clear();
     initCanvas(getCanvasOpts());
     appendLog('History cleared');
