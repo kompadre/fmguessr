@@ -187,6 +187,7 @@ export function createToolbar(opts) {
             pianorollPlayFn(60, 600, entry.voiceData, entry.channel);
         },
     });
+    pianorollRow.appendChild(voiceBank);
     const pianorollRef = createPianoroll({
         playNoteFn: pianorollPlayFn,
         onNotesChange: updateHighlights,
