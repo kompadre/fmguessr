@@ -18,7 +18,6 @@ const baseUrl = window.location.origin.indexOf("localhost") > -1 ? "http://local
 let pianoDockWrapper = null;
 let activeKeyboardNote = 60;
 let activeSyxVoiceData = null;
-let activePianorollPatchId = null;
 let forkOsc = null;
 let forkGain = null;
 
@@ -427,9 +426,6 @@ function initToolbar() {
     const dock = createToolbar({
         matchedMidi: activeKeyboardNote,
         playNoteFn: playFn,
-        pianorollNotes: [],
-        activePatchId: activePianorollPatchId,
-        activeVoiceData: activeSyxVoiceData,
         initialTab: 'pianoroll',
         onNoteClick: (midi) => { activeKeyboardNote = midi; },
         onVoiceAdded: (voiceData, channel) => {

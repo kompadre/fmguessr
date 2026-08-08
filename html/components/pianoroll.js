@@ -1,5 +1,6 @@
 // Pianoroll: 3 octaves (C3–C6) × 1 measure of 4/4 (16 sixteenth notes)
 // Click+drag creates notes, double-click removes, sequencer plays all notes.
+// Notes reference VoiceBank slot index. Data looked up via getSlotData(slot).
 
 const NOTES = [
     { midi: 84, name: 'C6',  white: true },
@@ -48,10 +49,30 @@ const LABEL_W = 36;
 const CANVAS_W = LABEL_W + COLS * COL_W;
 const CANVAS_H = NOTES.length * ROW_H;
 
-const PATCH_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4'];
+const STORAGE_KEY = 'fmguessr_pianoroll';
+const DEFAULT_BPM = 120;
+const DEFAULT_COLORS = ['#e94560', '#4caf50', '#2196f3', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b'];
 
 export function createPianoroll(opts) {
-    const { notes, playNoteFn, onNotesChange, onClear } = opts;
+    const { playNoteFn, onNotesChange, onClear } = opts;
+    const notes = [];
+
+    // --- Helpers to look up voice bank data by slot ---
+    function getSlotData(slot) {
+        if (opts.getSlotData) return opts.getSlotData(slot);
+        return null;
+    }
+
+    function slotColor(slot) {
+        const entry = getSlotData(slot);
+        if (entry && entry.color) return entry.color;
+        return DEFAULT_COLORS[slot % DEFAULT_COLORS.length];
+    }
+
+    function slotName(slot) {
+        const entry = getSlotData(slot);
+        return entry ? entry.name : 'Slot ' + slot;
+    }
 
     const container = document.createElement('div');
     container.className = 'pianoroll-container';
@@ -62,12 +83,12 @@ export function createPianoroll(opts) {
 
     const playBtn = document.createElement('button');
     playBtn.className = 'pianoroll-btn pianoroll-play';
-    playBtn.textContent = '▶ Play';
+    playBtn.textContent = '\u25B6 Play';
     controls.appendChild(playBtn);
 
     const stopBtn = document.createElement('button');
     stopBtn.className = 'pianoroll-btn pianoroll-stop';
-    stopBtn.textContent = '■ Stop';
+    stopBtn.textContent = '\u25A0 Stop';
     stopBtn.disabled = true;
     controls.appendChild(stopBtn);
 
@@ -84,16 +105,16 @@ export function createPianoroll(opts) {
     const bpmInput = document.createElement('input');
     bpmInput.type = 'number';
     bpmInput.className = 'pianoroll-bpm';
-    bpmInput.value = '120';
+    bpmInput.value = String(DEFAULT_BPM);
     bpmInput.min = '32';
     bpmInput.max = '255';
     bpmInput.step = '1';
     controls.appendChild(bpmInput);
 
-    const label = document.createElement('span');
-    label.className = 'pianoroll-hint';
-    label.textContent = 'Click+drag to add notes · Double-click to remove';
-    controls.appendChild(label);
+    const hint = document.createElement('span');
+    hint.className = 'pianoroll-hint';
+    hint.textContent = 'Click+drag to add notes \u00B7 Double-click to remove';
+    controls.appendChild(hint);
 
     container.appendChild(controls);
 
@@ -118,23 +139,42 @@ export function createPianoroll(opts) {
     let playTimer = null;
     let playCol = -1;
     let dragging = false;
-    let dragStart = null; // { row, col }
+    let dragStart = null;
 
     // Note move state
-    let movingNote = null;      // note being moved
-    let moveStartPos = null;    // { x, y } mouse position at mousedown
-    let moveOriginal = null;    // { start, midi } — original position for cancel
-    let moveCommitted = false;  // true once mouse has moved enough to be a drag
+    let movingNote = null;
+    let moveStartPos = null;
+    let moveOriginal = null;
+    let moveCommitted = false;
 
-    function colorForPatch(patchId) {
-        if (!patchId) return PATCH_COLORS[0];
-        let hash = 0;
-        for (let i = 0; i < patchId.length; i++) {
-            hash = ((hash << 5) - hash + patchId.charCodeAt(i)) | 0;
-        }
-        return PATCH_COLORS[Math.abs(hash) % PATCH_COLORS.length];
+    // --- Persistence ---
+    function saveState() {
+        try {
+            const data = {
+                notes: notes.map(n => ({ midi: n.midi, start: n.start, dur: n.dur, slot: n.slot })),
+                bpm: parseInt(bpmInput.value) || DEFAULT_BPM,
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } catch (e) { /* ignore */ }
     }
 
+    function loadState() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (data.notes && Array.isArray(data.notes)) {
+                for (const n of data.notes) {
+                    if (typeof n.midi === 'number' && typeof n.start === 'number' && typeof n.dur === 'number') {
+                        notes.push({ midi: n.midi, start: n.start, dur: n.dur, slot: n.slot != null ? n.slot : 0 });
+                    }
+                }
+            }
+            if (data.bpm) bpmInput.value = String(Math.max(32, Math.min(255, data.bpm)));
+        } catch (e) { /* ignore */ }
+    }
+
+    // --- Drawing ---
     function draw() {
         ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -178,14 +218,15 @@ export function createPianoroll(opts) {
         }
 
         // Notes
+        const activeSlot = opts.activeSlot;
         for (const n of notes) {
             const r = NOTES.findIndex(nn => nn.midi === n.midi);
             if (r < 0) continue;
             const x = LABEL_W + n.start * COL_W;
             const y = r * ROW_H;
             const w = n.dur * COL_W - 1;
-            const isActive = !opts.activePatchId || !n.patchId || n.patchId === opts.activePatchId;
-            ctx.fillStyle = n.color || PATCH_COLORS[0];
+            const isActive = activeSlot == null || n.slot === activeSlot;
+            ctx.fillStyle = slotColor(n.slot);
             ctx.globalAlpha = isActive ? 0.85 : 0.25;
             ctx.fillRect(x + 1, y + 1, w, ROW_H - 2);
             ctx.globalAlpha = 1.0;
@@ -203,7 +244,7 @@ export function createPianoroll(opts) {
                 const gx = LABEL_W + moveOriginal.start * COL_W;
                 const gy = origRow * ROW_H;
                 const gw = movingNote.dur * COL_W - 1;
-                ctx.fillStyle = movingNote.color || PATCH_COLORS[0];
+                ctx.fillStyle = slotColor(movingNote.slot);
                 ctx.globalAlpha = 0.12;
                 ctx.fillRect(gx + 1, gy + 1, gw, ROW_H - 2);
                 ctx.globalAlpha = 1.0;
@@ -256,7 +297,7 @@ export function createPianoroll(opts) {
     function activeNoteAt(row, col) {
         const midi = NOTES[row].midi;
         return notes.find(n => n.midi === midi && col >= n.start && col < n.start + n.dur
-            && (!opts.activePatchId || !n.patchId || n.patchId === opts.activePatchId));
+            && (opts.activeSlot == null || n.slot === opts.activeSlot));
     }
 
     let lastMousePos = null;
@@ -264,7 +305,7 @@ export function createPianoroll(opts) {
     let lastClickRow = -1;
     let lastClickCol = -1;
 
-    const MOVE_THRESHOLD = 5; // pixels before a click becomes a drag
+    const MOVE_THRESHOLD = 5;
 
     canvas.addEventListener('mousedown', (e) => {
         const rect = canvas.getBoundingClientRect();
@@ -280,12 +321,12 @@ export function createPianoroll(opts) {
 
         // Double-click detection
         if (existing && now - lastClickTime < 350 && row === lastClickRow && Math.abs(col - lastClickCol) <= 1) {
-            // Remove note
             const idx = notes.indexOf(existing);
             if (idx >= 0) notes.splice(idx, 1);
             draw();
             renderLegend();
             onNotesChange();
+            saveState();
             lastClickTime = 0;
             return;
         }
@@ -295,7 +336,6 @@ export function createPianoroll(opts) {
         lastClickCol = col;
 
         if (existing) {
-            // Prepare for potential move (or click-to-preview)
             movingNote = existing;
             moveStartPos = { x, y };
             moveOriginal = { start: existing.start, midi: existing.midi };
@@ -316,19 +356,17 @@ export function createPianoroll(opts) {
         const y = e.clientY - rect.top;
         lastMousePos = { x, y };
 
-        // Handle note move
         if (movingNote && moveStartPos) {
             const dx = x - moveStartPos.x;
             const dy = y - moveStartPos.y;
             if (!moveCommitted && Math.abs(dx) < MOVE_THRESHOLD && Math.abs(dy) < MOVE_THRESHOLD) {
-                return; // not yet a drag
+                return;
             }
             if (!moveCommitted) {
                 canvas.style.cursor = 'grabbing';
             }
             moveCommitted = true;
 
-            // Snap to grid: column offset from original position
             const colOffset = Math.round(dx / COL_W);
             const rowOffset = Math.round(dy / ROW_H);
 
@@ -348,17 +386,20 @@ export function createPianoroll(opts) {
     canvas.addEventListener('mouseup', (e) => {
         canvas.style.cursor = '';
 
-        // Finalize note move
         if (movingNote) {
             if (moveCommitted) {
-                // Move was committed — update note data
-                movingNote.channel = opts.activeChannel ?? movingNote.channel;
                 draw();
                 renderLegend();
                 onNotesChange();
+                saveState();
             } else {
-                // Was just a click — play preview
-                playNoteFn(movingNote.midi, movingNote.dur * 250, movingNote.voiceData || null, movingNote.channel);
+                // Click preview — look up voice data from slot
+                const entry = getSlotData(movingNote.slot);
+                const voiceData = entry ? entry.voiceData : null;
+                const channel = entry ? entry.channel : null;
+                const bpm = Math.max(32, Math.min(255, parseInt(bpmInput.value) || 120));
+                const msPerSixteenth = 60000 / bpm / 4;
+                playNoteFn(movingNote.midi, movingNote.dur * msPerSixteenth, voiceData, channel);
             }
             movingNote = null;
             moveStartPos = null;
@@ -388,14 +429,12 @@ export function createPianoroll(opts) {
                 midi,
                 start: minC,
                 dur,
-                channel: opts.activeChannel ?? null,
-                patchId: opts.activePatchId || null,
-                voiceData: opts.activeVoiceData || null,
-                color: opts.activeColor || colorForPatch(opts.activePatchId),
+                slot: opts.activeSlot != null ? opts.activeSlot : 0,
             });
             draw();
             renderLegend();
             onNotesChange();
+            saveState();
         }
 
         dragging = false;
@@ -406,7 +445,6 @@ export function createPianoroll(opts) {
 
     canvas.addEventListener('mouseleave', () => {
         canvas.style.cursor = '';
-        // Cancel note move
         if (movingNote && moveOriginal) {
             movingNote.start = moveOriginal.start;
             movingNote.midi = moveOriginal.midi;
@@ -423,7 +461,7 @@ export function createPianoroll(opts) {
         }
     });
 
-    // Sequencer
+    // --- Sequencer ---
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 3;
 
@@ -446,7 +484,10 @@ export function createPianoroll(opts) {
             for (const n of notes) {
                 if (n.start === playCol) {
                     try {
-                        playNoteFn(n.midi, n.dur * msPerSixteenth, n.voiceData || null, n.channel);
+                        const entry = getSlotData(n.slot);
+                        const voiceData = entry ? entry.voiceData : null;
+                        const channel = entry ? entry.channel : null;
+                        playNoteFn(n.midi, n.dur * msPerSixteenth, voiceData, channel);
                         consecutiveErrors = 0;
                     } catch (e) {
                         consecutiveErrors++;
@@ -489,49 +530,49 @@ export function createPianoroll(opts) {
         draw();
         renderLegend();
         onNotesChange();
+        saveState();
         if (onClear) onClear();
     });
 
+    bpmInput.addEventListener('change', saveState);
+
     function renderLegend() {
         legend.innerHTML = '';
-        const patchIds = [...new Set(notes.map(n => n.patchId).filter(Boolean))];
-        if (patchIds.length === 0) {
+        const slots = [...new Set(notes.map(n => n.slot))];
+        if (slots.length === 0) {
             legend.style.display = 'none';
             return;
         }
         legend.style.display = '';
-        for (const pid of patchIds) {
+        for (const slot of slots) {
             const item = document.createElement('span');
             item.className = 'pianoroll-legend-item';
             const dot = document.createElement('span');
             dot.className = 'pianoroll-legend-dot';
-            dot.style.background = colorForPatch(pid);
+            dot.style.background = slotColor(slot);
             item.appendChild(dot);
             const name = document.createElement('span');
-            name.textContent = pid;
+            name.textContent = slotName(slot);
             item.appendChild(name);
             legend.appendChild(item);
         }
     }
 
+    // Load persisted state
+    loadState();
     draw();
+    renderLegend();
 
     return {
         element: container,
         draw,
         stopPlayback,
-        addNote(midi, start, dur, patchId) {
-            notes.push({ midi, start, dur, patchId, color: opts.activeColor || colorForPatch(patchId) });
-            draw();
-            renderLegend();
-        },
-        setActivePatch(patchId, voiceData, color, channel) {
-            opts.activePatchId = patchId;
-            opts.activeVoiceData = voiceData;
-            opts.activeColor = color || null;
-            opts.activeChannel = channel ?? null;
+        setActiveSlot(slot) {
+            opts.activeSlot = slot;
             draw();
         },
-        colorForPatch,
+        getNotes() { return notes; },
+        getBpm() { return parseInt(bpmInput.value) || DEFAULT_BPM; },
+        saveState,
     };
 }

@@ -177,7 +177,7 @@ export function createToolbar(opts) {
     const voiceBank = createVoiceBank({
         onSelect: (entry) => {
             if (pianorollRef) {
-                pianorollRef.setActivePatch(entry.patchId, entry.voiceData, entry.color, entry.channel);
+                pianorollRef.setActiveSlot(entry.channel);
             }
         },
         onVoiceAdded: opts.onVoiceAdded || null,
@@ -187,11 +187,13 @@ export function createToolbar(opts) {
 
     const pianorollPlayFn = playNoteFn || (() => {});
     const pianorollRef = createPianoroll({
-        notes: pianorollNotes,
         playNoteFn: pianorollPlayFn,
         onNotesChange: updateHighlights,
-        activePatchId,
-        activeVoiceData,
+        activeSlot: null,
+        getSlotData: (slot) => {
+            const entries = voiceBank._getEntries ? voiceBank._getEntries() : [];
+            return entries.find(e => e.channel === slot) || null;
+        },
         onClear: () => { if (voiceBank._clear) voiceBank._clear(); },
     });
     pianorollRow.appendChild(pianorollRef.element);
