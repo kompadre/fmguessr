@@ -126,7 +126,7 @@ export function createVoiceBank(opts) {
 
                 const nameEl = document.createElement('span');
                 nameEl.className = 'voicebank-name';
-                nameEl.textContent = entry.name;
+                nameEl.textContent = (i + 1) + '. ' + entry.name;
                 item.appendChild(nameEl);
 
                 // Volume label

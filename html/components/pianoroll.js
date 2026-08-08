@@ -396,10 +396,9 @@ export function createPianoroll(opts) {
                 // Click preview — look up voice data from slot
                 const entry = getSlotData(movingNote.slot);
                 const voiceData = entry ? entry.voiceData : null;
-                const channel = entry ? entry.channel : null;
                 const bpm = Math.max(32, Math.min(255, parseInt(bpmInput.value) || 120));
                 const msPerSixteenth = 60000 / bpm / 4;
-                playNoteFn(movingNote.midi, movingNote.dur * msPerSixteenth, voiceData, channel);
+                playNoteFn(movingNote.midi, movingNote.dur * msPerSixteenth, voiceData, movingNote.slot);
             }
             movingNote = null;
             moveStartPos = null;
@@ -487,8 +486,7 @@ export function createPianoroll(opts) {
                     try {
                         const entry = getSlotData(n.slot);
                         const voiceData = entry ? entry.voiceData : null;
-                        const channel = entry ? entry.channel : null;
-                        playNoteFn(n.midi, n.dur * msPerSixteenth, voiceData, channel);
+                        playNoteFn(n.midi, n.dur * msPerSixteenth, voiceData, n.slot);
                         consecutiveErrors = 0;
                     } catch (e) {
                         consecutiveErrors++;
