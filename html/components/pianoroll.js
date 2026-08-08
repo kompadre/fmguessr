@@ -151,7 +151,7 @@ export function createPianoroll(opts) {
     function saveState() {
         try {
             const data = {
-                notes: notes.map(n => ({ midi: n.midi, start: n.start, dur: n.dur, slot: n.slot, color: n.color })),
+                notes: notes.map(n => ({ midi: n.midi, start: n.start, dur: n.dur, slot: n.slot })),
                 bpm: parseInt(bpmInput.value) || DEFAULT_BPM,
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -166,13 +166,7 @@ export function createPianoroll(opts) {
             if (data.notes && Array.isArray(data.notes)) {
                 for (const n of data.notes) {
                     if (typeof n.midi === 'number' && typeof n.start === 'number' && typeof n.dur === 'number') {
-                        notes.push({
-                            midi: n.midi,
-                            start: n.start,
-                            dur: n.dur,
-                            slot: n.slot != null ? n.slot : 0,
-                            color: n.color || slotColor(n.slot != null ? n.slot : 0),
-                        });
+                        notes.push({ midi: n.midi, start: n.start, dur: n.dur, slot: n.slot != null ? n.slot : 0 });
                     }
                 }
             }
@@ -232,7 +226,7 @@ export function createPianoroll(opts) {
             const y = r * ROW_H;
             const w = n.dur * COL_W - 1;
             const isActive = activeSlot == null || n.slot === activeSlot;
-            ctx.fillStyle = n.color || slotColor(n.slot);
+            ctx.fillStyle = slotColor(n.slot);
             ctx.globalAlpha = isActive ? 0.85 : 0.25;
             ctx.fillRect(x + 1, y + 1, w, ROW_H - 2);
             ctx.globalAlpha = 1.0;
@@ -250,7 +244,7 @@ export function createPianoroll(opts) {
                 const gx = LABEL_W + moveOriginal.start * COL_W;
                 const gy = origRow * ROW_H;
                 const gw = movingNote.dur * COL_W - 1;
-                ctx.fillStyle = movingNote.color || slotColor(movingNote.slot);
+                ctx.fillStyle = slotColor(movingNote.slot);
                 ctx.globalAlpha = 0.12;
                 ctx.fillRect(gx + 1, gy + 1, gw, ROW_H - 2);
                 ctx.globalAlpha = 1.0;
@@ -437,7 +431,6 @@ export function createPianoroll(opts) {
                 start: minC,
                 dur,
                 slot,
-                color: slotColor(slot),
             });
             draw();
             renderLegend();
