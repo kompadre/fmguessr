@@ -175,6 +175,7 @@ export function createToolbar(opts) {
     pianorollRow.className = 'pianoroll-row';
 
     const pianorollPlayFn = playNoteFn || (() => {});
+    let pianorollRef = null;
     const voiceBank = createVoiceBank({
         onSelect: (entry, slot) => {
             if (pianorollRef) {
@@ -193,7 +194,6 @@ export function createToolbar(opts) {
     // Fire initial snapshot after onSnapshot callback is wired
     if (voiceBank._notifySnapshot) voiceBank._notifySnapshot();
     pianorollRow.appendChild(voiceBank);
-    let pianorollRef = null;
     pianorollRef = createPianoroll({
         playNoteFn: pianorollPlayFn,
         onNotesChange: updateHighlights,
