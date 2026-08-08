@@ -1704,6 +1704,28 @@ h1 {
     margin-left: 0.5rem;
 }
 
+.pianoroll-bpm-label {
+    color: #555;
+    font-size: 0.7rem;
+    margin-left: 0.5rem;
+}
+
+.pianoroll-bpm {
+    width: 3.2rem;
+    padding: 0.15rem 0.3rem;
+    background: #0f0f23;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #ccc;
+    font-size: 0.75rem;
+    text-align: center;
+}
+
+.pianoroll-bpm:focus {
+    outline: none;
+    border-color: #4caf50;
+}
+
 .pianoroll-canvas {
     border: 1px solid #333;
     border-radius: 4px;

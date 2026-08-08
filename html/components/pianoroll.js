@@ -76,6 +76,20 @@ export function createPianoroll(opts) {
     clearBtn.textContent = 'Clear';
     controls.appendChild(clearBtn);
 
+    const bpmLabel = document.createElement('span');
+    bpmLabel.className = 'pianoroll-bpm-label';
+    bpmLabel.textContent = 'BPM';
+    controls.appendChild(bpmLabel);
+
+    const bpmInput = document.createElement('input');
+    bpmInput.type = 'number';
+    bpmInput.className = 'pianoroll-bpm';
+    bpmInput.value = '120';
+    bpmInput.min = '60';
+    bpmInput.max = '178';
+    bpmInput.step = '1';
+    controls.appendChild(bpmInput);
+
     const label = document.createElement('span');
     label.className = 'pianoroll-hint';
     label.textContent = 'Click+drag to add notes · Double-click to remove';
@@ -423,7 +437,8 @@ export function createPianoroll(opts) {
         playBtn.disabled = true;
         stopBtn.disabled = false;
 
-        const msPerSixteenth = 250; // 60 BPM → 60000/60/4 = 250ms
+        const bpm = Math.max(60, Math.min(178, parseInt(bpmInput.value) || 120));
+        const msPerSixteenth = 60000 / bpm / 4;
 
         function tick() {
             if (!playing) return;
@@ -431,7 +446,7 @@ export function createPianoroll(opts) {
             for (const n of notes) {
                 if (n.start === playCol) {
                     try {
-                        playNoteFn(n.midi, n.dur * 250, n.voiceData || null, n.channel);
+                        playNoteFn(n.midi, n.dur * msPerSixteenth, n.voiceData || null, n.channel);
                         consecutiveErrors = 0;
                     } catch (e) {
                         consecutiveErrors++;
