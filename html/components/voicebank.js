@@ -196,7 +196,32 @@ export function createVoiceBank(opts) {
     }
 
     function addEntry(name, voiceData, patchId) {
-        const existing = entries.find(e => e.voiceData === voiceData);
+        if (!voiceData) return;
+        if (entries.length >= MAX_SLOTS) return;
+
+        // Deep copy voiceData to avoid stale references
+        let voiceCopy;
+        if (typeof voiceData === 'string') {
+            voiceCopy = voiceData; // strings are immutable
+        } else if (voiceData instanceof Uint8Array) {
+            voiceCopy = new Uint8Array(voiceData); // true deep copy
+        } else if (Array.isArray(voiceData)) {
+            voiceCopy = voiceData.slice();
+        } else {
+            return;
+        }
+
+        // Dedup by content (string compare for base64, byte compare for arrays)
+        const voiceKey = typeof voiceCopy === 'string' ? voiceCopy : Array.from(voiceCopy).join(',');
+        const existing = entries.find(e => {
+            if (typeof e.voiceData === 'string' && typeof voiceCopy === 'string') {
+                return e.voiceData === voiceCopy;
+            }
+            if (Array.isArray(e.voiceData) && Array.isArray(voiceCopy)) {
+                return Array.from(e.voiceData).join(',') === voiceKey;
+            }
+            return false;
+        });
         if (existing) {
             activeId = existing.id;
             render();
@@ -205,13 +230,11 @@ export function createVoiceBank(opts) {
             return;
         }
 
-        if (entries.length >= MAX_SLOTS) return;
-
         const color = PATCH_COLORS[entries.length % PATCH_COLORS.length];
         entries.push({
             id: 'vb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
             name: name || 'Untitled',
-            voiceData: voiceData || null,
+            voiceData: voiceCopy,
             patchId: patchId || name,
             color,
             channel: entries.length,
@@ -222,8 +245,8 @@ export function createVoiceBank(opts) {
         fireSelect();
         saveState();
 
-        if (onVoiceAdded && voiceData) {
-            onVoiceAdded(voiceData, entries.length - 1);
+        if (onVoiceAdded) {
+            onVoiceAdded(voiceCopy, entries.length - 1);
         }
     }
 

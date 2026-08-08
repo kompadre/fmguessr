@@ -116,10 +116,10 @@ export function loadVoice(voiceData, slot) {
 
     // Normalize voiceData to Uint8Array (handles base64 string, Uint8Array, or plain array from localStorage)
     let patch;
-    let b64Key = null;
+    let contentKey = null;
     if (typeof voiceData === 'string') {
         patch = base64ToUint8Array(voiceData);
-        b64Key = voiceData;
+        contentKey = voiceData; // base64 string IS the content key
     } else if (voiceData instanceof Uint8Array) {
         patch = voiceData;
     } else if (Array.isArray(voiceData)) {
@@ -128,8 +128,14 @@ export function loadVoice(voiceData, slot) {
         return -1;
     }
 
-    // Skip if already loaded on this slot (only for base64 strings)
-    if (b64Key && channelState[slot] && channelState[slot].b64Key === b64Key) {
+    // Generate content key for non-string data (first 16 bytes as fingerprint)
+    if (!contentKey && patch.length >= 16) {
+        contentKey = '';
+        for (let i = 0; i < 16; i++) contentKey += String.fromCharCode(patch[i]);
+    }
+
+    // Skip if already loaded on this slot with same content
+    if (contentKey && channelState[slot] && channelState[slot].contentKey === contentKey) {
         return slot;
     }
 
@@ -140,7 +146,7 @@ export function loadVoice(voiceData, slot) {
         data: patch.buffer,
     });
 
-    channelState[slot] = { voiceData: patch, b64Key };
+    channelState[slot] = { voiceData: patch, contentKey };
     return slot;
 }
 
