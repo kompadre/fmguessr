@@ -144,9 +144,32 @@ function showStep(index) {
         }
     }
 
-    // Center modal if primary highlight wasn't found (e.g. no container yet)
+    // Position modal relative to highlight target
     var dialog = modal.querySelector('.tutorial-dialog');
-    if (dialog) dialog.classList.toggle('tutorial-centered', usedFallback);
+    if (dialog) {
+        // Reset position classes/styles
+        dialog.classList.remove('tutorial-centered');
+        dialog.style.margin = '';
+
+        if (usedFallback) {
+            // No container found — center the modal
+            dialog.classList.add('tutorial-centered');
+        } else if (highlightTarget && highlightTarget.classList.contains('sky-container')) {
+            // Position modal to the left or right of the container
+            var rect = highlightTarget.getBoundingClientRect();
+            var screenCenter = window.innerWidth / 2;
+            var containerCenter = rect.left + rect.width / 2;
+
+            if (containerCenter < screenCenter) {
+                // Container on the left — modal to the right
+                dialog.style.margin = '48px 0 0 ' + (rect.right + 16) + 'px';
+            } else {
+                // Container on the right — modal to the left
+                dialog.style.margin = '48px 0 0 ' + Math.max(8, rect.left - 436) + 'px';
+            }
+        }
+        // else: default positioning (near File menu) — no changes needed
+    }
 
     // Update nav buttons
     var nextBtn = document.getElementById('tutorial-next');
