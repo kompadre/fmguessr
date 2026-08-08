@@ -164,13 +164,16 @@ export function createPianoroll(opts) {
             const x = LABEL_W + n.start * COL_W;
             const y = r * ROW_H;
             const w = n.dur * COL_W - 1;
+            const isActive = !opts.activePatchId || !n.patchId || n.patchId === opts.activePatchId;
             ctx.fillStyle = n.color || PATCH_COLORS[0];
-            ctx.globalAlpha = 0.85;
+            ctx.globalAlpha = isActive ? 0.85 : 0.25;
             ctx.fillRect(x + 1, y + 1, w, ROW_H - 2);
             ctx.globalAlpha = 1.0;
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 0.5;
-            ctx.strokeRect(x + 1, y + 1, w, ROW_H - 2);
+            if (isActive) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(x + 1, y + 1, w, ROW_H - 2);
+            }
         }
 
         // Playback cursor
@@ -211,6 +214,12 @@ export function createPianoroll(opts) {
         return notes.find(n => n.midi === midi && col >= n.start && col < n.start + n.dur);
     }
 
+    function activeNoteAt(row, col) {
+        const midi = NOTES[row].midi;
+        return notes.find(n => n.midi === midi && col >= n.start && col < n.start + n.dur
+            && (!opts.activePatchId || !n.patchId || n.patchId === opts.activePatchId));
+    }
+
     let lastMousePos = null;
     let lastClickTime = 0;
     let lastClickRow = -1;
@@ -226,7 +235,7 @@ export function createPianoroll(opts) {
         if (col < 0) return;
 
         const now = Date.now();
-        const existing = noteAt(row, col);
+        const existing = activeNoteAt(row, col);
 
         // Double-click detection
         if (existing && now - lastClickTime < 350 && row === lastClickRow && Math.abs(col - lastClickCol) <= 1) {
@@ -415,6 +424,7 @@ export function createPianoroll(opts) {
             opts.activeVoiceData = voiceData;
             opts.activeColor = color || null;
             opts.activeChannel = channel ?? null;
+            draw();
         },
         colorForPatch,
     };
