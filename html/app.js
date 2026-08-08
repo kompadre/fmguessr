@@ -591,6 +591,7 @@ document.getElementById('menu-clear-history').addEventListener('click', async ()
     localStorage.removeItem('fmguessr_canvas');
     localStorage.removeItem('fmguessr_jobs');
     localStorage.removeItem('fmguessr_voicebank');
+    localStorage.removeItem('fmguessr_tutorial');
     // Note: demoWasOffered (fmguessr_demo_offered) is intentionally preserved
     canvasStore.clear();
     initCanvas(getCanvasOpts());
