@@ -74,6 +74,7 @@ const STEPS = [
         title: 'Edit Patches',
         highlight: '#piano-dock .dock-tab:nth-child(3)',
         selectTab: '#piano-dock .dock-tab:nth-child(3)',
+        clickElement: '.sky-container .patch-edit-btn',
         noBlur: true,
         illustration: null,
         description:
@@ -163,6 +164,12 @@ function showStep(index) {
     if (step.selectTab) {
         var tab = document.querySelector(step.selectTab);
         if (tab) tab.click();
+    }
+
+    // Click an element if specified (e.g. open a patch in Edit slot)
+    if (step.clickElement) {
+        var clickTarget = document.querySelector(step.clickElement);
+        if (clickTarget) clickTarget.click();
     }
 
     // Highlight target element (with fallback)
