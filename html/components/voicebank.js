@@ -307,8 +307,6 @@ export function createVoiceBank(opts) {
     // Init
     loadState();
     render();
-    // Send snapshot of restored entries to synth
-    if (entries.length > 0) notifySnapshot();
 
     container._addEntry = addEntry;
     container._removeEntry = removeEntry;

@@ -85,6 +85,7 @@ class DX7Processor extends AudioWorkletProcessor {
           for (const v of msg.voices) {
             this.loadPatch(v.data, v.slot);
             this.exp.send_midi(0xC0 | v.channel, v.slot, 0);
+            this.channelPatch[v.channel] = v.slot;
           }
         }
         break;
