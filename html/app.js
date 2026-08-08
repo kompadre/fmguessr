@@ -349,7 +349,10 @@ function getCanvasOpts() {
             }
             pianoDockWrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         },
-        onEdit: (patch) => openEdit(patch),
+        onEdit: (patch) => {
+            openEdit(patch);
+            if (pianoDockWrapper && pianoDockWrapper._showEdit) pianoDockWrapper._showEdit();
+        },
         onPlayOriginal: (jobId) => {
             const job = jobStore.get(jobId);
             if (job && job.id) {
