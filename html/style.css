@@ -1544,8 +1544,8 @@ h1 {
 
 /* VoiceBank */
 .voicebank {
-    min-width: 100px;
-    max-width: 140px;
+    min-width: 160px;
+    max-width: 200px;
     border: 1px solid #333;
     border-radius: 4px;
     background: #12121f;
@@ -1652,6 +1652,42 @@ h1 {
 
 .voicebank-play:hover {
     color: #4caf50;
+}
+
+.voicebank-drag-handle {
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 0.55rem;
+    padding: 0 0.1rem;
+    cursor: grab;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    line-height: 1;
+    letter-spacing: -0.05em;
+    user-select: none;
+}
+
+.voicebank-drag-handle:hover {
+    color: #aaa;
+}
+
+.voicebank-drag-handle:active {
+    cursor: grabbing;
+}
+
+.voicebank-item.dragging {
+    opacity: 0.4;
+    background: #1a2744;
+}
+
+.voicebank-item.drag-over-top {
+    border-top: 2px solid #4caf50;
+}
+
+.voicebank-item.drag-over-bottom {
+    border-bottom: 2px solid #4caf50;
 }
 
 .voicebank-remove {

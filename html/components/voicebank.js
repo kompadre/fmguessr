@@ -113,6 +113,28 @@ export function createVoiceBank(opts) {
                 overlay.style.width = ((entry.volume || DEFAULT_VOLUME) / 127 * 100) + '%';
                 item.appendChild(overlay);
 
+                // Drag handle for reordering
+                const dragHandle = document.createElement('button');
+                dragHandle.className = 'voicebank-drag-handle';
+                dragHandle.textContent = '\u2B0D';
+                dragHandle.title = 'Drag to reorder';
+                dragHandle.draggable = true;
+                dragHandle.addEventListener('click', (e) => e.stopPropagation());
+                dragHandle.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', entry.id);
+                    item.classList.add('dragging');
+                    window._vbDragSourceId = entry.id;
+                });
+                dragHandle.addEventListener('dragend', () => {
+                    item.classList.remove('dragging');
+                    window._vbDragSourceId = null;
+                    list.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => {
+                        el.classList.remove('drag-over-top', 'drag-over-bottom');
+                    });
+                });
+                item.appendChild(dragHandle);
+
                 const playBtn = document.createElement('button');
                 playBtn.className = 'voicebank-play';
                 playBtn.textContent = '\u25B6';
@@ -148,6 +170,38 @@ export function createVoiceBank(opts) {
                     removeEntry(entry.id);
                 });
                 item.appendChild(removeBtn);
+
+                // Reorder drop targets
+                item.addEventListener('dragover', (e) => {
+                    if (!window._vbDragSourceId) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const rect = item.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+                    item.classList.remove('drag-over-top', 'drag-over-bottom');
+                    item.classList.add(e.clientY < midY ? 'drag-over-top' : 'drag-over-bottom');
+                });
+                item.addEventListener('dragleave', () => {
+                    item.classList.remove('drag-over-top', 'drag-over-bottom');
+                });
+                item.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    item.classList.remove('drag-over-top', 'drag-over-bottom');
+                    if (!window._vbDragSourceId) return;
+                    const fromId = window._vbDragSourceId;
+                    const fromIdx = entries.findIndex(en => en.id === fromId);
+                    let toIdx = i;
+                    const rect = item.getBoundingClientRect();
+                    if (e.clientY >= rect.top + rect.height / 2) toIdx = i + 1;
+                    if (fromIdx < 0 || fromIdx === toIdx || fromIdx === toIdx - 1) return;
+                    const [moved] = entries.splice(fromIdx, 1);
+                    if (toIdx > fromIdx) toIdx--;
+                    entries.splice(toIdx, 0, moved);
+                    render();
+                    saveState();
+                    notifySnapshot();
+                });
 
                 // Click to select
                 item.addEventListener('click', (e) => {
