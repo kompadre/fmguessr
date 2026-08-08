@@ -2500,6 +2500,11 @@ footer {
     margin: auto;
 }
 
+.tutorial-dialog .modal-body {
+    max-height: 400px;
+    overflow: auto;
+}
+
 .tutorial-illustration {
     width: 100%;
     height: 160px;
