@@ -124,6 +124,7 @@ export function loadVoice(voiceData, slot) {
     }
 
     // Always send — no dedup (voice bank entries are independent deep copies)
+    console.log('[loadVoice] slot=' + slot + ' patchLen=' + patch.length + ' type=' + typeof voiceData);
     dx7Node.port.postMessage({
         type: 'voice-channel',
         slot: slot,
@@ -190,6 +191,7 @@ export function playNoteOnChannel(channel, midi, velocity = 100) {
     }
 
     dx7Node.port.postMessage({ type: 'midi', data: [0x90 | channel, midi, velocity] });
+    console.log('[playNoteOnChannel] ch=' + channel + ' note=' + midi + ' vel=' + velocity);
     const stop = () => {
         if (dx7Node) dx7Node.port.postMessage({ type: 'midi', data: [0x80 | channel, midi, 0] });
         activeNotes.delete(key);
