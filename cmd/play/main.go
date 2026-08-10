@@ -97,7 +97,7 @@ func main() {
 
 		if slot < 0 {
 			// Play all codebook entries
-			// Load into synth bank (up to 32 at a time for synth compatibility)
+			fmt.Printf("Codebook: %d patches\n", numPatches)
 			playCount := numPatches
 			if playCount > 32 {
 				playCount = 32
@@ -189,6 +189,7 @@ func main() {
 
 		if slot < 0 {
 			// Play all 32 patches
+			fmt.Printf("SYX bank: 32 patches\n")
 			if *outPath != "" {
 				renderBankToWav(synth, nil, 32, midiNote, *outPath)
 			} else {
