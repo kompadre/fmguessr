@@ -18,8 +18,8 @@ import (
 
 const (
 	sampleRate  = 44100
-	bufferSize  = 1024
-	blockSize   = 256
+	bufferSize  = 8192  // ~186ms ring buffer
+	blockSize   = 512   // render block size
 )
 
 var noteNames = map[string]int{
@@ -238,37 +238,42 @@ func playThroughSpeaker(synth *msfa.Synth, midiNote uint8) {
 
 	sustainSamples := int(float64(sampleRate) * 2) // 2 seconds
 
-	// Note On
-	synth.WriteMidi([]byte{0x90, midiNote, 100})
-	fmt.Printf("Note On: %d (velocity 100)\n", midiNote)
-
 	left := make([]float32, blockSize)
 	right := make([]float32, blockSize)
 	pcm := make([]int16, blockSize)
 
-	// Render sustain period — fill ring buffer as aggressively as possible
+	// Pre-fill ring buffer with silence so the callback never starves
+	silence := make([]float32, bufferSize)
+	miniaudio.WriteChannels(silence, silence)
+
+	// Note On
+	synth.WriteMidi([]byte{0x90, midiNote, 100})
+	fmt.Printf("Note On: %d (velocity 100)\n", midiNote)
+
+	// Render sustain period
 	rendered := 0
 	for rendered < sustainSamples {
-		avail := miniaudio.AvailableWriteSpace()
-		if avail == 0 {
-			time.Sleep(time.Millisecond)
-			continue
-		}
-		n := avail
-		if n > blockSize {
-			n = blockSize
-		}
+		n := blockSize
 		if rendered+n > sustainSamples {
 			n = sustainSamples - rendered
 		}
+
+		// Wait for enough space
+		for {
+			if miniaudio.AvailableWriteSpace() >= n {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+
 		synth.GetSamples(pcm[:n])
 		for i := 0; i < n; i++ {
 			f := float32(pcm[i]) / 32768.0
 			left[i] = f
 			right[i] = f
 		}
-		written := miniaudio.WriteChannels(left[:n], right[:n])
-		rendered += written
+		miniaudio.WriteChannels(left[:n], right[:n])
+		rendered += n
 	}
 
 	// Note Off
@@ -278,15 +283,11 @@ func playThroughSpeaker(synth *msfa.Synth, midiNote uint8) {
 	// Drain: render release tail until silence or hard timeout (3 seconds max)
 	drainMax := sampleRate * 3
 	for i := 0; i < drainMax; i += blockSize {
-		avail := miniaudio.AvailableWriteSpace()
-		if avail == 0 {
-			time.Sleep(time.Millisecond)
-			continue
+		n := blockSize
+		if i+n > drainMax {
+			n = drainMax - i
 		}
-		n := avail
-		if n > blockSize {
-			n = blockSize
-		}
+
 		synth.GetSamples(pcm[:n])
 		allZero := true
 		for j := 0; j < n; j++ {
@@ -298,10 +299,18 @@ func playThroughSpeaker(synth *msfa.Synth, midiNote uint8) {
 		if allZero {
 			break
 		}
-		for i := 0; i < n; i++ {
-			f := float32(pcm[i]) / 32768.0
-			left[i] = f
-			right[i] = f
+
+		for {
+			if miniaudio.AvailableWriteSpace() >= n {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		for j := 0; j < n; j++ {
+			f := float32(pcm[j]) / 32768.0
+			left[j] = f
+			right[j] = f
 		}
 		miniaudio.WriteChannels(left[:n], right[:n])
 	}
@@ -408,6 +417,10 @@ func playBankThroughSpeaker(synth *msfa.Synth, count int, midiNote uint8) {
 	right := make([]float32, blockSize)
 	pcm := make([]int16, blockSize)
 
+	// Pre-fill ring buffer with silence
+	silence := make([]float32, bufferSize)
+	miniaudio.WriteChannels(silence, silence)
+
 	for slot := 0; slot < count; slot++ {
 		synth.ChangeProgram(0, uint8(slot))
 
@@ -435,20 +448,21 @@ func playBankThroughSpeaker(synth *msfa.Synth, count int, midiNote uint8) {
 			if rendered+n > totalSamples {
 				n = totalSamples - rendered
 			}
-			synth.GetSamples(pcm[:n])
-			for i := 0; i < n; i++ {
-				f := float32(pcm[i]) / 32768.0
-				left[i] = f
-				right[i] = f
-			}
 
-			// Pace to real-time: wait for the audio device to have space
+			// Wait for enough space
 			for {
 				avail := miniaudio.AvailableWriteSpace()
 				if avail >= n {
 					break
 				}
 				time.Sleep(time.Millisecond)
+			}
+
+			synth.GetSamples(pcm[:n])
+			for i := 0; i < n; i++ {
+				f := float32(pcm[i]) / 32768.0
+				left[i] = f
+				right[i] = f
 			}
 			miniaudio.WriteChannels(left[:n], right[:n])
 			rendered += n
