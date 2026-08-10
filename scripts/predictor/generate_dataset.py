@@ -3,8 +3,8 @@
 Generate probe-parameter training dataset for DX7 NN predictor.
 
 Usage:
-    python scripts/generate_dataset.py [--codebook dx7_codebook.bin] [--output dataset.npz] [--variants 50]
-    python scripts/generate_dataset.py --codebook dx7_codebook.bin --note-min 36 --note-max 84
+    python scripts/predictor/generate_dataset.py [--codebook dx7_codebook.bin] [--output dataset.npz] [--variants 50]
+    python scripts/predictor/generate_dataset.py --codebook dx7_codebook.bin --note-min 36 --note-max 84
 
 This script:
 1. Calls the Go-built `generate` binary to render patches at multiple MIDI notes
@@ -18,7 +18,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import struct
 import math
 import numpy as np
@@ -450,22 +449,28 @@ def main():
     parser.add_argument('--note-max', type=int, default=0, help='Max MIDI note (0=single note mode)')
     parser.add_argument('--note', type=int, default=48, help='Single MIDI note (used when note-min/max not set)')
     parser.add_argument('--variants', type=int, default=50, help='Variants per patch')
-    parser.add_argument('--tmpdir', default=None, help='Temporary directory for rendered WAVs')
+    parser.add_argument('--tmpdir', default=None, help='Temporary directory for rendered WAVs (default: scripts/predictor/renders)')
     parser.add_argument('--skip-render', action='store_true', help='Skip Go rendering, process existing WAVs in --tmpdir')
     args = parser.parse_args()
 
-    # Create temp directory for WAV files
-    tmpdir = args.tmpdir or tempfile.mkdtemp(prefix='fmguessr_probe_')
+    # Default renders directory: scripts/predictor/renders/ (relative to repo root)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
+    default_renders = os.path.join(script_dir, 'renders')
+    tmpdir = args.tmpdir or default_renders
+    os.makedirs(tmpdir, exist_ok=True)
 
     if not args.skip_render:
-        # Check if generate binary exists
-        if not os.path.exists('./generate'):
+        # Check if generate binary exists (look in repo root)
+        generate_bin = os.path.join(repo_root, 'generate')
+        if not os.path.exists(generate_bin):
             print("Building generate binary...")
-            subprocess.run(['go', 'build', '-o', 'generate', './cmd/generate/main.go'], check=True)
+            subprocess.run(['go', 'build', '-o', 'generate', './cmd/generate/main.go'],
+                           check=True, cwd=repo_root)
 
         # Build render command
         cmd = [
-            './generate',
+            generate_bin,
             '--codebook', args.codebook,
             '--outdir', tmpdir,
             '--variants', str(args.variants),
@@ -557,11 +562,6 @@ def main():
 
     file_size = os.path.getsize(args.output) / (1024 * 1024)
     print(f"Dataset saved to {args.output} ({file_size:.1f} MB)")
-
-    # Clean up temp directory
-    if args.tmpdir is None:
-        import shutil
-        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == '__main__':

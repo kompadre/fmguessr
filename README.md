@@ -2,6 +2,8 @@
 
 DX7 FM synthesizer patch matcher. Uses genetic algorithms, formant analysis, CNN classification, MLP prediction, and hill-climbing to match target audio WAV files and generate DX7 `.syx` bank files.
 
+**Browser frontend:** [OpenPatches](https://github.com/kompadre/openpatches) (live at [openpatch.es](https://openpatch.es))
+
 ## Features
 
 - **Formant Candidate Generation:** Extracts spectral envelope peaks (F1/F2/F3) from target, generates DX7 candidates whose FM sidebands match. Zero-render, pure math.
@@ -68,22 +70,28 @@ Flags must come before the WAV path.
 ### Train the MLP Predictor
 
 ```bash
-python scripts/generate_dataset.py --codebook dx7_codebook.bin
-python scripts/train_model.py --dataset dataset.npz --output model.onnx
+python scripts/predictor/generate_dataset.py --codebook dx7_codebook.bin
+python scripts/predictor/train_model.py --dataset scripts/predictor/dataset.npz --output model.onnx
 ```
 
 ### Train the Patch Classifier
 
 ```bash
 ./classifier --codebook dx7_codebook.bin --output dataset_cls.bin --dur 3s
-python scripts/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx
+python scripts/classifier/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx
 ```
 
 ### Train the Audio Encoder (trajectory distance)
 
 ```bash
-python scripts/generate_encoder_dataset.py --codebook dx7_codebook.bin --outdir encoder_wavs
-python scripts/train_audio_encoder.py --datadir encoder_wavs --output encoder.onnx --epochs 100
+python scripts/encoder/generate_encoder_dataset.py --codebook dx7_codebook.bin --outdir encoder_wavs
+python scripts/encoder/train_audio_encoder.py --datadir encoder_wavs --output encoder.onnx --epochs 100
+```
+
+### Train All Models
+
+```bash
+make -f scripts/Makefile all
 ```
 
 ### Index a Codebook
@@ -102,7 +110,14 @@ python scripts/train_audio_encoder.py --datadir encoder_wavs --output encoder.on
 
 - `POST /api/probe` — Analyze WAV envelope/pitch/formants instantly
 - `POST /api/match` — Async matching (returns job ID, poll `GET /api/status/:id`)
+- `POST /api/play` — Render patch to WAV
+- `POST /api/voice` — Extract voice data from .syx
+- `POST /api/morph` — Morph two patches with spectral optimization
+- `POST /api/export-syx` — Export patches as .syx bank
+- `GET /api/health` — Server health check
 - `GET /exports/*` — Static files with CORS
+
+See [API.md in openpatches](https://github.com/kompadre/openpatches/blob/main/API.md) for full request/response schemas.
 
 ## Architecture
 

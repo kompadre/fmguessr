@@ -3,8 +3,8 @@
 Train DX7 Multi-Head Parameter Estimator and export to ONNX.
 
 Usage:
-    python scripts/train_model.py [--dataset dataset.npz] [--output model_probe.onnx] [--epochs 100]
-    python scripts/train_model.py --dataset dataset.npz --output model_probe.onnx --dx7-weight 2.0
+    python scripts/predictor/train_model.py [--dataset dataset.npz] [--output model_probe.onnx] [--epochs 100]
+    python scripts/predictor/train_model.py --dataset dataset.npz --output model_probe.onnx --dx7-weight 2.0
 
 Multi-head architecture:
     Head 1 (probes): 9 acoustic parameters (ADSR, brightness, harmonicity, pitch)

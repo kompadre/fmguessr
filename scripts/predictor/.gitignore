@@ -1,0 +1,4 @@
+renders/
+*.npz
+*.pth
+*.onnx

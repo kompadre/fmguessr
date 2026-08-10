@@ -1,0 +1,3 @@
+renders/
+encoder_wavs/
+*.onnx
