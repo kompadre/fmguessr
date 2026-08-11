@@ -67,14 +67,24 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 		bestCodebookDist := math.MaxFloat64
 		var bestCodebookCand *Candidate
 		allMatches := append(fpMatches, timMatches...)
+
+		// Build knnMap: best candidate per algorithm for GA island seeding
+		knnMap := make(map[uint8]*Candidate)
+		knnMapDists := make(map[uint8]float64)
 		for _, matchCand := range allMatches {
 			dist := matchCand.Scores[ScoreTimbre]
+			algo := matchCand.Algorithm
+			if existing, ok := knnMapDists[algo]; !ok || dist < existing {
+				knnMap[algo] = matchCand
+				knnMapDists[algo] = dist
+			}
 			if dist < bestCodebookDist {
 				bestCodebookDist = dist
 				bestCodebookCand = matchCand.Copy()
 				bestCodebookCand.Fitness = dist
 			}
 		}
+		in.State.KNNMap = knnMap
 		if bestCodebookCand != nil {
 			result.Cohort.Best = *bestCodebookCand
 		}
@@ -97,15 +107,23 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 			knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 			bestCodebookDist := math.MaxFloat64
 			var bestCodebookCand *Candidate
+			knnMap := make(map[uint8]*Candidate)
+			knnMapDists := make(map[uint8]float64)
 			for i, matchCand := range knnMatches {
 				matchCand.Scores[ScoreTimbre] = knnFits[i]
 				matchCand.Fitness = knnFits[i]
+				algo := matchCand.Algorithm
+				if existing, ok := knnMapDists[algo]; !ok || knnFits[i] < existing {
+					knnMap[algo] = matchCand
+					knnMapDists[algo] = knnFits[i]
+				}
 				if knnFits[i] < bestCodebookDist {
 					bestCodebookDist = knnFits[i]
 					bestCodebookCand = matchCand.Copy()
 					bestCodebookCand.Fitness = knnFits[i]
 				}
 			}
+			in.State.KNNMap = knnMap
 			for i := 0; i < len(knnMatches) && i < MaxCohortLen; i++ {
 				result.Cohort.Timbral[i] = *knnMatches[i]
 			}

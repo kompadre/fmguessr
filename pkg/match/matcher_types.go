@@ -55,6 +55,7 @@ type MatcherState struct {
 	FormantPeaks  []FormantPeak
 	ClassifierMap map[uint8]int
 	LiveOptBest   *Candidate
+	KNNMap        map[uint8]*Candidate // codebook best per algorithm, populated by CodebookSearch
 }
 
 type MatcherInput struct {
@@ -66,7 +67,7 @@ type MatcherInput struct {
 	Pool      *CandidatePool
 	Codebook  *Codebook
 	TimbreCB  *TimbreCodebook
-	State     MatcherState
+	State     *MatcherState
 }
 
 type MatcherResult struct {

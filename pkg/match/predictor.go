@@ -220,6 +220,7 @@ func (p *Predictor) resultToCandidate(result PredictResult) *Candidate {
 		Algorithm: 14, // Default Algorithm 15 (0-indexed)
 		Feedback:  uint8(math.Round(result.Feedback * 7.0)),
 		Fitness:   math.MaxFloat64,
+		Scores:    nanScores(),
 	}
 
 	for op := 0; op < 6; op++ {
@@ -619,6 +620,7 @@ func (p *ProbePredictor) dx7ToCandidate(dx7 []float32, midiNote int) *Candidate 
 		Algorithm: uint8(clamp(sigmoid(dx7[0])*31, 0, 31)),
 		Feedback:  uint8(clamp(sigmoid(dx7[49])*7, 0, 7)),
 		Fitness:   math.MaxFloat64,
+		Scores:    nanScores(),
 	}
 
 	// DX7 operator order in labels: Op6 (idx 0) → Op1 (idx 5)
@@ -761,6 +763,7 @@ func (p *ProbePredictor) probeToCandidate(result ProbePredictResult, spec [Timbr
 		Feedback:  feedback,
 		Ops:       ops,
 		Fitness:   math.MaxFloat64,
+		Scores:    nanScores(),
 	}
 
 	// Pitch envelope defaults

@@ -196,7 +196,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			Pool:      &pool,
 			Codebook:  cb,
 			TimbreCB:  timbreCB,
-			State:     state,
+			State:     &state,
 		}
 
 		result := step.Run(ctx, in)

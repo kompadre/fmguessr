@@ -33,7 +33,12 @@ func (s *GAStep) Run(ctx context.Context, in MatcherInput) MatcherResult {
 	candidatesPerIsland := popSize / 32
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	knnMap := make(map[uint8]*Candidate)
+
+	// Use codebook knnMap from state (populated by CodebookSearch)
+	knnMap := in.State.KNNMap
+	if knnMap == nil {
+		knnMap = make(map[uint8]*Candidate)
+	}
 
 	islands := make([][]*Candidate, 32)
 	islandFits := make([][]float64, 32)
@@ -142,6 +147,22 @@ nicheLoop:
 	}
 
 	if ctx.Err() != nil {
+		// Budget exhausted after niche phase — return best from niche islands
+		bestIslandFit := math.MaxFloat64
+		var bestIslandCand *Candidate
+		for algo := 0; algo < 32; algo++ {
+			if islandGAs[algo] != nil {
+				ib := islandGAs[algo].Best()
+				if ib != nil && ib.Fitness < bestIslandFit {
+					bestIslandFit = ib.Fitness
+					bestIslandCand = ib
+				}
+			}
+		}
+		if bestIslandCand != nil {
+			result.Cohort.Best = *bestIslandCand
+			result.Cohort.Best.Fitness = bestIslandFit
+		}
 		goto finalizeGA
 	}
 

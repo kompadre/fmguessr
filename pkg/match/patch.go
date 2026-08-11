@@ -412,6 +412,7 @@ func (c *Candidate) Mutate(rng *rand.Rand) *Candidate {
 func Crossover(a, b *Candidate, rng *rand.Rand) *Candidate {
 	child := &Candidate{
 		Fitness: math.MaxFloat64, // Mark as unevaluated
+		Scores:  nanScores(),
 	}
 
 	if rng.Intn(2) == 0 {
