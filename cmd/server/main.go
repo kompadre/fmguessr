@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -121,7 +122,13 @@ func NewServer(cfg ServerConfig) *Server {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin == "" || isLocalhostOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
@@ -131,6 +138,37 @@ func corsMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// isLocalhostOrigin returns true if the origin URL points to a local address.
+func isLocalhostOrigin(origin string) bool {
+	// Match http://localhost, http://127.0.0.1, http://[::1], with any port
+	for _, prefix := range []string{
+		"http://localhost:", "https://localhost:",
+		"http://127.0.0.1:", "https://127.0.0.1:",
+		"http://[::1]:", "https://[::1]:",
+		"http://localhost", "https://localhost",
+	} {
+		if strings.HasPrefix(origin, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// safeSyxPath resolves a user-supplied syx_url to an absolute path within
+// the export directory. Returns an error if the path escapes the export dir.
+func safeSyxPath(exportDir, syxURL string) (string, error) {
+	rel := strings.TrimPrefix(syxURL, "/exports/")
+	cleaned := filepath.Clean(filepath.Join(exportDir, rel))
+	absExport := filepath.Clean(exportDir) + string(os.PathSeparator)
+	if !strings.HasPrefix(cleaned, absExport) && cleaned != filepath.Clean(exportDir) {
+		return "", fmt.Errorf("path traversal rejected: %q", syxURL)
+	}
+	return cleaned, nil
+}
+
+// validJobID matches the format job_<unix_ts>_<microsecond_frac> with bounded digits.
+var validJobID = regexp.MustCompile(`^job_\d{1,10}_\d{1,6}$`)
 
 // workerLoop processes jobs sequentially one at a time
 func (s *Server) workerLoop() {
@@ -449,6 +487,22 @@ func (s *Server) cleanupLoop() {
 				}
 			}
 		}
+
+		// Prune stale play/morph/export directories (>1 hour old)
+		entries, _ := os.ReadDir(s.exportDir)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasPrefix(name, "play_") || strings.HasPrefix(name, "morph_") || strings.HasPrefix(name, "export_") {
+				dirPath := filepath.Join(s.exportDir, name)
+				info, err := os.Stat(dirPath)
+				if err == nil && now.Sub(info.ModTime()) > 1*time.Hour {
+					os.RemoveAll(dirPath)
+				}
+			}
+		}
 	}
 }
 
@@ -560,8 +614,8 @@ func (s *Server) handleMatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimPrefix(r.URL.Path, "/api/status/")
-	if jobID == "" {
-		http.Error(w, `{"error":"Missing job ID"}`, http.StatusBadRequest)
+	if jobID == "" || !validJobID.MatchString(jobID) {
+		http.Error(w, `{"error":"Invalid job ID format"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -762,7 +816,11 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Read from .syx file
-		syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(req.SyxURL, "/exports/"))
+		syxPath, pathErr := safeSyxPath(s.exportDir, req.SyxURL)
+		if pathErr != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, pathErr), http.StatusBadRequest)
+			return
+		}
 		syxData, err := os.ReadFile(syxPath)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
@@ -841,7 +899,11 @@ func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(req.SyxURL, "/exports/"))
+	syxPath, pathErr := safeSyxPath(s.exportDir, req.SyxURL)
+	if pathErr != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, pathErr), http.StatusBadRequest)
+		return
+	}
 	syxData, err := os.ReadFile(syxPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
@@ -1003,7 +1065,11 @@ func (s *Server) handleExportSyx(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			syxPath := filepath.Join(s.exportDir, strings.TrimPrefix(p.SyxURL, "/exports/"))
+			syxPath, pathErr := safeSyxPath(s.exportDir, p.SyxURL)
+			if pathErr != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"%v"}`, pathErr), http.StatusBadRequest)
+				return
+			}
 			syxData, err := os.ReadFile(syxPath)
 			if err != nil {
 				http.Error(w, fmt.Sprintf(`{"error":"cannot read .syx: %v"}`, err), http.StatusNotFound)
