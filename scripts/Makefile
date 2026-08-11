@@ -16,6 +16,7 @@
 	classifier classifier-render classifier-train
 
 CODEBOOK ?= dx7_codebook.bin
+PYTHON ?= ./scripts/.venv/bin/python
 
 # ──────────────────────────────────────────────
 # MLP Predictor (timbre → DX7 parameters)
@@ -25,19 +26,19 @@ predictor: predictor-dataset predictor-train predictor-export
 
 predictor-dataset:
 	@echo "=== Generating predictor dataset ==="
-	python scripts/predictor/generate_dataset.py \
+	$(PYTHON) scripts/predictor/generate_dataset.py \
 		--codebook $(CODEBOOK) \
 		--output scripts/predictor/dataset.npz
 
 predictor-train:
 	@echo "=== Training MLP predictor ==="
-	python scripts/predictor/train_model.py \
+	$(PYTHON) scripts/predictor/train_model.py \
 		--dataset scripts/predictor/dataset.npz \
 		--output scripts/predictor/model_best.pth
 
 predictor-export:
 	@echo "=== Exporting predictor to ONNX ==="
-	python scripts/predictor/reexport.py
+	$(PYTHON) scripts/predictor/reexport.py
 
 # ──────────────────────────────────────────────
 # Audio Encoder (1D ResNet, trajectory distance)
@@ -47,13 +48,13 @@ encoder: encoder-render encoder-train encoder-export
 
 encoder-render:
 	@echo "=== Rendering encoder WAVs ==="
-	python scripts/encoder/generate_encoder_dataset.py \
+	$(PYTHON) scripts/encoder/generate_encoder_dataset.py \
 		--codebook $(CODEBOOK) \
 		--outdir scripts/encoder/encoder_wavs
 
 encoder-train:
 	@echo "=== Training audio encoder ==="
-	python scripts/encoder/train_audio_encoder.py \
+	$(PYTHON) scripts/encoder/train_audio_encoder.py \
 		--datadir scripts/encoder/encoder_wavs \
 		--output scripts/encoder/encoder.onnx \
 		--epochs 100
@@ -75,7 +76,7 @@ classifier-render:
 
 classifier-train:
 	@echo "=== Training patch classifier ==="
-	python scripts/classifier/train_classifier.py \
+	$(PYTHON) scripts/classifier/train_classifier.py \
 		--dataset scripts/classifier/dataset_cls.bin \
 		--output scripts/classifier/patch_classifier.onnx
 
@@ -84,10 +85,10 @@ classifier-train:
 # ──────────────────────────────────────────────
 
 predictor-test:
-	python scripts/predictor/g0.py --dataset scripts/predictor/dataset.npz
+	$(PYTHON) scripts/predictor/g0.py --dataset scripts/predictor/dataset.npz
 
 predictor-check:
-	python scripts/predictor/quickcheck.py
+	$(PYTHON) scripts/predictor/quickcheck.py
 
 all: predictor encoder classifier
 

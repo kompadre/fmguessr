@@ -17,6 +17,7 @@
 - Never export `malloc`/`free` from WASM. Use static pre-allocated buffers (`get_patch_buffer()`, `load_voice_from_buffer()`).
 - AudioManager is a singleton — `initAudio()` runs once. Never re-call `addModule()` after initial setup.
 - Shutdown is disabled for testing — `shutdownAll()`, `setPianorollStop()`, `extendIdle()` are no-ops.
+- `evaluateBatchParallel` takes `ctx context.Context` as its first parameter. Always pass it through from the enclosing function.
 
 ## Git & Version Control Rules
 
@@ -41,14 +42,49 @@ go test -race ./pkg/match/...        # Race detector
 
 `fmguessr` matches DX7 FM patches to target audio via genetic algorithms.
 
-**Pipeline:** Codebook KNN → Formant candidates → NN prediction → Classifier → GA (32-island niche → global convergence → settle → hill-climbing → formant refinement)
+### Matcher Pipeline
 
-**Key constraints:**
-- DX7 patch: 128 bytes, Op6 first. `Encode()` overlays tuned params onto `RawBase`, preserving LFO/PitchEnv/Scaling.
-- `RenderCandidate` creates a fresh MSFA synth per call. `evaluateBatchParallel` uses `GOMAXPROCS` workers.
-- `Candidate.Fitness = math.MaxFloat64` means unevaluated (zero-value = false perfect match).
+`Run()` in `matcher.go` executes a pipeline of `Matcher` steps. Each step receives a `MatcherInput` (target audio, features, config, cohort snapshot, candidate pool, shared state) and returns a `MatcherResult` (partial `ResultsCohort`, `EarlyReturn` flag, `Err`). After each step, `Reconcile()` merges results into the shared cohort. Steps can request early return (e.g., classifier high-confidence, exact codebook match).
+
+```go
+type Matcher interface {
+    Name() string
+    Run(ctx context.Context, in MatcherInput) MatcherResult
+}
+```
+
+**Pipeline steps** (in order, each in its own `matcher_*.go` file):
+1. `CodebookSearch` — dual codebook KNN (fingerprint + timbre), populates `State.KNNMap`
+2. `FormantGenerate` — spectral envelope → DX7 candidates, populates `State.FormantPeaks`
+3. `NNPredict` — MLP probe predictor, populates `State.NNCandidates`
+4. `NNRefine` — LiveOptimizer + DiffOptimizer on best NN, populates `State.LiveOpt`
+5. `BeamSearch` — constructive beam search, populates `State.BeamResult`
+6. `CSPOAStep` — progressive operator attachment
+7. `ClassifierStep` — ONNX CNN classifier, can early-return on high confidence
+8. `GAStep` — 32-island niche GA → global convergence (uses Pool + KNNMap + NNCandidates + BeamResult + LiveOpt for seeding)
+9. `HillClimbStep` — LiveOptimizer + DiffOptimizer on GA best
+10. `FormantRefineStep` — formant-constrained refinement
+
+**Key types** (`matcher_types.go`):
+- `ResultsCohort` — Best + Timbral[5] + Full[5] + Formant[5] (fixed-size arrays, zero-allocation)
+- `CandidatePool` — fixed 1024-slot pool of `Candidate` values
+- `MatcherState` — shared mutable state between steps (NNCandidates, FormantPeaks, KNNMap, BeamResult, LiveOpt, etc.)
+- `Reconcile(other ResultsCohort)` — sorted insert with dedup by `Encode()`
+
+### Candidate Layout
+
+- `RawBase [128]byte` — fixed-size DX7 patch template. `NoRawBase` (all zeros) = no template.
+- `Scores [NumScoreTypes]float64` — indexed by `ScoreTimbre`, `ScoreTemporal`, `ScoreFormant`. `math.NaN()` = not scored.
+- `EmptyCandidate` — zero-value sentinel for uninitialized pool/cohort slots.
+- `nanScores()` — returns a Scores array initialized to NaN.
+- `Fitness = math.MaxFloat64` means unevaluated.
+- `Encode()` overlays tuned params onto `RawBase` (or `epiano` default), preserving LFO/PitchEnv/Scaling.
+
+### Key constraints
+
+- `RenderCandidate` creates a fresh MSFA synth per call. `evaluateBatchParallel` uses `GOMAXPROCS` workers and accepts `ctx context.Context` for mid-batch cancellation.
 - `microMutate`/`envelopeMutate` must receive `rng` (constant seed kills diversity).
-- `cachedTargetMel` is local to `Run()`, passed to `evaluateBatchParallel` — never global.
+- `cachedTargetMel` is local to `Run()`, passed via `MatcherInput.TargetMel` — never global.
 - Render duration capped at 3.0s. Target WAV truncated on load.
 - REST API: single-worker queue, 5 jobs max, 800KB upload limit.
 
@@ -84,7 +120,7 @@ go test -race ./pkg/match/...        # Race detector
 **Caching:**
 - Mel filterbank: `getMelFilterbank()` via `sync.Once`.
 - Hann windows: `getHannWindow()` via `sync.Map`.
-- Elite signatures: `EliteCohort.TryInsert` caches `Encode()` results.
+- Elite signatures: `ResultsCohort.Reconcile` dedup by `Encode()`.
 - Session files: `exports/sessions/<hash>.bin`, atomic write, pruned after 1h.
 
 **Frontend (Vanilla JS, no framework):**
@@ -103,4 +139,12 @@ go test -race ./pkg/match/...        # Race detector
 - `html/synth/dx7-processor.js`: AudioWorkletProcessor wrapping MSFA DX7 engine. Handles `voice-snapshot`, `midi`, `patch`, `play-samples`, `channel-volume` messages.
 - WASM: `html/synth/wasm/msfa.wasm` (zig c++ build). Binary fetched on main thread, passed to AudioWorklet via `processorOptions`. Static buffers: `get_patch_buffer()`, `load_voice_from_buffer()`. Voice stealing with 64-sample fade-out.
 
+**Server security:**
+- `safeSyxPath()` validates resolved paths stay within export directory (blocks path traversal).
+- Job ID validated against `^job_\d{1,10}_\d{1,6}$` before filesystem access.
+- CORS: localhost origins get `*`, non-localhost get reflected origin.
+- Cleanup loop prunes `job_*`, `play_*`, `morph_*`, `export_*` directories after 1h.
+
 **Deploy:** `make deploy` stages to `deploy/app/`. Docker via `deploy/Dockerfile` + `deploy/docker-compose.yml`.
+
+**Training:** `scripts/Makefile` uses configurable `PYTHON ?= python3`. Override with `make PYTHON=/path/to/python3.11`.

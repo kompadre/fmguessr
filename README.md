@@ -6,14 +6,17 @@ DX7 FM synthesizer patch matcher. Uses genetic algorithms, formant analysis, CNN
 
 ## Features
 
+- **Matcher Pipeline:** Modular 10-step pipeline — each step is a `Matcher` interface with early-return support, reconciled into a shared `ResultsCohort` after each step.
 - **Formant Candidate Generation:** Extracts spectral envelope peaks (F1/F2/F3) from target, generates DX7 candidates whose FM sidebands match. Zero-render, pure math.
 - **Formant-Constrained Refinement:** Optimizes candidates on formant distance while keeping mel distance within 10% tolerance.
-- **CNN Patch Classifier:** 128×128 mel spectrogram → CNN → identifies presets from codebook.
+- **CNN Patch Classifier:** 128×128 mel spectrogram → CNN → identifies presets from codebook. Can short-circuit the pipeline on high confidence (≥0.99).
 - **MLP Predictor (~2ms):** Predicts DX7 parameters from 256-bin timbre spectrum.
-- **Preset Codebook:** KNN lookup via timbre distance for instant GA seeding.
-- **32-Island GA:** Niche evolution across algorithm topologies → global convergence → settle phase.
+- **Preset Codebook:** Dual KNN lookup (fingerprint + timbre) for instant GA seeding.
+- **32-Island GA:** Niche evolution across algorithm topologies → global convergence → settle phase. Seeded from codebook, NN, beam search, and LiveOptimizer results.
 - **LiveOptimizer:** Multi-threaded hill-climbing with acceleration trough cacher.
 - **DiffOptimizer:** Jacobian steering on temporal timbre features.
+- **Beam Search:** Constructive operator-by-operator patch building.
+- **CSPOA:** Codebook-seeded progressive operator attachment.
 - **Trajectory Distance (dormant):** 1D ResNet encoder for temporal perception. Infrastructure exists but auto-disables due to scale mismatch with mel.
 - **Template Preservation:** LFO, pitch envelopes, and scaling from matched presets preserved.
 
@@ -67,31 +70,21 @@ Flags must come before the WAV path.
 ./play result.syx 0 C3 -o match.wav
 ```
 
-### Train the MLP Predictor
+### Train Models
+
+Training uses `scripts/Makefile` with configurable Python:
 
 ```bash
-python scripts/predictor/generate_dataset.py --codebook dx7_codebook.bin
-python scripts/predictor/train_model.py --dataset scripts/predictor/dataset.npz --output model.onnx
-```
-
-### Train the Patch Classifier
-
-```bash
-./classifier --codebook dx7_codebook.bin --output dataset_cls.bin --dur 3s
-python scripts/classifier/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx
-```
-
-### Train the Audio Encoder (trajectory distance)
-
-```bash
-python scripts/encoder/generate_encoder_dataset.py --codebook dx7_codebook.bin --outdir encoder_wavs
-python scripts/encoder/train_audio_encoder.py --datadir encoder_wavs --output encoder.onnx --epochs 100
-```
-
-### Train All Models
-
-```bash
+# Train all models
 make -f scripts/Makefile all
+
+# Override Python interpreter
+make -f scripts/Makefile PYTHON=/path/to/python3.11 predictor
+
+# Individual pipelines
+make -f scripts/Makefile predictor       # MLP predictor (generate + train + export)
+make -f scripts/Makefile encoder         # Audio encoder (render + train + export)
+make -f scripts/Makefile classifier      # Patch classifier (render + train + export)
 ```
 
 ### Index a Codebook
@@ -115,7 +108,7 @@ make -f scripts/Makefile all
 - `POST /api/morph` — Morph two patches with spectral optimization
 - `POST /api/export-syx` — Export patches as .syx bank
 - `GET /api/health` — Server health check
-- `GET /exports/*` — Static files with CORS
+- `GET /exports/*` — Static files (server-generated only, no user uploads stored)
 
 See [API.md in openpatches](https://github.com/kompadre/openpatches/blob/main/API.md) for full request/response schemas.
 
@@ -123,18 +116,18 @@ See [API.md in openpatches](https://github.com/kompadre/openpatches/blob/main/AP
 
 ```
 target.wav
-  ├─→ Feature Extraction (pitch, envelope, brightness, harmonicity)
-  ├─→ Formant Extraction (F1/F2/F3 from spectral envelope)
-  ├─→ Formant Candidate Generation (map F1/F2/F3 → DX7 operator ratios)
-  ├─→ Dual Codebook Search (fingerprint KNN + timbre KNN)
-  ├─→ [Optional] MLP Predictor (timbre → DX7 params)
-  ├─→ [Optional] CNN Classifier (mel spectrogram → patch prediction)
-  ├─→ 32-Island Niche GA
-  │     ├─ Phase 1: Niche evolution (algorithm-locked islands)
-  │     ├─ Phase 2: Global convergence (cross-island migration)
-  │     ├─ Settle: 5 quiet generations to confirm convergence
-  │     └─ Phase 3: LiveOptimizer + DiffOptimizer refinement
-  ├─→ Formant-Constrained Refinement (minimize formant dist, mel ≤ 110%)
+  ├─→ Matcher Pipeline (10 steps, each reconciled into ResultsCohort):
+  │     1. CodebookSearch    — dual KNN (fingerprint + timbre)
+  │     2. FormantGenerate   — spectral envelope → DX7 candidates
+  │     3. NNPredict         — MLP probe predictor
+  │     4. NNRefine          — LiveOptimizer + DiffOptimizer on best NN
+  │     5. BeamSearch        — constructive operator-by-operator
+  │     6. CSPOAStep         — progressive operator attachment
+  │     7. ClassifierStep    — ONNX CNN (can early-return on conf ≥ 0.99)
+  │     8. GAStep            — 32-island niche → global convergence
+  │     9. HillClimbStep     — LiveOptimizer + DiffOptimizer on GA best
+  │    10. FormantRefineStep — formant-constrained refinement
+  ├─→ Finalize: rescue → top-32 assembly → carrier calibration → temporal re-eval
   └─→ DX7 .syx export (top-32 candidates from diverse sources)
 ```
 
@@ -147,6 +140,13 @@ The matcher produces 5 result categories:
 - **FullTop5** — Best by temporal distance (DiffOptimizer-refined)
 - **FormantTop5** — Best by formant-constrained refinement
 - **Favorites** — Candidates appearing in both TimbralTop5 and FullTop5
+
+## Key Types
+
+- `Candidate` — DX7 patch with `RawBase [128]byte`, `Scores [NumScoreTypes]float64`, `Fitness`
+- `ResultsCohort` — Best + Timbral[5] + Full[5] + Formant[5] (fixed-size arrays)
+- `CandidatePool` — 1024-slot pre-allocated pool (zero-allocation)
+- `Matcher` interface — `Name() string` + `Run(ctx, MatcherInput) MatcherResult`
 
 ## License
 
