@@ -341,11 +341,11 @@ func DecodeVoicePatch(patch []byte) *Candidate {
 		Algorithm: patch[110] & 0x1F,
 		Feedback:  patch[111] & 0x07,
 		Fitness:   math.MaxFloat64,
+		Scores:    nanScores(),
 	}
 
 	if len(patch) >= 128 {
-		c.RawBase = make([]byte, 128)
-		copy(c.RawBase, patch[:128])
+		copy(c.RawBase[:], patch[:128])
 		// Extract voice name from bytes 118-127
 		name := string(patch[118:128])
 		// Trim trailing spaces

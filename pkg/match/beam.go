@@ -722,9 +722,8 @@ func exploreCodebookForStep(
 			}
 
 			// Copy LFO/scaling from codebook RawBase
-			if len(t1.entry.Candidate.RawBase) == 128 {
-				cand.RawBase = make([]byte, 128)
-				copy(cand.RawBase, t1.entry.Candidate.RawBase)
+			if t1.entry.Candidate.RawBase != NoRawBase {
+				cand.RawBase = t1.entry.Candidate.RawBase // value copy
 				cand.RawBase[110] = cand.Algorithm
 			}
 
@@ -843,9 +842,8 @@ func exploreCodebookForStep(
 					MuteOperator(cand, opIdx)
 				}
 			}
-			if len(t1.entry.Candidate.RawBase) == 128 {
-				cand.RawBase = make([]byte, 128)
-				copy(cand.RawBase, t1.entry.Candidate.RawBase)
+			if t1.entry.Candidate.RawBase != NoRawBase {
+				cand.RawBase = t1.entry.Candidate.RawBase // value copy
 				cand.RawBase[110] = cand.Algorithm
 			}
 			batch[i] = cand

@@ -31,6 +31,29 @@ var initVoice = func() []byte {
 	return v
 }()
 
+// NoRawBase is the sentinel value for RawBase indicating no template.
+var NoRawBase [128]byte
+
+// EmptyCandidate is the zero-value sentinel for uninitialized pool/cohort slots.
+var EmptyCandidate Candidate
+
+// Score type indices for Candidate.Scores array.
+const (
+	ScoreTimbre   = 0
+	ScoreTemporal = 1
+	ScoreFormant  = 2
+	NumScoreTypes = 3
+)
+
+// nanScores returns a Scores array initialized to NaN (not scored).
+func nanScores() [NumScoreTypes]float64 {
+	var s [NumScoreTypes]float64
+	for i := range s {
+		s[i] = math.NaN()
+	}
+	return s
+}
+
 // OpParams holds the tunable parameters for a single DX7 operator.
 type OpParams struct {
 	Mode        uint8 // 0=ratio, 1=fixed
@@ -81,9 +104,10 @@ type Candidate struct {
 	Algorithm uint8 // 0-31
 	Ops       [6]OpParams
 	Feedback  uint8  // 0-7
-	RawBase   []byte // Optional 128-byte base template (e.g. from preset codebook)
-	Fitness   float64 // Cached spectral distance (math.MaxFloat64 = unevaluated)
-	Name      string  // Voice name (max 10 chars, used in .syx export)
+	RawBase   [128]byte // DX7 128-byte base template; NoRawBase (all zeros) = none
+	Fitness   float64   // Cached spectral distance (math.MaxFloat64 = unevaluated)
+	Name      string    // Voice name (max 10 chars, used in .syx export)
+	Scores    [NumScoreTypes]float64
 
 	// Pitch Envelope Generator (Pitch EG)
 	PitchRate1  uint8 // 0-99 (default 99)
@@ -105,6 +129,7 @@ func RandomCandidate(rng *rand.Rand) *Candidate {
 		PitchRate1:  99,
 		PitchLevel1: 50,
 		PitchLevel2: 50,
+		Scores:      nanScores(),
 	}
 	for i := 0; i < 6; i++ {
 		c.Ops[i] = OpParams{
@@ -145,10 +170,8 @@ func (c *Candidate) Copy() *Candidate {
 	d.Ops = c.Ops
 	d.Direction = c.Direction
 	d.Velocity = c.Velocity
-	if len(c.RawBase) == 128 {
-		d.RawBase = make([]byte, 128)
-		copy(d.RawBase, c.RawBase)
-	}
+	d.RawBase = c.RawBase // value copy of [128]byte
+	d.Scores = c.Scores   // value copy of [NumScoreTypes]float64
 	return d
 }
 
@@ -156,7 +179,7 @@ func (c *Candidate) Copy() *Candidate {
 // from RawBase into Ops[]. Call after attaching a RawBase template so Encode() preserves
 // the template's envelope shaping instead of using zero defaults.
 func (c *Candidate) CopyEnvelopeFromRawBase() {
-	if len(c.RawBase) != 128 {
+	if c.RawBase == NoRawBase {
 		return
 	}
 	for op := 0; op < 6; op++ {
@@ -172,8 +195,8 @@ func (c *Candidate) CopyEnvelopeFromRawBase() {
 // Non-tuned parameters are filled from RawBase template (or epiano defaults).
 func (c *Candidate) Encode() []byte {
 	patch := make([]byte, 128)
-	if len(c.RawBase) == 128 {
-		copy(patch, c.RawBase)
+	if c.RawBase != NoRawBase {
+		copy(patch, c.RawBase[:])
 	} else {
 		copy(patch, epiano)
 	}
@@ -195,7 +218,7 @@ func (c *Candidate) Encode() []byte {
 		patch[base+7] = opP.Level4
 
 		// Fill default envelope stages if no RawBase template was provided
-		if len(c.RawBase) != 128 {
+		if c.RawBase == NoRawBase {
 			if opP.Level3 != 0 {
 				patch[base+2] = opP.Rate2  // R3 = R2
 				patch[base+5] = opP.Level3 // L2 = L3
@@ -597,6 +620,7 @@ func SineBase() *Candidate {
 		PitchRate1:  99,
 		PitchLevel1: 50,
 		PitchLevel2: 50,
+		Scores:      nanScores(),
 	}
 	for i := 0; i < 5; i++ {
 		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
@@ -618,6 +642,7 @@ func SquareBase() *Candidate {
 		PitchRate1:  99,
 		PitchLevel1: 50,
 		PitchLevel2: 50,
+		Scores:      nanScores(),
 	}
 	for i := 0; i < 4; i++ {
 		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
@@ -640,6 +665,7 @@ func SawtoothBase() *Candidate {
 		PitchRate1:  99,
 		PitchLevel1: 50,
 		PitchLevel2: 50,
+		Scores:      nanScores(),
 	}
 	for i := 0; i < 4; i++ {
 		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
@@ -662,6 +688,7 @@ func TriangleBase() *Candidate {
 		PitchRate1:  99,
 		PitchLevel1: 50,
 		PitchLevel2: 50,
+		Scores:      nanScores(),
 	}
 	for i := 0; i < 4; i++ {
 		c.Ops[i] = OpParams{Mode: 0, FreqCoarse: 1, FreqFine: 0, OutputLevel: 0, Rate1: 99, Rate2: 99, Level3: 99, Rate4: 99}
@@ -690,7 +717,7 @@ func DefaultWaveformSeeds() []*Candidate {
 // pitch envelope flat, and no keyboard scaling. Used as the starting point for
 // constructive beam search so there are no hidden biases from existing presets.
 func InitVoice() *Candidate {
-	base := make([]byte, 128)
+	var base [128]byte
 
 	// Fill all 6 operator blocks (17 bytes each) with silent defaults
 	for op := 0; op < 6; op++ {
@@ -735,6 +762,7 @@ func InitVoice() *Candidate {
 		PitchRate1:  99,
 		PitchLevel1: 50,
 		PitchLevel2: 50,
+		Scores:      nanScores(),
 	}
 	for i := 0; i < 6; i++ {
 		c.Ops[i] = OpParams{OutputLevel: 0, Level3: 0, Rate1: 99, Rate2: 99, Rate3: 99, Level1: 99, Level2: 0, Level4: 0, Rate4: 0}

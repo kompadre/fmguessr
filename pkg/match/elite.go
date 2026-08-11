@@ -6,8 +6,9 @@ import "math"
 // Candidates are inserted incrementally as they are produced by each pipeline stage.
 // Only candidates that beat the worst existing elite (and aren't duplicates) are added.
 type EliteCohort struct {
-	entries []EliteEntry
-	maxLen  int
+	entries  []EliteEntry
+	maxLen   int
+	scoreIdx int
 }
 
 type EliteEntry struct {
@@ -17,8 +18,8 @@ type EliteEntry struct {
 }
 
 // NewEliteCohort creates an empty cohort with the given maximum capacity.
-func NewEliteCohort(maxLen int) *EliteCohort {
-	return &EliteCohort{maxLen: maxLen}
+func NewEliteCohort(maxLen int, scoreIdx int) *EliteCohort {
+	return &EliteCohort{maxLen: maxLen, scoreIdx: scoreIdx}
 }
 
 // TryInsert attempts to add a candidate to the cohort.
@@ -31,6 +32,9 @@ func NewEliteCohort(maxLen int) *EliteCohort {
 //   - Otherwise → skip
 func (ec *EliteCohort) TryInsert(c *Candidate, dist float64) bool {
 	sig := string(c.Encode())
+
+	// Store the score in the candidate's Scores array
+	c.Scores[ec.scoreIdx] = dist
 
 	// Check for duplicates
 	for _, e := range ec.entries {

@@ -122,7 +122,7 @@ func TestSmokeMatchWithTimbreTarget(t *testing.T) {
 
 // TestSmokeEliteCohort verifies EliteCohort deduplication with cached signatures.
 func TestSmokeEliteCohort(t *testing.T) {
-	cohort := match.NewEliteCohort(3)
+	cohort := match.NewEliteCohort(3, match.ScoreTimbre)
 
 	c1 := match.SineBase()
 	c1.Ops[5].OutputLevel = 99

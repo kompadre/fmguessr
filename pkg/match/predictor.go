@@ -271,10 +271,9 @@ func AttachNearestRawBase(c *Candidate, codebook *Codebook) *Candidate {
 		}
 	}
 
-	if bestEntry != nil && len(bestEntry.Candidate.RawBase) == 128 {
+	if bestEntry != nil && bestEntry.Candidate.RawBase != NoRawBase {
 		c2 := c.Copy()
-		c2.RawBase = make([]byte, 128)
-		copy(c2.RawBase, bestEntry.Candidate.RawBase)
+		c2.RawBase = bestEntry.Candidate.RawBase // value copy
 		c2.CopyEnvelopeFromRawBase()
 		return c2
 	}
@@ -310,10 +309,9 @@ func AttachNearestRawBaseTimbre(c *Candidate, tc *TimbreCodebook) *Candidate {
 		}
 	}
 
-	if bestEntry != nil && len(bestEntry.Candidate.RawBase) == 128 {
+	if bestEntry != nil && bestEntry.Candidate.RawBase != NoRawBase {
 		c2 := c.Copy()
-		c2.RawBase = make([]byte, 128)
-		copy(c2.RawBase, bestEntry.Candidate.RawBase)
+		c2.RawBase = bestEntry.Candidate.RawBase // value copy
 		c2.CopyEnvelopeFromRawBase()
 		return c2
 	}
@@ -657,10 +655,9 @@ func (p *ProbePredictor) dx7ToCandidate(dx7 []float32, midiNote int) *Candidate 
 }
 
 // findNearestTemplate finds a suitable RawBase template for the predicted algorithm.
-func findNearestTemplate(cand *Candidate) []byte {
-	// Use epiano as default template
-	template := make([]byte, 128)
-	copy(template, epiano)
+func findNearestTemplate(cand *Candidate) [128]byte {
+	var template [128]byte
+	copy(template[:], epiano)
 	return template
 }
 

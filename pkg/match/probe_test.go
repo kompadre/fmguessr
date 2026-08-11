@@ -1,6 +1,7 @@
 package match_test
 
 import (
+	"context"
 	"math/rand"
 	"path/filepath"
 	"testing"
@@ -122,11 +123,15 @@ func TestStep1CodebookEarlyReturn(t *testing.T) {
 	gaCfg := match.DefaultGAConfig()
 	gaCfg.Generations = 100 // Should NOT run 100 generations because Step 1 returns early!
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	cfg := match.Config{
 		RenderDur:    1 * time.Second,
 		MIDINote:     uint8(midiNote),
 		CodebookPath: cbPath,
 		GA:           gaCfg,
+		Ctx:          ctx,
 	}
 
 	start := time.Now()

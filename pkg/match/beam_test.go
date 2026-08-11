@@ -18,8 +18,8 @@ func TestInitVoice(t *testing.T) {
 	if c.Fitness != math.MaxFloat64 {
 		t.Errorf("expected Fitness=MaxFloat64, got %f", c.Fitness)
 	}
-	if len(c.RawBase) != 128 {
-		t.Errorf("expected RawBase 128 bytes, got %d", len(c.RawBase))
+	if c.RawBase == NoRawBase {
+		t.Errorf("expected RawBase to be set (not NoRawBase)")
 	}
 	// All operators should be silent
 	for i, op := range c.Ops {

@@ -140,7 +140,7 @@ func HeuristicCandidate(features TargetFeatures, noteFreq float64, rng interface
 		}
 	}
 
-	c := &Candidate{}
+	c := &Candidate{Scores: nanScores()}
 	for i := 0; i < 26; i++ {
 		c.Direction[i] = 1
 		c.Velocity[i] = 1.0
@@ -199,7 +199,7 @@ func HeuristicCandidateWithAlgo(features TargetFeatures, noteFreq float64, algo 
 		}
 	}
 
-	c := &Candidate{}
+	c := &Candidate{Scores: nanScores()}
 	for i := 0; i < 26; i++ {
 		c.Direction[i] = 1
 		c.Velocity[i] = 1.0
