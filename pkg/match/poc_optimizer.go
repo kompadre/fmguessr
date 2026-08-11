@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -22,9 +23,10 @@ type POCOptimizer struct {
 	verbose      bool
 	accelCache   map[string][]int
 	rng          *rand.Rand
+	ctx          context.Context
 }
 
-func NewPOCOptimizer(target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *POCOptimizer {
+func NewPOCOptimizer(ctx context.Context, target []float64, initial *Candidate, maxIter int, verbose bool, note uint8, dur time.Duration, rawTargetRMS ...float64) *POCOptimizer {
 	targetNorm := NormalizeRMS(target)
 	tRMS := 0.0
 	if len(rawTargetRMS) > 0 && rawTargetRMS[0] > 0 {
@@ -45,6 +47,7 @@ func NewPOCOptimizer(target []float64, initial *Candidate, maxIter int, verbose 
 		verbose:      verbose,
 		accelCache:   make(map[string][]int),
 		rng:          rand.New(rand.NewSource(42)),
+		ctx:          ctx,
 	}
 }
 
@@ -64,7 +67,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 	}
 
 	// Initial evaluation
-	initialFits, _ := evaluateBatchParallel([]*Candidate{poc.currentPatch}, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
+	initialFits, _ := evaluateBatchParallel(poc.ctx, []*Candidate{poc.currentPatch}, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 	if len(initialFits) > 0 {
 		poc.bestDist = initialFits[0]
 	}
@@ -79,7 +82,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 1. Single-knob Coarse Sweeps & Improver Harvesting
 		coarseCands, coarseMeta := generateBatch(poc.currentPatch, knobs, false)
 		if len(coarseCands) > 0 {
-			fits, _ := evaluateBatchParallel(coarseCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
+			fits, _ := evaluateBatchParallel(poc.ctx, coarseCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 
 			// Update acceleration cache with coarse sweep second derivatives
 			updateAccelerationCache(poc.accelCache, knobs, poc.bestDist, coarseCands, coarseMeta, fits)
@@ -113,7 +116,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 			if len(improvers) >= 2 {
 				trajCands, trajMeta := generateMultiKnobTrajectoryCandidates(poc.currentPatch, knobs, improvers)
 				if len(trajCands) > 0 {
-					trajFits, _ := evaluateBatchParallel(trajCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
+					trajFits, _ := evaluateBatchParallel(poc.ctx, trajCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 					for i, fit := range trajFits {
 						if fit < poc.bestDist {
 							poc.bestDist = fit
@@ -132,7 +135,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 3. Coupled Operator Candidates
 		coupledCands, coupledMeta := generateCoupledOperatorCandidates(poc.currentPatch, knobs)
 		if len(coupledCands) > 0 {
-			fits, _ := evaluateBatchParallel(coupledCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
+			fits, _ := evaluateBatchParallel(poc.ctx, coupledCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < poc.bestDist {
 					poc.bestDist = fit
@@ -149,7 +152,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 4. Multi-Dial Cross-Trough Candidates from Acceleration Cache
 		crossCands, crossMeta := generateMultiDialCrossTroughCandidates(poc.currentPatch, knobs, poc.accelCache, poc.rng)
 		if len(crossCands) > 0 {
-			fits, _ := evaluateBatchParallel(crossCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
+			fits, _ := evaluateBatchParallel(poc.ctx, crossCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < poc.bestDist {
 					poc.bestDist = fit
@@ -166,7 +169,7 @@ func (poc *POCOptimizer) Run() *Candidate {
 		// 5. Fine Sweeps
 		fineCands, fineMeta := generateBatch(poc.currentPatch, knobs, true)
 		if len(fineCands) > 0 {
-			fits, _ := evaluateBatchParallel(fineCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
+			fits, _ := evaluateBatchParallel(poc.ctx, fineCands, poc.targetNorm, poc.note, poc.dur, poc.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < poc.bestDist {
 					poc.bestDist = fit

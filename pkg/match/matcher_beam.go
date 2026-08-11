@@ -58,6 +58,7 @@ func (s *BeamSearch) Run(ctx context.Context, in MatcherInput) MatcherResult {
 		result.Cohort.Best = beamResult.Final
 		result.Cohort.Timbral[0] = beamResult.Final
 		result.Cohort.TimbralN = 1
+		in.State.BeamResult = beamResult
 	}
 	return result
 }

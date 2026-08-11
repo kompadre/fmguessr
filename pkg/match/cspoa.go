@@ -195,7 +195,7 @@ cspoaLoop:
 			turns = turns[:remaining]
 		}
 
-		fits, _ := evaluateBatchParallel(cands, target, note, dur, targetRMS, nil)
+		fits, _ := evaluateBatchParallel(ctx, cands, target, note, dur, targetRMS, nil)
 		renderCount += len(cands)
 
 		// Assign distances back to turns

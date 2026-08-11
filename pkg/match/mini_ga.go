@@ -56,7 +56,7 @@ func RunOperatorMiniGA(ctx context.Context, parents []*Candidate, targetNorm []f
 	}
 
 	// Evaluate initial mini-GA population
-	fits, _ := evaluateBatchParallel(pop, targetNorm, note, dur, rawTargetRMS, nil)
+	fits, _ := evaluateBatchParallel(ctx, pop, targetNorm, note, dur, rawTargetRMS, nil)
 	for i, f := range fits {
 		pop[i].Fitness = f
 		if f < bestFit {
@@ -164,7 +164,7 @@ func RunOperatorMiniGA(ctx context.Context, parents []*Candidate, targetNorm []f
 
 		// Parallel batch evaluation of generation offspring
 		pop = nextPop
-		fits, _ = evaluateBatchParallel(pop, targetNorm, note, dur, rawTargetRMS, nil)
+		fits, _ = evaluateBatchParallel(ctx, pop, targetNorm, note, dur, rawTargetRMS, nil)
 
 		for i, f := range fits {
 			pop[i].Fitness = f

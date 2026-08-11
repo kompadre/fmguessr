@@ -517,7 +517,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			algoCands[a] = c
 		}
 
-		fits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+		fits, _ := evaluateBatchParallel(lo.ctx, algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 		type algoEntry struct {
 			cand *Candidate
@@ -591,7 +591,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// A. Acceleration Trough Probe Pass (ultra-fast leaps to cached 2nd-derivative troughs)
 			probeCands, probeMeta := generateProbeBatch(curPatch, knobs, accelCache)
 			if len(probeCands) > 0 {
-				fits, _ := evaluateBatchParallel(probeCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+				fits, _ := evaluateBatchParallel(lo.ctx, probeCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 				bestIdx := -1
 				bestFit := curDist
@@ -624,7 +624,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// B. Coarse pass (1D single knob sweeps + Multi-Knob Coordinate Vector & Coupled Operator Sweeps)
 			coarseCands, coarseMeta := generateBatch(curPatch, knobs, false)
 			if len(coarseCands) > 0 {
-				fits, _ := evaluateBatchParallel(coarseCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+				fits, _ := evaluateBatchParallel(lo.ctx, coarseCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 				bestIdx := -1
 				bestFit := curDist
@@ -668,7 +668,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 
 				numSingleKnob := len(coarseCands)
 				if len(multiCands) > 0 {
-					mFits, _ := evaluateBatchParallel(multiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+					mFits, _ := evaluateBatchParallel(lo.ctx, multiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 					for i, mf := range mFits {
 						if mf < bestFit {
 							bestFit = mf
@@ -707,7 +707,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 			// C. Fine pass
 			fineCands, fineMeta := generateBatch(curPatch, knobs, true)
 			if len(fineCands) > 0 {
-				fineFits, _ := evaluateBatchParallel(fineCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+				fineFits, _ := evaluateBatchParallel(lo.ctx, fineCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 				fineBestIdx := -1
 				fineBestFit := curDist
@@ -752,7 +752,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 
 				numSingleFine := len(fineCands)
 				if len(fineMultiCands) > 0 {
-					fmFits, _ := evaluateBatchParallel(fineMultiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+					fmFits, _ := evaluateBatchParallel(lo.ctx, fineMultiCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 					for i, fmf := range fmFits {
 						if fmf < fineBestFit {
 							fineBestFit = fmf
@@ -791,7 +791,7 @@ func (lo *LiveOptimizer) Run() *Candidate {
 				algoCands[a] = c
 			}
 
-			algoFits, _ := evaluateBatchParallel(algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
+			algoFits, _ := evaluateBatchParallel(lo.ctx, algoCands, lo.targetNorm, lo.note, lo.dur, lo.rawTargetRMS, nil)
 
 			algoBestIdx := -1
 			algoBestFit := curDist

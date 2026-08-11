@@ -3,6 +3,7 @@ package match
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"sync"
 	"time"
@@ -246,40 +247,8 @@ func checkExactMatch(islandGAs []*GA) bool {
 	return false
 }
 
-func applyStep(c *Candidate, which int, step int8) {
-	if which == 0 {
-		return // Don't line search algorithm jumps
-	}
-	if which == NumCandidateParams-1 {
-		c.Feedback = clampU8(c.Feedback, step, 0, 7)
-		return
-	}
-	opIdx := (which - 1) / 8
-	paramIdx := (which - 1) % 8
-	switch paramIdx {
-	case 1:
-		c.Ops[opIdx].FreqCoarse = clampU8(c.Ops[opIdx].FreqCoarse, step, 0, 31)
-	case 2:
-		c.Ops[opIdx].FreqFine = clampU8(c.Ops[opIdx].FreqFine, step, 0, 99)
-	case 3:
-		c.Ops[opIdx].OutputLevel = clampU8(c.Ops[opIdx].OutputLevel, step, 75, 99)
-	case 4:
-		c.Ops[opIdx].Rate1 = clampU8(c.Ops[opIdx].Rate1, step, 10, 99)
-	case 5:
-		c.Ops[opIdx].Rate2 = clampU8(c.Ops[opIdx].Rate2, step, 5, 99)
-	case 6:
-		minL3 := uint8(0)
-		if IsCarrier(c.Algorithm, opIdx) {
-			minL3 = 50 // Carriers keep audible sustain floor
-		}
-		c.Ops[opIdx].Level3 = clampU8(c.Ops[opIdx].Level3, step, minL3, 99)
-	case 7:
-		c.Ops[opIdx].Rate4 = clampU8(c.Ops[opIdx].Rate4, step, 10, 99)
-	}
-}
-
 // evaluateBatchParallel evaluates candidates concurrently across CPU cores using a multi-threaded worker pool.
-func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8, dur time.Duration, rawTargetRMS float64, targetMel *PrecomputedTargetMel) ([]float64, []TargetFeatures) {
+func evaluateBatchParallel(ctx context.Context, candidates []*Candidate, target []float64, note uint8, dur time.Duration, rawTargetRMS float64, targetMel *PrecomputedTargetMel) ([]float64, []TargetFeatures) {
 	n := len(candidates)
 	results := make([]float64, n)
 	features := make([]TargetFeatures, n)
@@ -301,6 +270,12 @@ func evaluateBatchParallel(candidates []*Candidate, target []float64, note uint8
 		go func() {
 			defer wg.Done()
 			for idx := range taskChan {
+				select {
+				case <-ctx.Done():
+					results[idx] = math.MaxFloat64
+					continue
+				default:
+				}
 				candAudio := RenderCandidate(candidates[idx], note, dur)
 				trimmed := TrimOrPad(candAudio, len(target))
 				rawCandRMS, candidate := CalcRMSAndNormalize(0.1, trimmed)

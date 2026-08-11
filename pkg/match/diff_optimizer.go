@@ -194,7 +194,7 @@ func (opt *DiffOptimizer) RunTopologySweep() float64 {
 		cands[algo] = c
 	}
 
-	fits, _ := evaluateBatchParallel(cands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
+	fits, _ := evaluateBatchParallel(opt.ctx, cands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 	bestAlgo := opt.currentPatch.Algorithm
 	for algo, fit := range fits {
 		if fit < opt.bestDist {
@@ -327,7 +327,7 @@ phaseLoop:
 		}
 
 		if len(lineCands) > 0 {
-			fits, _ := evaluateBatchParallel(lineCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
+			fits, _ := evaluateBatchParallel(opt.ctx, lineCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 			for i, fit := range fits {
 				if fit < opt.bestDist {
 					opt.bestDist = fit
@@ -347,7 +347,7 @@ phaseLoop:
 		if !improved {
 			coupledCands, coupledMeta := generateCoupledOperatorCandidates(opt.currentPatch, knobs)
 			if len(coupledCands) > 0 {
-				fits, _ := evaluateBatchParallel(coupledCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
+				fits, _ := evaluateBatchParallel(opt.ctx, coupledCands, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 				for i, fit := range fits {
 					if fit < opt.bestDist {
 						opt.bestDist = fit
@@ -375,7 +375,7 @@ phaseLoop:
 // RunAlternating performs a 32-algorithm topology sweep (unless skipTopology) followed by alternating
 // back-to-back Timbre and Temporal optimization phases.
 func (opt *DiffOptimizer) RunAlternating(cycles int) *Candidate {
-	initialFits, _ := evaluateBatchParallel([]*Candidate{opt.currentPatch}, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
+	initialFits, _ := evaluateBatchParallel(opt.ctx, []*Candidate{opt.currentPatch}, opt.targetNorm, opt.note, opt.dur, opt.rawTargetRMS, nil)
 	if len(initialFits) > 0 && initialFits[0] < opt.bestDist {
 		opt.bestDist = initialFits[0]
 	}

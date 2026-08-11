@@ -64,7 +64,7 @@ func (s *NNPredict) Run(ctx context.Context, in MatcherInput) MatcherResult {
 		} else if in.Codebook != nil {
 			cand = AttachNearestRawBase(cand, in.Codebook)
 		}
-		fits, _ := evaluateBatchParallel([]*Candidate{cand}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+		fits, _ := evaluateBatchParallel(ctx, []*Candidate{cand}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 		cand.Fitness = fits[0]
 		scores = append(scores, algoScore{algo, fits[0], cand})
 	}

@@ -50,6 +50,8 @@ func (s *GAStep) Run(ctx context.Context, in MatcherInput) MatcherResult {
 		islands[algo] = make([]*Candidate, candidatesPerIsland)
 		for c := 0; c < candidatesPerIsland; c++ {
 			var cand *Candidate
+
+			// Priority 1: NN prediction for this algorithm's island (Slot 0)
 			if len(in.State.NNCandidates) > 0 && c == 0 {
 				for _, nn := range in.State.NNCandidates {
 					if nn.Algorithm == uint8(algo) {
@@ -58,11 +60,25 @@ func (s *GAStep) Run(ctx context.Context, in MatcherInput) MatcherResult {
 					}
 				}
 			}
+
+			// Priority 1.5: Beam search result for this algorithm (Slot 0)
+			if cand == nil && c == 0 && in.State.BeamResult != nil && in.State.BeamResult.Final.Algorithm == uint8(algo) {
+				cand = in.State.BeamResult.Final.Copy()
+			}
+
+			// Priority 2: KNN codebook match (Slot 0)
 			if cand == nil && c == 0 {
 				if preset, ok := knnMap[uint8(algo)]; ok {
 					cand = preset.Copy()
 				}
 			}
+
+			// Priority 3: LiveOptimizer permutation candidates (Slots 0..N/2)
+			if cand == nil && in.State.LiveOpt != nil && c < (candidatesPerIsland+1)/2 {
+				cand = in.State.LiveOpt.GeneratePermutationCandidate(rng, uint8(algo))
+			}
+
+			// Priority 4: Heuristic / Random candidate for exploration diversity (Slots N/2..N-1)
 			if cand == nil {
 				cand = HeuristicCandidateWithAlgo(features, cfg.NoteFreq, uint8(algo))
 				if c > 0 {
@@ -71,12 +87,13 @@ func (s *GAStep) Run(ctx context.Context, in MatcherInput) MatcherResult {
 					cand.Ops[(c+1)%6].OutputLevel = uint8(rng.Intn(100))
 				}
 			}
+
 			islands[algo][c] = cand
 			allInitialCandidates = append(allInitialCandidates, cand)
 		}
 	}
 
-	initialFits, initialFeats := evaluateBatchParallel(allInitialCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+	initialFits, initialFeats := evaluateBatchParallel(ctx, allInitialCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 	totalEvals := len(allInitialCandidates)
 
 	idx := 0
@@ -127,7 +144,7 @@ nicheLoop:
 				allGenCandidates = append(allGenCandidates, cand)
 			}
 		}
-		genFits, genFeats := evaluateBatchParallel(allGenCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+		genFits, genFeats := evaluateBatchParallel(ctx, allGenCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 		totalEvals += len(allGenCandidates)
 		for algo := 0; algo < 32; algo++ {
 			indices := islandNextCandIdx[algo]
@@ -204,7 +221,7 @@ nicheLoop:
 				break
 			}
 			nextCandidates := globalGA.Evolve(features)
-			nextFitnesses, nextFeatures := evaluateBatchParallel(nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+			nextFitnesses, nextFeatures := evaluateBatchParallel(ctx, nextCandidates, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 			totalEvals += len(nextCandidates)
 			globalGA.SetPopulation(nextCandidates, nextFitnesses, nextFeatures)
 

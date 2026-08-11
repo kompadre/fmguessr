@@ -173,14 +173,14 @@ func evaluateSingleCandidate(c *Candidate, target []float64, targetRMS float64, 
 }
 
 // evaluateBatch renders a slice of candidates in parallel and returns distances.
-func evaluateBatch(candidates []*Candidate, target []float64, targetRMS float64, note uint8, dur time.Duration) []float64 {
+func evaluateBatch(ctx context.Context, candidates []*Candidate, target []float64, targetRMS float64, note uint8, dur time.Duration) []float64 {
 	n := len(candidates)
 	if n == 0 {
 		return nil
 	}
 
 	// Use the existing parallel infrastructure
-	dists, _ := evaluateBatchParallel(candidates, target, note, dur, targetRMS, nil)
+	dists, _ := evaluateBatchParallel(ctx, candidates, target, note, dur, targetRMS, nil)
 	return dists
 }
 
@@ -257,7 +257,7 @@ func RunConstructiveBeam(
 	if len(step1Candidates) > maxRenders {
 		step1Candidates = step1Candidates[:maxRenders]
 	}
-	dists := evaluateBatch(step1Candidates, target, targetRMS, note, dur)
+	dists := evaluateBatch(ctx, step1Candidates, target, targetRMS, note, dur)
 	renderCount += len(step1Candidates)
 
 	// Sort by distance, keep top beamWidth
@@ -388,7 +388,7 @@ beamLoop:
 		for i := range allCandidates {
 			batch[i] = &allCandidates[i].bc.candidate
 		}
-		dists := evaluateBatch(batch, target, targetRMS, note, dur)
+		dists := evaluateBatch(ctx, batch, target, targetRMS, note, dur)
 		renderCount += len(batch)
 
 		// Assign distances back
@@ -419,7 +419,7 @@ beamLoop:
 				}
 			}
 
-			cbCandidates := exploreCodebookForStep(tempBeam, cb, timbreCB, newOpIdx, target, targetRMS, targetPeak, targetCachedSTFT, note, dur, remainingRenders)
+			cbCandidates := exploreCodebookForStep(ctx, tempBeam, cb, timbreCB, newOpIdx, target, targetRMS, targetPeak, targetCachedSTFT, note, dur, remainingRenders)
 			renderCount += len(cbCandidates)
 
 			// Merge codebook candidates into the pool
@@ -548,6 +548,7 @@ func copyTargets(src map[int]int) map[int]int {
 //	Tier 2: Short burst render + peak window spectral comparison (~300ms render)
 //	Tier 3: Full evaluation only for top survivors
 func exploreCodebookForStep(
+	ctx context.Context,
 	beam []beamCandidate,
 	cb *Codebook,
 	timbreCB *TimbreCodebook,
@@ -849,7 +850,7 @@ func exploreCodebookForStep(
 			batch[i] = cand
 		}
 
-		dists := evaluateBatch(batch, target, targetRMS, note, dur)
+		dists := evaluateBatch(ctx, batch, target, targetRMS, note, dur)
 
 		var results []beamCandidate
 		for i, t1 := range tier1 {
@@ -883,7 +884,7 @@ func exploreCodebookForStep(
 	for i, t2 := range tier2 {
 		fullBatch[i] = &t2.bc.candidate
 	}
-	fullDists := evaluateBatch(fullBatch, target, targetRMS, note, dur)
+	fullDists := evaluateBatch(ctx, fullBatch, target, targetRMS, note, dur)
 
 	var results []beamCandidate
 	for i := range tier2 {

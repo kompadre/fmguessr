@@ -42,6 +42,7 @@ func (s *NNRefine) Run(ctx context.Context, in MatcherInput) MatcherResult {
 	}
 
 	liveOpt := NewLiveOptimizer(ctx, target, initialPatch, 1000, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS).WithTargetMel(in.TargetMel)
+	in.State.LiveOpt = liveOpt
 	refined := liveOpt.Run()
 	diffOpt := NewDiffOptimizer(ctx, target, refined, 5, cfg.Verbose, cfg.MIDINote, cfg.RenderDur, rawTargetRMS)
 	diffRefined := diffOpt.RunAlternating(2)

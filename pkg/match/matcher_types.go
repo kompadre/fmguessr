@@ -55,7 +55,9 @@ type MatcherState struct {
 	FormantPeaks  []FormantPeak
 	ClassifierMap map[uint8]int
 	LiveOptBest   *Candidate
+	LiveOpt       *LiveOptimizer // for permutation candidate generation in GA
 	KNNMap        map[uint8]*Candidate // codebook best per algorithm, populated by CodebookSearch
+	BeamResult    *PatchEvolution      // beam search result, populated by BeamSearch
 }
 
 type MatcherInput struct {

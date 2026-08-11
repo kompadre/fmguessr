@@ -1,6 +1,7 @@
 package match_test
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestPOCOptimizerExactMatch(t *testing.T) {
 	renderDur := 1 * time.Second
 	target := match.RenderCandidate(cand, 60, renderDur)
 
-	pocOpt := match.NewPOCOptimizer(target, cand, 5, true, 60, renderDur)
+	pocOpt := match.NewPOCOptimizer(context.Background(), target, cand, 5, true, 60, renderDur)
 	refined := pocOpt.Run()
 
 	t.Logf("POCOptimizer starting/final distance for exact match: %.6f", pocOpt.BestDist())
@@ -44,7 +45,7 @@ func TestPOCOptimizerMultiKnobPerturbation(t *testing.T) {
 	initialDist := match.SpectralDistance(match.NormalizeRMS(target), match.NormalizeRMS(match.RenderCandidate(perturbed, 60, renderDur)))
 	t.Logf("Initial perturbed dist: %.6f", initialDist)
 
-	pocOpt := match.NewPOCOptimizer(target, perturbed, 5, true, 60, renderDur)
+	pocOpt := match.NewPOCOptimizer(context.Background(), target, perturbed, 5, true, 60, renderDur)
 	refined := pocOpt.Run()
 
 	t.Logf("Refined dist after POCOptimizer: %.6f", pocOpt.BestDist())

@@ -31,7 +31,7 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 		timMatches, _ := in.TimbreCB.SearchKNNTimbreWithDistances(timbreSpec, codebookTopK)
 
 		if len(fpMatches) > 0 {
-			fpFits, _ := evaluateBatchParallel(fpMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+			fpFits, _ := evaluateBatchParallel(ctx, fpMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 			for i, c := range fpMatches {
 				c.Scores[ScoreTimbre] = fpFits[i]
 				c.Fitness = fpFits[i]
@@ -48,7 +48,7 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 		}
 
 		if len(timMatches) > 0 {
-			timFits, _ := evaluateBatchParallel(timMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+			timFits, _ := evaluateBatchParallel(ctx, timMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 			for i, c := range timMatches {
 				c.Scores[ScoreTimbre] = timFits[i]
 				c.Fitness = timFits[i]
@@ -104,7 +104,7 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 		}
 		knnMatches := cb.SearchKNN(targetFp, topK)
 		if len(knnMatches) > 0 {
-			knnFits, _ := evaluateBatchParallel(knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+			knnFits, _ := evaluateBatchParallel(ctx, knnMatches, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 			bestCodebookDist := math.MaxFloat64
 			var bestCodebookCand *Candidate
 			knnMap := make(map[uint8]*Candidate)

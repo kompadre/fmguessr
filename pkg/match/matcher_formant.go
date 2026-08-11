@@ -36,7 +36,7 @@ func (s *FormantGenerate) Run(ctx context.Context, in MatcherInput) MatcherResul
 	}
 
 	for _, fc := range formantCandidates {
-		fcFits, _ := evaluateBatchParallel([]*Candidate{fc}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
+		fcFits, _ := evaluateBatchParallel(ctx, []*Candidate{fc}, target, cfg.MIDINote, cfg.RenderDur, rawTargetRMS, in.TargetMel)
 		fc.Fitness = fcFits[0]
 		fc.Scores[ScoreFormant] = fcFits[0]
 	}
