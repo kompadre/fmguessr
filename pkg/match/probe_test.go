@@ -70,37 +70,22 @@ func TestApplyFeatureOverrides(t *testing.T) {
 	}
 }
 
-func TestProbeAudioAndSeenBefore(t *testing.T) {
-	tempDir := t.TempDir()
-	cbPath := filepath.Join(tempDir, "probe_codebook.bin")
-
-	// Render a known patch
+func TestProbeAudioWithoutCodebook(t *testing.T) {
 	sampleRate := 44100
 	rng := rand.New(rand.NewSource(101))
 	cand := match.RandomCandidate(rng)
 	knownAudio := match.RenderCandidate(cand, 60, 1*time.Second)
 
-	// Index patch in codebook
-	err := match.IndexCandidateToCodebook(cand, "KNOWN_PATCH", 60, 1*time.Second, 1*time.Second, cbPath)
-	if err != nil {
-		t.Fatalf("Failed to index candidate: %v", err)
-	}
+	// Probe without codebook — should complete fast and return features
+	res := match.ProbeAudio(knownAudio, sampleRate, match.FeatureOverrides{Note: "60"})
 
-	// Probe the exact audio with matching root note
-	res := match.ProbeAudio(knownAudio, sampleRate, cbPath, match.FeatureOverrides{Note: "60"})
-
-	if !res.SeenBefore {
-		t.Errorf("Expected SeenBefore = true for exact codebook audio, got false")
+	if res.MIDINote != 60 {
+		t.Errorf("Expected MIDINote=60, got %d", res.MIDINote)
 	}
-	if res.BestMatch == nil {
-		t.Fatalf("Expected BestMatch details to be non-nil")
+	if res.F0Hz <= 0 {
+		t.Errorf("Expected positive F0Hz, got %f", res.F0Hz)
 	}
-	if res.BestMatch.Name != "KNOWN_PATCH" {
-		t.Errorf("Expected BestMatch.Name KNOWN_PATCH, got %s", res.BestMatch.Name)
-	}
-	if res.BestMatch.Distance > 1e-3 {
-		t.Errorf("Expected exact match distance <= 0.001, got %.6f", res.BestMatch.Distance)
-	}
+	// ProbeResult should not have SeenBefore or BestMatch fields anymore
 }
 
 func TestStep1CodebookEarlyReturn(t *testing.T) {

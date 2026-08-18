@@ -50,6 +50,14 @@ func (p *CandidatePool) Best() Candidate {
 	return best
 }
 
+// CodebookMatchDetails provides metadata for the top codebook match.
+type CodebookMatchDetails struct {
+	Name      string  `json:"name"`
+	Distance  float64 `json:"distance"`
+	Algorithm int     `json:"algorithm"`
+	Feedback  int     `json:"feedback"`
+}
+
 type MatcherState struct {
 	NNCandidates  []*Candidate
 	FormantPeaks  []FormantPeak
@@ -58,6 +66,8 @@ type MatcherState struct {
 	LiveOpt       *LiveOptimizer // for permutation candidate generation in GA
 	KNNMap        map[uint8]*Candidate // codebook best per algorithm, populated by CodebookSearch
 	BeamResult    *PatchEvolution      // beam search result, populated by BeamSearch
+	SeenBefore    bool                  // codebook match found with dist <= 1e-3
+	BestMatch     *CodebookMatchDetails // best codebook match metadata
 }
 
 type MatcherInput struct {

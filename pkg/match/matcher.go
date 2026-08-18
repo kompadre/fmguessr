@@ -74,6 +74,8 @@ type Result struct {
 	FullTop5    []*Candidate // Top 5 by temporal distance (deduplicated)
 	Favorites   []*Candidate // Candidates appearing in both TimbralTop5 and FullTop5
 	FormantTop5 []*Candidate // Top 5 by formant-constrained refinement
+	SeenBefore  bool                  // codebook match found with dist <= 1e-3
+	BestMatch   *CodebookMatchDetails // best codebook match metadata
 }
 
 func reportProgress(cfg Config, percent int, phase string) {

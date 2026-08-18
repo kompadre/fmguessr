@@ -122,5 +122,7 @@ func finalize(
 		FullTop5:    fullTop5,
 		Favorites:   favorites,
 		FormantTop5: formantTop5,
+		SeenBefore:  state.SeenBefore,
+		BestMatch:   state.BestMatch,
 	}
 }

@@ -88,6 +88,35 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 		if bestCodebookCand != nil {
 			result.Cohort.Best = *bestCodebookCand
 		}
+
+		// Populate SeenBefore + BestMatch from codebook results
+		if bestCodebookDist <= 1e-3 {
+			in.State.SeenBefore = true
+		}
+		if bestCodebookCand != nil {
+			name := "CODEBOOK_PRESET"
+			if in.TimbreCB != nil {
+				for _, entry := range in.TimbreCB.Entries {
+					if string(entry.Candidate.Encode()) == string(bestCodebookCand.Encode()) && entry.Name != "" {
+						name = entry.Name
+						break
+					}
+				}
+			} else if in.Codebook != nil {
+				for _, entry := range in.Codebook.Entries {
+					if string(entry.Candidate.Encode()) == string(bestCodebookCand.Encode()) && entry.Name != "" {
+						name = entry.Name
+						break
+					}
+				}
+			}
+			in.State.BestMatch = &CodebookMatchDetails{
+				Name:      name,
+				Distance:  bestCodebookDist,
+				Algorithm: int(bestCodebookCand.Algorithm + 1),
+				Feedback:  int(bestCodebookCand.Feedback),
+			}
+		}
 		if cfg.Verbose {
 			fmt.Printf("Step 1 Dual-Codebook: FP=%d Timbre=%d → best dist=%.6f\n",
 				len(fpMatches), len(timMatches), bestCodebookDist)
@@ -134,6 +163,26 @@ func (s *CodebookSearch) Run(ctx context.Context, in MatcherInput) MatcherResult
 			}
 			if bestCodebookCand != nil {
 				result.Cohort.Best = *bestCodebookCand
+			}
+
+			// Populate SeenBefore + BestMatch from fingerprint codebook results
+			if bestCodebookDist <= 1e-3 {
+				in.State.SeenBefore = true
+			}
+			if bestCodebookCand != nil {
+				name := "CODEBOOK_PRESET"
+				for _, entry := range in.Codebook.Entries {
+					if string(entry.Candidate.Encode()) == string(bestCodebookCand.Encode()) && entry.Name != "" {
+						name = entry.Name
+						break
+					}
+				}
+				in.State.BestMatch = &CodebookMatchDetails{
+					Name:      name,
+					Distance:  bestCodebookDist,
+					Algorithm: int(bestCodebookCand.Algorithm + 1),
+					Feedback:  int(bestCodebookCand.Feedback),
+				}
 			}
 			if cfg.Verbose {
 				fmt.Printf("Step 1 Fingerprint-Only: evaluated %d candidates (best dist=%.6f)\n",

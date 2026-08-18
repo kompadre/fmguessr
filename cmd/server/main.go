@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
-	_ "embed"
 	"flag"
 	"fmt"
 	"io"
@@ -37,8 +37,8 @@ type ServerConfig struct {
 	ClassifierOnly bool
 	BudgetSeconds  float64
 	ExportDir      string
-	ModelData      []byte // Embedded ONNX model bytes (overrides ModelPath)
-	EncoderPath    string // Path to 1D ResNet ONNX encoder (optional)
+	ModelData      []byte  // Embedded ONNX model bytes (overrides ModelPath)
+	EncoderPath    string  // Path to 1D ResNet ONNX encoder (optional)
 	OptMargin      float64 // Skip optimization on candidates worse than best * (1 + margin)
 }
 
@@ -77,13 +77,13 @@ type Job struct {
 }
 
 type Server struct {
-	mu        sync.RWMutex
-	jobs      map[string]*Job
-	jobQueue  chan *Job
-	cfg       ServerConfig
-	exportDir string
+	mu          sync.RWMutex
+	jobs        map[string]*Job
+	jobQueue    chan *Job
+	cfg         ServerConfig
+	exportDir   string
 	sessionsDir string
-	encoder   *match.AudioEncoder // Loaded once at startup, nil if not provided
+	encoder     *match.AudioEncoder // Loaded once at startup, nil if not provided
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -256,21 +256,21 @@ func (s *Server) processJob(job *Job) {
 	}
 
 	matchCfg := match.Config{
-		RenderDur:       2 * time.Second,
-		MIDINote:        uint8(midiNote),
-		NoteFreq:        noteFreq,
-		CodebookPath:    s.cfg.CodebookPath,
-		ModelPath:       s.cfg.ModelPath,
-		ModelData:       s.cfg.ModelData,
-		ClassifierPath:  s.cfg.ClassifierPath,
-		ClassifierOnly:  s.cfg.ClassifierOnly,
-		Verbose:         true,
-		GA:              gaCfg,
-		Ctx:             ctx,
-		Encoder:           s.encoder,
-		TargetTrajectory:  trajectorySpec,
-		TargetLFOSpectrum: lfoSpectrum,
-		PhaseBounds:       phaseBounds,
+		RenderDur:            2 * time.Second,
+		MIDINote:             uint8(midiNote),
+		NoteFreq:             noteFreq,
+		CodebookPath:         s.cfg.CodebookPath,
+		ModelPath:            s.cfg.ModelPath,
+		ModelData:            s.cfg.ModelData,
+		ClassifierPath:       s.cfg.ClassifierPath,
+		ClassifierOnly:       s.cfg.ClassifierOnly,
+		Verbose:              true,
+		GA:                   gaCfg,
+		Ctx:                  ctx,
+		Encoder:              s.encoder,
+		TargetTrajectory:     trajectorySpec,
+		TargetLFOSpectrum:    lfoSpectrum,
+		PhaseBounds:          phaseBounds,
 		TrajectoryAlphaStart: 0.1,
 		TrajectoryAlphaEnd:   0.8,
 		TrajectoryConfig:     match.DefaultTrajectoryConfig(),
@@ -515,7 +515,7 @@ func (s *Server) handleMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Aggressive Sanitization: Max 800 KB payload limit (4s @ 48kHz stereo 16-bit)
-	maxPayloadBytes := int64(800 * 1024)
+	maxPayloadBytes := int64(2000 * 1024)
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 
 	// Read multipart form file
@@ -738,7 +738,7 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxPayloadBytes := int64(800 * 1024)
+	maxPayloadBytes := int64(2000 * 1024)
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 
 	var wavBytes []byte
@@ -769,7 +769,7 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := match.ProbeAudio(samples, sampleRate, s.cfg.CodebookPath, overrides)
+	res := match.ProbeAudio(samples, sampleRate, overrides)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
@@ -787,8 +787,8 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		SyxURL     string `json:"syx_url"`
 		Slot       int    `json:"slot"`
 		Note       int    `json:"note"`
-		VoiceData  string `json:"voice_data"`     // base64-encoded 128-byte patch (alternative to syx_url+slot)
-		DurationMs int    `json:"duration_ms"`     // optional: note duration in ms (from piano roll)
+		VoiceData  string `json:"voice_data"`  // base64-encoded 128-byte patch (alternative to syx_url+slot)
+		DurationMs int    `json:"duration_ms"` // optional: note duration in ms (from piano roll)
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8000)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -1014,14 +1014,14 @@ func (s *Server) handleMorph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"voice_data":   base64.StdEncoding.EncodeToString(result.Morphed.Encode()),
-		"syx_url":      fmt.Sprintf("/exports/%s/morphed.syx", morphID),
-		"wav_url":      fmt.Sprintf("/exports/%s/morphed.wav", morphID),
-		"source_dist":  result.SourceDist,
-		"morph_dist":   result.MorphDist,
-		"ratio":        result.TargetRatio,
-		"alpha":        result.Alpha,
-		"iterations":   result.Iterations,
+		"voice_data":  base64.StdEncoding.EncodeToString(result.Morphed.Encode()),
+		"syx_url":     fmt.Sprintf("/exports/%s/morphed.syx", morphID),
+		"wav_url":     fmt.Sprintf("/exports/%s/morphed.wav", morphID),
+		"source_dist": result.SourceDist,
+		"morph_dist":  result.MorphDist,
+		"ratio":       result.TargetRatio,
+		"alpha":       result.Alpha,
+		"iterations":  result.Iterations,
 	})
 }
 

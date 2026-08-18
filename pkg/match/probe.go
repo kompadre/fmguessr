@@ -1,12 +1,10 @@
 package match
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // FeatureOverrides holds user-supplied overrides for sensible target audio features.
@@ -21,15 +19,7 @@ type FeatureOverrides struct {
 	Harmonicity  *float64 // Harmonicity score override (0.0 - 1.0)
 }
 
-// CodebookMatchDetails provides metadata for the top codebook match.
-type CodebookMatchDetails struct {
-	Name      string  `json:"name"`
-	Distance  float64 `json:"distance"`
-	Algorithm int     `json:"algorithm"`
-	Feedback  int     `json:"feedback"`
-}
-
-// ProbeResult holds detected envelope, timing, pitch, and codebook match status.
+// ProbeResult holds detected envelope, timing, pitch, and formant analysis.
 type ProbeResult struct {
 	// Envelope & Timing
 	AttackMs     float64 `json:"attack_ms"`
@@ -53,10 +43,6 @@ type ProbeResult struct {
 	F1Hz float64 `json:"f1_hz,omitempty"`
 	F2Hz float64 `json:"f2_hz,omitempty"`
 	F3Hz float64 `json:"f3_hz,omitempty"`
-
-	// Codebook Look-up Status
-	SeenBefore bool                  `json:"seen_before"`
-	BestMatch  *CodebookMatchDetails `json:"best_match,omitempty"`
 }
 
 // ParseNoteStringOrNumber converts a musical note string (e.g., "C3", "A4", "60") or number to MIDI note 0-127 and note frequency in Hz.
@@ -170,8 +156,9 @@ func ApplyFeatureOverrides(f TargetFeatures, overrides FeatureOverrides) (Target
 	return f, midiNote
 }
 
-// ProbeAudio analyzes audio samples, computes envelope/heuristics, and checks for codebook matches.
-func ProbeAudio(samples []float64, sampleRate int, codebookPath string, overrides FeatureOverrides) ProbeResult {
+// ProbeAudio analyzes audio samples and computes envelope, pitch, and formant features.
+// Codebook matching and "seen before" detection are handled by the match pipeline (CodebookSearch step).
+func ProbeAudio(samples []float64, sampleRate int, overrides FeatureOverrides) ProbeResult {
 	norm := NormalizeRMS(samples)
 	features := ExtractFeatures(norm, sampleRate)
 	features, midiNote := ApplyFeatureOverrides(features, overrides)
@@ -197,7 +184,6 @@ func ProbeAudio(samples []float64, sampleRate int, codebookPath string, override
 		Brightness:         features.BrightnessScore,
 		Harmonicity:        features.Harmonicity,
 		SpectralCentroidHz: features.SpectralCentroidHz,
-		SeenBefore:         false,
 	}
 
 	// Formant extraction (~1ms)
@@ -210,67 +196,6 @@ func ProbeAudio(samples []float64, sampleRate int, codebookPath string, override
 	}
 	if len(formants) > 2 {
 		res.F3Hz = formants[2].Frequency
-	}
-
-	// Codebook lookup
-	if codebookPath == "" {
-		codebookPath = "dx7_codebook.bin"
-	}
-
-	topK := 32
-
-	timbreCBPath := codebookPath
-	if len(codebookPath) > 4 && codebookPath[len(codebookPath)-4:] == ".bin" {
-		timbreCBPath = codebookPath[:len(codebookPath)-4] + "_timbre.bin"
-	} else {
-		timbreCBPath = codebookPath + "_timbre.bin"
-	}
-
-	var matches []*Candidate
-	presetNameMap := make(map[string]string)
-
-	if tcb, err := LoadTimbreCodebook(timbreCBPath); err == nil && len(tcb.Entries) > 0 {
-		targetSpec := ExtractTimbreWindow(norm, sampleRate)
-		matches = tcb.SearchKNNTimbre(targetSpec, topK)
-		for _, entry := range tcb.Entries {
-			presetNameMap[string(entry.Candidate.Encode())] = entry.Name
-		}
-	} else if cb, err := LoadCodebook(codebookPath); err == nil && len(cb.Entries) > 0 {
-		targetFp := ComputeFingerprint(norm, sampleRate)
-		matches = cb.SearchKNN(targetFp, topK)
-		for _, entry := range cb.Entries {
-			presetNameMap[string(entry.Candidate.Encode())] = entry.Name
-		}
-	}
-
-	if len(matches) > 0 {
-		fits, _ := evaluateBatchParallel(context.Background(), matches, norm, uint8(midiNote), 1*time.Second, 0.0, nil)
-		bestIdx := 0
-		bestDist := math.MaxFloat64
-		for i, d := range fits {
-			if d < bestDist {
-				bestDist = d
-				bestIdx = i
-			}
-		}
-
-		bestCand := matches[bestIdx]
-		presetName := "CODEBOOK_PRESET"
-		if name, ok := presetNameMap[string(bestCand.Encode())]; ok && name != "" {
-			presetName = name
-		}
-
-		res.BestMatch = &CodebookMatchDetails{
-			Name:      presetName,
-			Distance:  bestDist,
-			Algorithm: int(bestCand.Algorithm + 1),
-			Feedback:  int(bestCand.Feedback),
-		}
-
-		// Seen before if distance <= 0.001 (near 0.00 match)
-		if bestDist <= 1e-3 {
-			res.SeenBefore = true
-		}
 	}
 
 	return res
