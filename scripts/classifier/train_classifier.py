@@ -4,6 +4,7 @@ Train DX7 Patch Classifier (CNN on mel spectrogram) and export to ONNX.
 
 Usage:
     python scripts/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx
+    python scripts/train_classifier.py --dataset dataset_cls.bin --output patch_classifier.onnx --skip-train --model classifier_best.pth
 
 Architecture:
     Input: (1, 128, 128) mel spectrogram — single channel, time × frequency
@@ -263,7 +264,9 @@ def main():
     parser.add_argument('--batch-size', type=int, default=64, help='Batch size')
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--device', default='auto', help='Device (auto/cpu/cuda)')
-    parser.add_argument('--skip-train', action='store_true', help='Skip training, load existing best.pth for export only')
+    parser.add_argument('--skip-train', action='store_true', help='Skip training, load existing model for export only')
+    parser.add_argument('--model', default='classifier_best.pth', help='Path to pre-trained .pth file (used with --skip-train)')
+    parser.add_argument('--patches', default=None, help='Patch bytes .npy file for ONNX export (used with --skip-train when dataset patches differ from model)')
     args = parser.parse_args()
 
     # Load dataset
@@ -295,7 +298,21 @@ def main():
     print(f"Device: {device}")
 
     # Model
+    if args.skip_train:
+        # Infer num_patches from checkpoint to avoid shape mismatch
+        checkpoint = torch.load(args.model, map_location=device, weights_only=True)
+        num_patches = checkpoint['patch_head.weight'].shape[0]
+        print(f"Inferred {num_patches} patches from checkpoint")
     model = PatchClassifierCNN(num_patches).to(device)
+
+    # Patch bytes for ONNX export
+    if args.patches:
+        patch_bytes = np.load(args.patches)
+        print(f"Loaded patch bytes from {args.patches}: {patch_bytes.shape[0]} patches")
+    elif args.skip_train and num_patches != patch_bytes.shape[0]:
+        print(f"ERROR: dataset has {patch_bytes.shape[0]} patches but model has {num_patches}.")
+        print(f"  Provide --patches <file.npy> with the original {num_patches} patch bytes.")
+        sys.exit(1)
     patch_criterion = nn.CrossEntropyLoss()
     midi_criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -313,7 +330,7 @@ def main():
 
             if val_metrics['loss'] < best_val_loss:
                 best_val_loss = val_metrics['loss']
-                torch.save(model.state_dict(), 'classifier_best.pth')
+                torch.save(model.state_dict(), args.model)
 
             if (epoch + 1) % 10 == 0 or epoch == 0:
                 print(f"  Epoch {epoch+1:3d}/{args.epochs}: "
@@ -321,10 +338,13 @@ def main():
                       f"val_loss={val_metrics['loss']:.4f} patch_acc={val_metrics['patch_acc']:.3f} "
                       f"top5={val_metrics['patch_top5']:.3f} midi_acc={val_metrics['midi_acc']:.3f}")
     else:
-        print("Skipping training, loading existing classifier_best.pth")
+        print(f"Skipping training, loading {args.model}")
 
     # Load best and export
-    model.load_state_dict(torch.load('classifier_best.pth'))
+    if not args.skip_train:
+        model.load_state_dict(torch.load(args.model, map_location=device, weights_only=True))
+    else:
+        model.load_state_dict(checkpoint)
     export_to_onnx(model, args.output, patch_bytes, device)
 
     # Verify
@@ -344,8 +364,8 @@ def main():
     print(f"  Inference: ~{sum(times)/len(times)*1000:.1f}ms")
 
     # Cleanup
-    if not args.skip_train and os.path.exists('classifier_best.pth'):
-        os.remove('classifier_best.pth')
+    if not args.skip_train and os.path.exists(args.model):
+        os.remove(args.model)
     print(f"\nDone! Model: {args.output}")
 
 

@@ -237,7 +237,9 @@ func HeuristicCandidateWithAlgo(features TargetFeatures, noteFreq float64, algo 
 
 // --- Pitch Detection (Autocorrelation) ---
 
-func detectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
+// DetectPitchFrame estimates the fundamental frequency of a single frame
+// using autocorrelation (FFT-based). Returns F0 in Hz and confidence [0,1].
+func DetectPitchFrame(frame []float64, sampleRate int) (float64, float64) {
 	if len(frame) < 1024 {
 		return 0, 0
 	}
@@ -359,7 +361,7 @@ func detectPitch(samples []float64, sampleRate int) (float64, float64) {
 		}
 		rms := math.Sqrt(sumSq / float64(frameSize))
 
-		f0, conf := detectPitchFrame(frame, sampleRate)
+		f0, conf := DetectPitchFrame(frame, sampleRate)
 		if f0 > 20 && conf > 0.2 {
 			all = append(all, detection{f0, conf, rms})
 		}
@@ -447,8 +449,8 @@ func detectPitchJump(samples []float64, sampleRate int) float64 {
 	if len(samples) < 3072 {
 		return 0
 	}
-	f0Start, conf0 := detectPitchFrame(samples[0:2048], sampleRate)
-	f0Jump, conf1 := detectPitchFrame(samples[1024:3072], sampleRate)
+	f0Start, conf0 := DetectPitchFrame(samples[0:2048], sampleRate)
+	f0Jump, conf1 := DetectPitchFrame(samples[1024:3072], sampleRate)
 	if conf0 > 0.5 && conf1 > 0.5 && f0Start > 0 && f0Jump > 0 {
 		ratio := f0Jump / f0Start
 		semitones := 12.0 * math.Log2(ratio)

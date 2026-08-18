@@ -1,0 +1,145 @@
+Fmguessr: A Codebase Audio Tour
+
+Welcome to this architectural walkthrough of fmguessr. This is a system that listens to audio and reverse-engineers the FM synthesizer settings needed to recreate that sound — specifically for the Yamaha DX7, a legendary synthesizer from nineteen eighty-three. You give it a WAV file, and through a combination of machine learning, genetic algorithms, and signal processing, it produces a DX7 patch file that sounds like your target.
+
+Let's start from the center of the system and work outward.
+
+
+Chapter One: The Candidate
+
+Everything in fmguessr revolves around a single data structure called the Candidate. Think of it as a complete description of one DX7 synthesizer patch. It holds the algorithm number, which is an integer from zero to thirty-one selecting one of the DX7's thirty-two operator routing topologies. It holds six operator parameter blocks, each containing the frequency coarse and fine settings, the output level, and the four-stage envelope — attack rate, decay rate, sustain level, and release rate. It holds a feedback amount from zero to seven, and three pitch envelope parameters.
+
+The Candidate also carries a 128-byte raw base template. This is a complete DX7 bulk dump patch — the exact byte layout the hardware expects. When a Candidate is created from a codebook entry or a classifier prediction, it stores the original patch bytes so that parameters like LFO settings, pitch envelope scaling, and keyboard scaling — things the optimizer doesn't touch — are preserved through the optimization process. The Encode method overlays the tuned operator parameters onto this template and returns a finished 128-byte patch ready for the synthesizer.
+
+Each Candidate also carries a Scores array with three slots: one for timbre distance, one for temporal distance, and one for formant distance. These are initialized to NaN, meaning "not yet scored." When a Candidate is evaluated, the relevant score slot gets filled with the actual distance value. The Fitness field holds the primary blended distance — a single number representing how close this patch sounds to the target. A value of MaxFloat64 means the Candidate has never been evaluated.
+
+The system defines two sentinel values. NoRawBase is a 128-byte array of all zeros, meaning "no template — use the default epiano patch." EmptyCandidate is a zero-valued Candidate struct used to represent uninitialized slots in pools and cohorts.
+
+
+Chapter Two: The Results Cohort and the Candidate Pool
+
+The pipeline's output is organized into a ResultsCohort. This structure holds the single best Candidate found so far, plus three fixed-size arrays of five Candidates each: the Timbral top five, sorted by static timbre distance; the Full top five, sorted by temporal distance; and the Formant top five, sorted by formant distance. Each array has a count field tracking how many slots are actually occupied.
+
+The cohort has a Reconcile method. When a pipeline step returns its partial results, Reconcile merges them into the main cohort. For the Best slot, it simply keeps whichever Candidate has lower Fitness. For the three arrays, it performs a sorted insertion — finding the right position by distance, shifting existing entries to make room, and deduplicating by the encoded patch signature. If the array is full and the new Candidate is worse than the current worst, it's discarded. This is all done in-place on fixed arrays, so there are no heap allocations in the hot path.
+
+The CandidatePool is a fixed array of 1024 Candidate values. Steps can write Candidates into the pool by assigning them to the next available slot. The pool is shared across the pipeline and accumulates candidates from codebook search, neural network predictions, classifier results, and other sources. Later steps, like the genetic algorithm, read from the pool to seed their populations.
+
+
+Chapter Three: The Matcher Interface and the Pipeline Loop
+
+Each step in the pipeline implements a simple interface called Matcher. It has two methods: Name, which returns a human-readable string, and Run, which takes a context and a MatcherInput struct, and returns a MatcherResult.
+
+The MatcherInput carries everything a step might need: the target audio samples, the extracted features like pitch and envelope and brightness, the configuration, the precomputed mel spectrogram of the target, a pointer to the shared ResultsCohort so the step can read the current best, a pointer to the CandidatePool, the loaded codebooks, and a shared MatcherState for passing data between steps.
+
+The MatcherResult contains a partial ResultsCohort — only the slices this step is responsible for — plus a boolean flag for early return and an error field. If the error is set, the pipeline skips reconciliation and moves to the next step. If early return is set, the pipeline reconciles the results and then stops.
+
+The main Run function orchestrates everything. It computes pitch detune to align the synthesizer's tuning with the target's fundamental frequency. It precomputes the target mel spectrogram. It loads the codebooks. Then it allocates the cohort, the pool, and the shared state once, and iterates through the ten pipeline steps in order. After each step, it calls Reconcile on the cohort. If early return was requested, it breaks the loop. Finally, it calls the finalize function to assemble the final Result.
+
+
+Chapter Four: Step One — Codebook Search
+
+The pipeline begins with the CodebookSearch step. If a codebook is available, it loads the target's audio fingerprint — a compact spectral signature — and searches for the closest matches using K-nearest-neighbors. If a timbre codebook is also available, it performs a dual search: fingerprint matches go into the Full cohort slice, and timbre matches go into the Timbral slice. Both sets of candidates are evaluated in parallel by rendering them through the DX7 synthesizer and computing their mel cosine distance to the target.
+
+The step also builds a map of the best candidate per algorithm — the closest match for each of the thirty-two DX7 topologies. This map is stored in the shared state so the genetic algorithm can use it later for island seeding.
+
+If the best codebook match has a distance of one ten-thousandth or less, the step declares an exact match and requests early return. The pipeline stops immediately — no need for further optimization.
+
+
+Chapter Five: Step Two — Formant Generation
+
+The FormantGenerate step extracts the spectral envelope of the target audio using cepstral analysis. It identifies the first four formant frequencies — the resonant peaks that characterize vowels and timbre. Then it generates DX7 candidates whose FM sideband structure matches those formant peaks. This is pure mathematical prediction — no rendering or evaluation happens during candidate generation. The candidates are then evaluated and placed into the Formant cohort slice. The extracted formant peaks are stored in shared state for later use by the formant refinement step.
+
+
+Chapter Six: Step Three — Neural Network Prediction
+
+The NNPredict step loads a probe predictor — a small neural network that takes a 256-bin timbre spectrum and predicts DX7 parameters. It predicts a complete patch, then evaluates it across all thirty-two algorithm topologies. For each algorithm, it copies the predicted parameters, attaches the nearest codebook template as a raw base, renders the result, and measures the distance. The top four candidates by distance are stored in the shared state for later steps. If the best prediction has a distance below one ten-thousandth, the step requests early return.
+
+
+Chapter Seven: Step Four — Neural Network Refinement
+
+The NNRefine step takes the best neural network candidate and runs it through two optimizers in sequence. First, the LiveOptimizer — a multi-threaded hill-climbing search that tries sweeping each parameter through its range, looking for improvements. It runs for a thousand iterations. Then the DiffOptimizer — a Jacobian-based optimizer that computes how each parameter affects the timbre distance and takes Newton-like steps. It runs alternating passes on timbral and temporal features. The refined candidate is stored in shared state and, if it improved on the neural network's original prediction, it replaces the entry in the candidates list.
+
+
+Chapter Eight: Step Five — Beam Search
+
+If enabled, the BeamSearch step builds a DX7 patch from scratch, one operator at a time. It starts with an empty algorithm and adds operators one by one, at each stage keeping only the best candidates — like a beam search in natural language processing. For each operator addition, it tries different frequency ratios and output levels from a precomputed operator cache built from the codebook. The result is a complete patch with a trace of every decision made during construction.
+
+
+Chapter Nine: Step Six — CSPOA
+
+The CSPOA step — Codebook-Seeded Progressive Operator Attachment — takes a different approach to constructive patch building. It starts from a seed candidate, usually the best codebook match, and applies a sequence of "turns." Each turn is either activating a new operator mode or adjusting a knob. The set of possible turns is built from a delta library extracted from the codebook — essentially learning what parameter changes are common across good patches. At each step, it greedily picks the turn that reduces distance the most.
+
+
+Chapter Ten: Step Seven — The Patch Classifier
+
+The ClassifierStep loads an ONNX convolutional neural network model. It takes a 128-by-128 mel spectrogram of the target audio and predicts which codebook preset it most resembles. It returns the top five predictions with confidence scores. Each prediction is decoded into a full DX7 patch, rendered, and evaluated. The candidates are added to the shared neural network candidates list for the genetic algorithm to use as seeds.
+
+The key feature here is the high-confidence shortcut. If the classifier is at least ninety-nine percent confident in its top prediction and the evaluated distance is below one tenth, the step requests early return. The pipeline skips the expensive genetic algorithm entirely and returns the classifier's answer directly.
+
+
+Chapter Eleven: Step Eight — The Genetic Algorithm
+
+This is the heart of the system. The GAStep runs a two-phase genetic algorithm with thirty-two isolated island populations.
+
+First, it initializes the islands. Each of the thirty-two DX7 algorithms gets its own island with a population of candidates. The first slot of each island is filled from the best available source for that algorithm — neural network predictions, beam search results, codebook matches, in that priority order. The remaining slots are filled with permutation candidates generated by the LiveOptimizer's exploration of the parameter space, and finally with heuristic random candidates for diversity.
+
+Phase one is niche island evolution. Each island evolves independently for fifteen generations. The algorithm is locked — candidates on island seven always have algorithm seven. Within each island, the genetic operators — crossover, mutation, selection — operate normally. All candidates across all islands are evaluated in a single parallel batch each generation. If any island finds an exact match, the phase stops early.
+
+Phase two is global migration. The best candidate from each island is collected into a single global population. The second-best candidates are added to fill remaining slots. Now the genetic operators can cross algorithm boundaries — a crossover between an algorithm three parent and an algorithm fifteen parent might produce an algorithm seven child. This phase runs until convergence is detected — when the improvement rate drops below one thousandth for five consecutive generations, a settle phase begins. Five quiet generations with no injection confirm that the valley has been found. The global best candidate and the top results are returned.
+
+
+Chapter Twelve: Step Nine — Hill Climbing
+
+The HillClimbStep takes the genetic algorithm's best candidate and refines it through the same two-optimizer sequence used in neural network refinement — the LiveOptimizer for five hundred iterations, then the DiffOptimizer with three alternating passes. The result is re-evaluated with the full blended distance formula, and if it beats the GA's best, it replaces it.
+
+
+Chapter Thirteen: Step Ten — Formant Refinement
+
+The final pipeline step, FormantRefineStep, takes the best candidates from the cohort and the neural network candidates list, and runs constrained optimization on each one. The goal is to minimize the formant distance — getting the spectral envelope peaks to match — while keeping the mel cosine distance within ten percent of the original. This is important because a patch might sound close in overall timbre but have the wrong vowel quality, or vice versa. The top five formant-refined candidates go into the Formant cohort slice, and if the best formant result beats the current overall best, it replaces it.
+
+
+Chapter Fourteen: Finalize
+
+After the pipeline loop completes, the finalize function assembles the final result. If the best Candidate is still uninitialized — perhaps the pipeline was cancelled early — it falls back to the best candidate from the pool, then to a default piano preset as a last resort. It builds a diverse top-thirty-two list from multiple sources: the best candidate, the best from each of the thirty-two algorithm islands, the formant candidates, the neural network candidates, and the pool. Each is deduplicated by its encoded signature. The carrier operator output levels are calibrated to match the target's loudness. The timbral top five are rendered and re-evaluated with the temporal distance metric to produce the Full top five. The Favorites list — candidates appearing in both Timbral and Full — is computed as the intersection.
+
+
+Chapter Fifteen: The Optimizers
+
+The LiveOptimizer is a multi-threaded hill-climbing search. It starts from a seed candidate and explores the parameter space by sweeping individual knobs — coarse frequency, fine frequency, output level, envelope rates — through their ranges. It uses a worker pool that evaluates candidates in parallel across all CPU cores. When a promising direction is found, it performs acceleration trough probing — trying larger step sizes to see if there's a deeper valley beyond. When single-knob sweeps plateau, it tries coupled multi-knob trajectories and algorithm topology jumps. It also has a mini genetic algorithm that crossbreeds operator blocks between different algorithm topologies.
+
+The DiffOptimizer takes a more mathematical approach. It computes a Jacobian matrix — how each parameter affects the timbre distance — using finite differences. It then solves a Gauss-Newton system to find the optimal parameter update, with multiple damping levels for robustness. It alternates between optimizing timbral features and temporal features in successive passes. The topology sweep at the start evaluates all thirty-two algorithms with the current parameters to find the best topology before fine-tuning.
+
+
+Chapter Sixteen: Distance Metrics
+
+The primary distance metric is the mel cosine distance. The target audio and the candidate audio are each converted to a 128-by-128 mel spectrogram — a time-frequency representation where the frequency axis uses the mel scale, which approximates human pitch perception. The distance is the cosine of the angle between these two high-dimensional vectors. The system caches the target mel spectrogram so it only needs to be computed once.
+
+The blended distance used by the genetic algorithm adds several penalties on top of the base mel distance. There's a decay penalty based on the spectral centroid slope — penalizing static patches when the target has evolving timbre. There's a frame-by-frame mel distance capturing temporal evolution. There's an envelope distance comparing the amplitude contours. There's a harmonicity-brightness penalty ensuring the harmonic structure matches. And there's a topology coherence penalty discouraging unmotivated parameter extremes.
+
+The formant distance compares the extracted formant peaks — frequency and amplitude pairs — between target and candidate using greedy nearest-neighbor matching.
+
+The temporal timbre distance uses a specialized spectral representation that captures the median spectrum over time, collapsing vibrato and detune effects, and compares the two representations frame by frame.
+
+
+Chapter Seventeen: The DX7 Synthesizer Engine
+
+The actual sound rendering is handled by a C++ port of the Music Synthesizer for Android — MSFA — compiled to a shared library and called from Go via CGo. The engine models the DX7's six-operator FM synthesis with all its quirks: the operator routing topologies, the frequency ratio and fixed frequency modes, the four-stage envelopes, the LFO with its various waveforms, and the pitch envelope generator. Each call to RenderCandidate creates a fresh synthesizer instance, loads a 128-byte patch, triggers a note, renders approximately two seconds of audio at 44,100 hertz, and returns the samples. This isolation ensures that concurrent evaluations don't interfere with each other.
+
+
+Chapter Eighteen: The REST API Server
+
+The server exposes the matching pipeline over HTTP. It runs a single-worker job queue — one match at a time, up to five queued. The match endpoint accepts a WAV file upload, capped at 800 kilobytes, and returns a job ID. The client polls the status endpoint until the job completes. The play endpoint renders a single patch to WAV audio. The voice endpoint extracts parameters from a DX7 sysex file. The export-syx endpoint combines multiple patches into a single bank file.
+
+Security is layered in. The safeSyxPath helper validates that any user-supplied file path stays within the export directory — blocking path traversal attacks. Job IDs are validated against a strict regex before any filesystem access. The CORS middleware allows all origins from localhost for development, but reflects the actual origin for non-localhost requests. A background cleanup loop removes job directories, play previews, morph outputs, and session files older than one hour.
+
+
+Chapter Nineteen: The Frontend
+
+The browser interface is a vanilla JavaScript application with no framework. The canvas component displays patches as draggable cards on a dark background, organized into containers. The voice bank component manages eight patch slots with static channel assignments for multi-channel playback. The piano roll component is a step sequencer where each note stores its own voice data and channel. The audio manager is a singleton wrapping a Web Audio API AudioContext with an AudioWorklet that hosts the compiled DX7 synthesizer as a WebAssembly module. Voice snapshots are sent to the worklet as message-passing payloads, and MIDI events trigger note-on and note-off in the synthesized engine running in a separate thread.
+
+
+Closing
+
+That's the full signal flow of fmguessr. Audio enters as a WAV file. Features are extracted — pitch, envelope, formants, brightness. Ten pipeline steps progressively narrow the search space: codebook lookup for instant matches, neural network prediction for educated guesses, beam search and constructive methods for novel candidates, a genetic algorithm for broad exploration, and gradient-based optimizers for fine-tuning. Each step contributes its best results to a shared cohort, sorted and deduplicated after every iteration. The final output is a DX7 sysex file — a patch that, when loaded into a synthesizer, recreates the target sound.
+
+The system is designed so that any step can short-circuit the pipeline if it finds a confident answer, and every step gracefully degrades if its prerequisites aren't available. The codebook is optional. The neural network is optional. The classifier is optional. The pipeline adapts to whatever resources it has.

@@ -288,17 +288,6 @@ func (s *Server) processJob(job *Job) {
 
 	// Auto-index best match into codebook by default
 	gateDur := time.Duration(features.GateMs * float64(time.Millisecond))
-	if result.Best != nil {
-		patchName := job.ID
-		if len(patchName) > 16 {
-			patchName = patchName[:16]
-		}
-		if err := match.IndexCandidateToCodebook(result.Best, patchName, uint8(midiNote), gateDur, matchCfg.RenderDur, matchCfg.CodebookPath); err != nil {
-			log.Printf("Job %s: warning: failed to auto-index match into codebook: %v", job.ID, err)
-		} else {
-			log.Printf("Job %s: auto-indexed best match '%s' into codebook %s", job.ID, patchName, matchCfg.CodebookPath)
-		}
-	}
 
 	// Export .syx bulk dump containing top 32 matches
 	syxPath := filepath.Join(jobDir, "bank.syx")
@@ -720,6 +709,8 @@ func parseFormOverrides(r *http.Request) match.FeatureOverrides {
 }
 
 func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
+	probeStart := time.Now()
+
 	if r.Method != "POST" {
 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -744,6 +735,7 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 	} else {
 		wavBytes, _ = io.ReadAll(r.Body)
 	}
+	tRead := time.Since(probeStart)
 
 	if len(wavBytes) == 0 {
 		http.Error(w, `{"error":"Missing file or empty WAV body"}`, http.StatusBadRequest)
@@ -756,7 +748,68 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract a 2-second window centered on the energy peak (best transient).
+	// This preserves the attack/sustain where F0 and formants are most defined,
+	// rather than naively taking the first 2 seconds.
+	maxProbeSamples := sampleRate * 2
+	var peakF0Hz float64
+	if len(samples) > maxProbeSamples {
+		peakIdx := 0
+		peakRMS := 0.0
+		frameSize := 256
+		for i := 0; i+frameSize <= len(samples); i += frameSize {
+			sum := 0.0
+			for j := 0; j < frameSize; j++ {
+				s := samples[i+j]
+				sum += s * s
+			}
+			rms := sum / float64(frameSize)
+			if rms > peakRMS {
+				peakRMS = rms
+				peakIdx = i + frameSize/2
+			}
+		}
+		// Extract F0 from the peak frame (2048 samples centered on peak)
+		fftFrameStart := peakIdx - 1024
+		if fftFrameStart < 0 {
+			fftFrameStart = 0
+		}
+		fftFrameEnd := fftFrameStart + 2048
+		if fftFrameEnd > len(samples) {
+			fftFrameEnd = len(samples)
+			fftFrameStart = fftFrameEnd - 2048
+		}
+		if fftFrameStart >= 0 {
+			f0, conf := match.DetectPitchFrame(samples[fftFrameStart:fftFrameEnd], sampleRate)
+			if f0 > 20 && conf > 0.3 {
+				peakF0Hz = f0
+			}
+		}
+		// Center window on peak, clamp to bounds
+		start := peakIdx - maxProbeSamples/2
+		if start < 0 {
+			start = 0
+		}
+		if start+maxProbeSamples > len(samples) {
+			start = len(samples) - maxProbeSamples
+		}
+		samples = samples[start : start+maxProbeSamples]
+	}
+
+	tDecode := time.Since(probeStart) - tRead
+
 	res := match.ProbeAudio(samples, sampleRate, overrides)
+	res.PeakF0Hz = peakF0Hz
+	tProbe := time.Since(probeStart) - tRead - tDecode
+	totalMs := time.Since(probeStart).Milliseconds()
+
+	res.ReadMs = tRead.Milliseconds()
+	res.DecodeMs = tDecode.Milliseconds()
+	res.ProbeMs = tProbe.Milliseconds()
+
+	log.Printf("[probe] read=%dms decode=%dms probe=%dms samples=%d rate=%d total=%dms",
+		tRead.Milliseconds(), tDecode.Milliseconds(), tProbe.Milliseconds(),
+		len(samples), sampleRate, totalMs)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)

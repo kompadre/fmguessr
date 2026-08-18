@@ -174,21 +174,25 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 	pool := CandidatePool{}
 	state := MatcherState{}
 
-	steps := []Matcher{
-		&CodebookSearch{},
-		&FormantGenerate{},
-		&NNPredict{},
-		&NNRefine{},
-		&BeamSearch{},
-		&CSPOAStep{},
-		&ClassifierStep{},
-		&GAStep{},
-		&HillClimbStep{},
-		&FormantRefineStep{},
+	type stepDef struct {
+		matcher    Matcher
+		startPct   int
+	}
+	steps := []stepDef{
+		{&CodebookSearch{}, 0},
+		{&FormantGenerate{}, 10},
+		{&NNPredict{}, 20},
+		{&NNRefine{}, 25},
+		{&BeamSearch{}, 35},
+		{&CSPOAStep{}, 40},
+		{&ClassifierStep{}, 45},
+		{&GAStep{}, 50},
+		{&HillClimbStep{}, 80},
+		{&FormantRefineStep{}, 90},
 	}
 
-	for _, step := range steps {
-		reportProgress(cfg, 0, fmt.Sprintf("Running: %s", step.Name()))
+	for _, sd := range steps {
+		reportProgress(cfg, sd.startPct, fmt.Sprintf("Running: %s", sd.matcher.Name()))
 
 		in := MatcherInput{
 			Target:    target,
@@ -202,11 +206,11 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 			State:     &state,
 		}
 
-		result := step.Run(ctx, in)
+		result := sd.matcher.Run(ctx, in)
 
 		if result.Err != nil {
 			if cfg.Verbose {
-				fmt.Printf("Step %s: %v (skipping)\n", step.Name(), result.Err)
+				fmt.Printf("Step %s: %v (skipping)\n", sd.matcher.Name(), result.Err)
 			}
 			continue
 		}
@@ -215,7 +219,7 @@ func Run(target []float64, features TargetFeatures, cfg Config) Result {
 
 		if result.EarlyReturn {
 			if cfg.Verbose {
-				fmt.Printf("Step %s: early return\n", step.Name())
+				fmt.Printf("Step %s: early return\n", sd.matcher.Name())
 			}
 			break
 		}

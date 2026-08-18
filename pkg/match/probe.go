@@ -43,6 +43,14 @@ type ProbeResult struct {
 	F1Hz float64 `json:"f1_hz,omitempty"`
 	F2Hz float64 `json:"f2_hz,omitempty"`
 	F3Hz float64 `json:"f3_hz,omitempty"`
+
+	// Peak-scan F0 estimate (from best transient frame, before full pitch detection)
+	PeakF0Hz float64 `json:"peak_f0_hz,omitempty"`
+
+	// Timing (populated by server, omitted when zero)
+	ReadMs   int64 `json:"read_ms,omitempty"`
+	DecodeMs int64 `json:"decode_ms,omitempty"`
+	ProbeMs  int64 `json:"probe_ms,omitempty"`
 }
 
 // ParseNoteStringOrNumber converts a musical note string (e.g., "C3", "A4", "60") or number to MIDI note 0-127 and note frequency in Hz.
