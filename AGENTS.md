@@ -54,7 +54,7 @@ type Matcher interface {
 ```
 
 **Pipeline steps** (in order, each in its own `matcher_*.go` file):
-1. `CodebookSearch` — dual codebook KNN (fingerprint + timbre), populates `State.KNNMap`
+1. `CodebookSearch` — dual codebook KNN (fingerprint + timbre), populates `State.KNNMap`, `State.SeenBefore`, `State.BestMatch`
 2. `FormantGenerate` — spectral envelope → DX7 candidates, populates `State.FormantPeaks`
 3. `NNPredict` — MLP probe predictor, populates `State.NNCandidates`
 4. `NNRefine` — LiveOptimizer + DiffOptimizer on best NN, populates `State.LiveOpt`
@@ -63,12 +63,12 @@ type Matcher interface {
 7. `ClassifierStep` — ONNX CNN classifier, can early-return on high confidence
 8. `GAStep` — 32-island niche GA → global convergence (uses Pool + KNNMap + NNCandidates + BeamResult + LiveOpt for seeding)
 9. `HillClimbStep` — LiveOptimizer + DiffOptimizer on GA best
-10. `FormantRefineStep` — formant-constrained refinement
+10. `FormantRefineStep` — formant-constrained refinement, re-evaluates Fitness for correct mel distance
 
 **Key types** (`matcher_types.go`):
 - `ResultsCohort` — Best + Timbral[5] + Full[5] + Formant[5] (fixed-size arrays, zero-allocation)
 - `CandidatePool` — fixed 1024-slot pool of `Candidate` values
-- `MatcherState` — shared mutable state between steps (NNCandidates, FormantPeaks, KNNMap, BeamResult, LiveOpt, etc.)
+- `MatcherState` — shared mutable state between steps (NNCandidates, FormantPeaks, KNNMap, BeamResult, LiveOpt, SeenBefore, BestMatch, etc.)
 - `Reconcile(other ResultsCohort)` — sorted insert with dedup by `Encode()`
 
 ### Candidate Layout
@@ -87,6 +87,8 @@ type Matcher interface {
 - `cachedTargetMel` is local to `Run()`, passed via `MatcherInput.TargetMel` — never global.
 - Render duration capped at 3.0s. Target WAV truncated on load.
 - REST API: single-worker queue, 5 jobs max, 800KB upload limit.
+- Probe endpoint: truncates WAV to 2s window centered on energy peak, extracts F0 from peak frame via `DetectPitchFrame`. No codebook matching (handled by CodebookSearch step). Returns timing fields (`read_ms`, `decode_ms`, `probe_ms`) and `peak_f0_hz`.
+- Match results are NOT auto-indexed into the codebook (prevents poisoning with synthetic patches).
 
 **MSFA DX7 synth architecture (multitimbral):**
 - 16 MIDI channels, 32 patch slots, 16 polyphonic voices, 16 LFOs.
@@ -109,7 +111,7 @@ type Matcher interface {
 - `PredictSpectralPeaks`: Bessel function FM sideband prediction from DX7 patch params.
 - `GenerateFormantCandidates`: maps target formants to DX7 operator ratios.
 - `FormantRefine`: constrained optimization — minimizes formant distance while keeping mel ≤ 110%.
-- Probe endpoint returns `F1Hz`, `F2Hz`, `F3Hz`.
+- Probe endpoint returns `F1Hz`, `F2Hz`, `F3Hz`, `peak_f0_hz`.
 
 **GA convergence:**
 - Absolute threshold (0.001), 5-gen patience, min 20 global gens.
@@ -148,3 +150,5 @@ type Matcher interface {
 **Deploy:** `make deploy` stages to `deploy/app/`. Docker via `deploy/Dockerfile` + `deploy/docker-compose.yml`.
 
 **Training:** `scripts/Makefile` uses configurable `PYTHON ?= python3`. Override with `make PYTHON=/path/to/python3.11`.
+
+**Audio tour:** `LONGREAD.txt` contains a spoken-word architecture tour suitable for TTS.

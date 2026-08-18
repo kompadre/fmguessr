@@ -101,7 +101,7 @@ make -f scripts/Makefile classifier      # Patch classifier (render + train + ex
 ./server -port 8080 -model model.onnx -codebook dx7_codebook.bin -encoder encoder.onnx
 ```
 
-- `POST /api/probe` — Analyze WAV envelope/pitch/formants instantly
+- `POST /api/probe` — Analyze WAV envelope/pitch/formants (truncates to 2s centered on energy peak, ~5s). Returns `read_ms`, `decode_ms`, `probe_ms`, `peak_f0_hz`.
 - `POST /api/match` — Async matching (returns job ID, poll `GET /api/status/:id`)
 - `POST /api/play` — Render patch to WAV
 - `POST /api/voice` — Extract voice data from .syx
@@ -147,6 +147,10 @@ The matcher produces 5 result categories:
 - `ResultsCohort` — Best + Timbral[5] + Full[5] + Formant[5] (fixed-size arrays)
 - `CandidatePool` — 1024-slot pre-allocated pool (zero-allocation)
 - `Matcher` interface — `Name() string` + `Run(ctx, MatcherInput) MatcherResult`
+
+## Audio Tour
+
+`LONGREAD.txt` contains a spoken-word architecture walkthrough suitable for text-to-speech. Covers the full signal flow from WAV input through the 10-step matcher pipeline to DX7 .syx output.
 
 ## License
 
