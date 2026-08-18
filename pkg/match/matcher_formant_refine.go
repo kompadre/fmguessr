@@ -81,6 +81,7 @@ func (s *FormantRefineStep) Run(ctx context.Context, in MatcherInput) MatcherRes
 	for i := 0; i < len(results) && i < MaxCohortLen; i++ {
 		result.Cohort.Formant[i] = *results[i].cand
 		result.Cohort.Formant[i].Scores[ScoreFormant] = results[i].formantDist
+		result.Cohort.Formant[i].Fitness = results[i].melDist
 	}
 	if len(results) < MaxCohortLen {
 		result.Cohort.FormantN = len(results)

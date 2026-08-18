@@ -321,15 +321,13 @@ func (s *Server) processJob(job *Job) {
 			return
 		}
 
-		// Compute spectral distance for this candidate
-		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
-
+		// Use Fitness from pipeline (includes mel cosine + DB penalty) —
+		// recomputing without the penalty would give inconsistent distances.
 		matches = append(matches, MatchResult{
 			Rank:      rank + 1,
 			Algorithm: int(cand.Algorithm + 1),
 			Feedback:  int(cand.Feedback),
-			Distance:  candDist,
+			Distance:  cand.Fitness,
 			WavURL:    fmt.Sprintf("/exports/%s/match_%d.wav", job.ID, rank+1),
 			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
@@ -346,14 +344,11 @@ func (s *Server) processJob(job *Job) {
 			return
 		}
 
-		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
-
 		timbralMatches = append(timbralMatches, MatchResult{
 			Rank:      rank + 1,
 			Algorithm: int(cand.Algorithm + 1),
 			Feedback:  int(cand.Feedback),
-			Distance:  candDist,
+			Distance:  cand.Fitness,
 			WavURL:    fmt.Sprintf("/exports/%s/timbral_%d.wav", job.ID, rank+1),
 			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
@@ -370,14 +365,11 @@ func (s *Server) processJob(job *Job) {
 			return
 		}
 
-		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
-
 		fullMatches = append(fullMatches, MatchResult{
 			Rank:      rank + 1,
 			Algorithm: int(cand.Algorithm + 1),
 			Feedback:  int(cand.Feedback),
-			Distance:  candDist,
+			Distance:  cand.Fitness,
 			WavURL:    fmt.Sprintf("/exports/%s/full_%d.wav", job.ID, rank+1),
 			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
@@ -394,14 +386,11 @@ func (s *Server) processJob(job *Job) {
 			return
 		}
 
-		candNorm := match.NormalizeRMS(match.TrimOrPad(candAudio, len(targetNorm)))
-		candDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), candNorm, match.RenderSampleRate)
-
 		formantMatches = append(formantMatches, MatchResult{
 			Rank:      rank + 1,
 			Algorithm: int(cand.Algorithm + 1),
 			Feedback:  int(cand.Feedback),
-			Distance:  candDist,
+			Distance:  cand.Fitness,
 			WavURL:    fmt.Sprintf("/exports/%s/formant_%d.wav", job.ID, rank+1),
 			VoiceData: base64.StdEncoding.EncodeToString(cand.Encode()),
 		})
@@ -421,13 +410,11 @@ func (s *Server) processJob(job *Job) {
 			if err := match.SaveWav(favPath, favAudio, match.RenderSampleRate); err != nil {
 				continue
 			}
-			favNorm := match.NormalizeRMS(match.TrimOrPad(favAudio, len(targetNorm)))
-			favDist := match.MelCosineDistanceCached(match.ComputeTargetMel(targetNorm, match.RenderSampleRate), favNorm, match.RenderSampleRate)
 			favoriteMatches = append(favoriteMatches, MatchResult{
 				Rank:      len(favoriteMatches) + 1,
 				Algorithm: int(c.Algorithm + 1),
 				Feedback:  int(c.Feedback),
-				Distance:  favDist,
+				Distance:  c.Fitness,
 				WavURL:    fmt.Sprintf("/exports/%s/%s.wav", job.ID, favID),
 			})
 		}

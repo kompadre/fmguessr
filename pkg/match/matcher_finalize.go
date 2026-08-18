@@ -3,6 +3,7 @@ package match
 import (
 	"fmt"
 	"math"
+	"sort"
 )
 
 func finalize(
@@ -64,6 +65,11 @@ func finalize(
 			addUnique(&c)
 		}
 	}
+
+	// Sort by Fitness (mel distance) so top-32 is ordered by quality
+	sort.Slice(topN, func(i, j int) bool {
+		return topN[i].Fitness < topN[j].Fitness
+	})
 
 	if len(topN) > 32 {
 		topN = topN[:32]
