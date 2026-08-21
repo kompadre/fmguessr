@@ -93,7 +93,7 @@ func binarySearchLerpEx(source, target *Candidate, targetAudio []float64, target
 	bestDist := math.MaxFloat64
 	var bestCand *Candidate
 
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 15; i++ {
 		mid := (lo + hi) / 2.0
 		cand := LerpCandidates(source, target, mid)
 		candAudio := RenderCandidate(cand, note, dur)
@@ -116,9 +116,11 @@ func binarySearchLerpEx(source, target *Candidate, targetAudio []float64, target
 	return bestAlpha, bestCand
 }
 
-// Morph interpolates source toward target, first via parameter lerp with binary
-// search for the exact ratio, then via optimization refinement.
+// Morph interpolates source toward target. The ratio controls how far along
+// the path from source to target the result sits (0.0 = source, 1.0 = target).
 // Negative ratios extrapolate away from target (alpha < 0).
+// The binary search finds the interpolation alpha, then optimization nudges
+// individual parameters for finer adjustment.
 func Morph(cfg MorphConfig) MorphResult {
 	if cfg.Dur == 0 {
 		cfg.Dur = time.Second
@@ -161,6 +163,7 @@ func Morph(cfg MorphConfig) MorphResult {
 	}
 
 	// Optimization pass: nudge parameters in desired direction
+	// Each iteration modifies 2-3 knobs for bigger jumps toward target
 	iterCount := 0
 	if cfg.MaxIter > 0 {
 		current := morphed.Copy()
@@ -169,14 +172,15 @@ func Morph(cfg MorphConfig) MorphResult {
 		for iter := 0; iter < cfg.MaxIter; iter++ {
 			candidate := current.Copy()
 
-			// Pick a random parameter and nudge
-			paramIdx := iter % 50
-			if ratio < 0 {
-				// Negative ratio: nudge away from target (increase distance)
-				nudgeParamAway(candidate, cfg.Target, paramIdx)
-			} else {
-				// Positive ratio: nudge toward target (decrease distance)
-				nudgeParamToward(candidate, cfg.Target, paramIdx)
+			// Modify 2-3 knobs per iteration for faster convergence
+			numKnobs := 2 + iter%2 // alternates between 2 and 3
+			for k := 0; k < numKnobs; k++ {
+				paramIdx := (iter*3 + k) % 50
+				if ratio < 0 {
+					nudgeParamAway(candidate, cfg.Target, paramIdx)
+				} else {
+					nudgeParamToward(candidate, cfg.Target, paramIdx)
+				}
 			}
 
 			candidateAudio := RenderCandidate(candidate, cfg.Note, cfg.Dur)
@@ -213,6 +217,7 @@ func Morph(cfg MorphConfig) MorphResult {
 }
 
 // nudgeParamToward moves one parameter of c toward the corresponding parameter of target.
+// Step size scales with distance — large gaps get bigger steps.
 func nudgeParamToward(c, target *Candidate, paramIdx int) {
 	if paramIdx == 0 {
 		c.Algorithm = target.Algorithm
@@ -223,7 +228,6 @@ func nudgeParamToward(c, target *Candidate, paramIdx int) {
 		return
 	}
 
-	// Operator params: paramIdx 1-48 → op (idx-1)/8, param (idx-1)%8
 	opIdx := (paramIdx - 1) / 8
 	paramLocal := (paramIdx - 1) % 8
 	if opIdx >= 6 {
@@ -233,11 +237,11 @@ func nudgeParamToward(c, target *Candidate, paramIdx int) {
 	switch paramLocal {
 	case 0: // Mode
 		c.Ops[opIdx].Mode = target.Ops[opIdx].Mode
-	case 1: // FreqCoarse — nudge by 1 toward target
+	case 1: // FreqCoarse
 		c.Ops[opIdx].FreqCoarse = nudgeU8(c.Ops[opIdx].FreqCoarse, target.Ops[opIdx].FreqCoarse, 0, 31)
-	case 2: // FreqFine — nudge by 1 toward target
+	case 2: // FreqFine
 		c.Ops[opIdx].FreqFine = nudgeU8(c.Ops[opIdx].FreqFine, target.Ops[opIdx].FreqFine, 0, 99)
-	case 3: // OutputLevel — nudge by 1 toward target
+	case 3: // OutputLevel
 		c.Ops[opIdx].OutputLevel = nudgeU8(c.Ops[opIdx].OutputLevel, target.Ops[opIdx].OutputLevel, 0, 99)
 	case 4: // Rate1
 		c.Ops[opIdx].Rate1 = nudgeU8(c.Ops[opIdx].Rate1, target.Ops[opIdx].Rate1, 0, 99)
