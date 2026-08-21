@@ -593,21 +593,22 @@ func DeduplicateVoiceNames(names []string) []string {
 // Uses first letters of each parent separated by underscore (e.g. "S_P").
 // Falls back to numbered names if initials collide.
 func MorphName(nameA, nameB string) string {
-	a := "?"
-	b := "?"
-	for _, r := range nameA {
-		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			a = string(r)
-			break
+	extractUpTo5 := func(name string) string {
+		var letters []rune
+		for _, r := range name {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				letters = append(letters, r)
+				if len(letters) >= 5 {
+					break
+				}
+			}
 		}
-	}
-	for _, r := range nameB {
-		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b = string(r)
-			break
+		if len(letters) == 0 {
+			return "?"
 		}
+		return string(letters)
 	}
-	return a + "_" + b
+	return extractUpTo5(nameA) + "_" + extractUpTo5(nameB)
 }
 
 // Pure Waveform Shape Base Templates
