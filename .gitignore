@@ -4,6 +4,19 @@
 /play
 /server
 /generate
+/morph
+
+# Local dirs
+/external
+/classifier
+/assets
+/html
+/data
+/deploy
+/inferred
+/encoder_wavs
+/encoder.pt
+/.opencode
 
 # Generated Indices & Models
 /*.bin
@@ -12,11 +25,13 @@
 /*.onnx.data
 /*.pth*
 /*.npz
+/*.tgz
 
 # Test Artifacts and Temporary Files
 /test_*
 /*.wav
 /*.syx
+/*.npy
 /exports/
 /rendered_*/
 /rendered/
